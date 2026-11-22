@@ -539,6 +539,9 @@ class ConnectionIn(BaseModel):
     internal_host: str | None = Field(default=None, max_length=120)
     console_identifier: str | None = None
     discovery_mode: str = 'manual'
+    network_route: str = 'lan'               # lan | internet_psn | internet_port_forward
+    public_host: str | None = Field(default=None, max_length=253)
+    public_port: int | None = Field(default=None, ge=1, le=65535)
     resolution: str = '1080p'
     fps: int = 60
     codec: str = 'h264'
@@ -570,8 +573,23 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
             errors['method'] = f"{info['label']} não é aplicável a {c['platform_code']}."
         if body.method in ('remote_play_chiaki', 'hdmi_capture', 'native_remote_play') and not body.agent_id:
             errors['agent_id'] = 'Selecione o agente local.'
-        if body.method == 'remote_play_chiaki' and not (body.internal_host and HOST_RE.match(body.internal_host)) and body.discovery_mode == 'manual':
-            errors['internal_host'] = 'Informe o IP/hostname interno ou use descoberta na LAN.'
+        if body.network_route not in ('lan', 'internet_psn', 'internet_port_forward'):
+            errors['network_route'] = 'Rota de rede inválida.'
+        elif body.method != 'remote_play_chiaki' and body.network_route != 'lan':
+            errors['network_route'] = 'Acesso pela internet só se aplica ao Remote Play.'
+        if body.method == 'remote_play_chiaki':
+            if body.network_route == 'lan':
+                if not (body.internal_host and HOST_RE.match(body.internal_host)) and body.discovery_mode == 'manual':
+                    errors['internal_host'] = 'Informe o IP/hostname interno ou use descoberta na LAN.'
+            elif body.network_route == 'internet_port_forward':
+                if not (body.public_host and HOST_RE.match(body.public_host)):
+                    errors['public_host'] = 'Informe o IP público ou o endereço DDNS do roteador onde o console está.'
+            elif body.network_route == 'internet_psn' and not (body.console_identifier or '').strip():
+                errors['console_identifier'] = 'Informe a identificação do console (nome ou ID exibido no pareamento PSN).'
+        if body.network_route != 'lan':
+            body.discovery_mode = 'manual'   # descoberta automática só funciona na rede local
+        if body.network_route != 'internet_port_forward':
+            body.public_host, body.public_port = None, None
         if body.method == 'hdmi_capture':
             if not body.capture_device_id:
                 errors['capture_device_id'] = 'Selecione a capturadora/entrada HDMI.'

@@ -58,6 +58,23 @@ Se o PS4 não funcionar bem no Chiaki-NG direto no PC, não vai funcionar no nav
 
 ---
 
+## PS4 em outra rede (Remote Play pela internet)
+
+O agente não precisa estar ao lado do PS4: no cadastro do console, campo **Rota de rede**:
+
+| Rota | Quando usar | O que configurar |
+|---|---|---|
+| **Mesma rede do agente** (padrão) | Operação real | IP interno do PS4 ou descoberta na LAN |
+| **Outra rede — via PSN** | Testes; PS4 na casa de outra pessoa | Agente logado na **mesma conta PSN** do PS4; identificação do console. Sem abrir portas. |
+| **Outra rede — portas abertas** | Quando a via PSN não conectar | No roteador do PS4: IP fixo para o PS4 e redirecionar **TCP/UDP 9295–9304** para ele; IP público ou DDNS (ex.: No-IP, DuckDNS) no cadastro |
+
+Cuidados nas rotas pela internet: mais atraso (o vídeo atravessa a internet duas vezes: PS4 → agente → jogador),
+ligar o PS4 do repouso pode não funcionar (deixe *Permanecer conectado à Internet* ativo) e a qualidade depende da
+**velocidade de upload** da internet onde o PS4 está (mínimo ~15 Mbps de upload para 720p/60).
+
+Teste antes no chiaki-ng: com o PC fora da rede do PS4 (ex.: celular roteando 4G), use a conexão remota do chiaki-ng
+(via PSN) ou adicione o console manualmente pelo IP público/DDNS.
+
 ## Fase 1 — ConsoleAgent v0 (eu desenvolvo; você instala no PC)
 
 Programa Python (FastAPI) que roda no PC ao lado do PS4 e implementa o protocolo que a API já espera:

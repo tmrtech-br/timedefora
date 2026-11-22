@@ -203,3 +203,27 @@ def test_publicacao_bloqueada_no_banco_sem_validacao(world):
             conn.execute('update console_connection_configs set control_validated_at=null, validated_at=null')
             conn.execute('update consoles set is_published=false')
             conn.execute('update consoles set is_published=true')
+
+
+def test_rota_de_rede_remote_play_pela_internet(freeze):
+    """PS4 em outra rede: via PSN (sem portas) ou por portas abertas (exige IP público/DDNS)."""
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    c = _new_console(api, 'PS4-09', 'PS4')
+    ag = api.post('/admin/agents', json={'name': 'pc-remoto', 'host_name': 'pcr'}).json()
+    url = f"/admin/consoles/{c['id']}/connection"
+    base = {'method': 'remote_play_chiaki', 'agent_id': ag['id']}
+    r = api.put(url, json={**base, 'network_route': 'internet_port_forward'})
+    assert r.status_code == 422 and 'public_host' in r.json()['fields']
+    r = api.put(url, json={**base, 'network_route': 'internet_psn'})
+    assert r.status_code == 422 and 'console_identifier' in r.json()['fields']
+    r = api.put(url, json={**base, 'network_route': 'internet_port_forward', 'public_host': 'meuconsole.ddns.net', 'public_port': 9295,
+                           'discovery_mode': 'lan_discovery'})
+    assert r.status_code == 200, r.text
+    cfg = r.json()['connection']
+    assert cfg['network_route'] == 'internet_port_forward' and cfg['public_host'] == 'meuconsole.ddns.net'
+    assert cfg['discovery_mode'] == 'manual'           # descoberta na LAN não se aplica pela internet
+    r = api.put(url, json={**base, 'network_route': 'internet_psn', 'console_identifier': 'PS4-casa-vo'})
+    assert r.status_code == 200 and r.json()['connection']['public_host'] is None
+    r = api.put(url, json={'method': 'simulated', 'network_route': 'internet_psn'})
+    assert r.status_code == 422 and 'network_route' in r.json()['fields']

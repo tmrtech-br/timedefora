@@ -22,4 +22,5 @@ def console_ref(conn, console_id) -> ConsoleRef:
                       internal_host=row['internal_host'] if row else None,
                       capture_device_identifier=row['capture_ident'] if row else None,
                       control_adapter_identifier=row['control_ident'] if row else None,
-                      settings={k: row[k] for k in ('resolution', 'fps', 'codec', 'bitrate_kbps', 'low_latency', 'audio_enabled')} if row else {})
+                      settings={k: row[k] for k in ('resolution', 'fps', 'codec', 'bitrate_kbps', 'low_latency', 'audio_enabled',
+                                                       'network_route', 'public_host', 'public_port', 'console_identifier')} if row else {})

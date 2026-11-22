@@ -39,7 +39,12 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
                              message=str(data.get('message', '')), state=StreamState(state) if state else None,
                              data=data.get('data', {}))
 
-    def discover_console(self, ref): return self._res(self._call(ref, 'discover', {'host': ref.internal_host}))
+    def discover_console(self, ref):
+        route = (ref.settings or {}).get('network_route') or 'lan'
+        host = ref.internal_host if route == 'lan' else (ref.settings or {}).get('public_host')
+        return self._res(self._call(ref, 'discover', {'host': host, 'route': route,
+                                                      'port': (ref.settings or {}).get('public_port'),
+                                                      'console_identifier': (ref.settings or {}).get('console_identifier')}))
     def pair_console(self, ref, code): return self._res(self._call(ref, 'pair', {'code': code}))
     def connect(self, ref): return self._res(self._call(ref, 'connect', {'settings': ref.settings}))
     def start_stream(self, ref, session_id): return self._res(self._call(ref, 'stream/start', {'session_id': session_id}))
