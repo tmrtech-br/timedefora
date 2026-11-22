@@ -5,7 +5,7 @@ import { Gamepad2, Headphones, Maximize, Power, Unplug } from 'lucide-react';
 import RequireAuth from '@/components/RequireAuth';
 import { GAMEPAD_BUTTONS } from '@/components/InputTester';
 import { Alert, ErrorBox, Skeleton } from '@/components/ui';
-import { post } from '@/lib/api';
+import { csrfToken, post } from '@/lib/api';
 import { useApi, useServerClock } from '@/lib/hooks';
 import { duration } from '@/lib/format';
 import type { InputCommand, StreamMetrics } from '@/lib/gamebridge';
@@ -28,8 +28,12 @@ function Player() {
   useEffect(() => { try { setToken(sessionStorage.getItem(`lp_input_${sessionId}`)); } catch { setToken(null); } }, [sessionId]);
   const send = useCallback(async (command: InputCommand) => {
     if (!token) return;
-    const res = await fetch(`/api/sessions/${sessionId}/input`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Input-Token': token }, body: JSON.stringify({ command }) });
-    if (res.status === 403) { setInputStatus('revogado'); setToken(null); reload(); }
+    const res = await fetch(`/api/sessions/${sessionId}/input`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Input-Token': token, 'X-CSRF-Token': csrfToken() }, body: JSON.stringify({ command }) });
+    if (res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      if (['input_revoked', 'invalid_input_token'].includes(body.code)) { setInputStatus('revogado'); setToken(null); reload(); }
+      else setInputStatus(`recusado: ${body.detail || res.status}`);
+    }
     else if (res.ok) { setInputStatus('ativo'); setSent((x) => x + 1); }
   }, [token, sessionId, reload]);
   useEffect(() => {

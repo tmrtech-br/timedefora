@@ -65,6 +65,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .side-extra a svg { width: 19px; height: 19px; }
 .side-deco { position: relative; flex: 1; min-height: 120px; margin-top: -40px; background: url('/assets/sidebar-locadora.webp') center bottom / 100% auto no-repeat;
   mask-image: linear-gradient(180deg, transparent 0, #000 22%); -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 22%); pointer-events: none; }
+.side-links:has(.side-extra) + .side-deco { margin-top: 8px; }
 .side-deco-label { position: absolute; bottom: 6px; left: 10px; font-size: 10px; color: rgba(255,255,255,.35); }
 
 /* ---------------------------------------------------------------- área principal */
@@ -261,6 +262,10 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cal-ev.blackout { background: repeating-linear-gradient(45deg, rgba(255, 75, 92, .35) 0 6px, rgba(255, 75, 92, .15) 6px 12px); border: 1px solid var(--red); z-index: 3; }
 
 /* ---------------------------------------------------------------- responsividade */
+@media (max-width: 1500px) {
+  .footer { flex-wrap: wrap; overflow: visible; padding-top: 12px; padding-bottom: 12px; row-gap: 10px; }
+  .footer-items { flex-wrap: wrap; row-gap: 10px; }
+}
 @media (max-width: 1440px) {
   .top-nav { padding-left: 20px; gap: 10px; }
   .hero-art { left: 33%; width: 42%; }

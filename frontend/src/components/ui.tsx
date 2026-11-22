@@ -1,4 +1,5 @@
 'use client';
+import { cloneElement, isValidElement, useId } from 'react';
 import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
 import type { ApiError } from '@/lib/api';
 
@@ -38,21 +39,32 @@ export function Loading({ label = 'Carregando…' }: { label?: string }) {
 }
 
 export function Field({ label, error, children, hint }: { label: string; error?: string; children: React.ReactNode; hint?: string }) {
+  const id = useId();
+  const describedBy = [hint && !error ? `${id}-hint` : '', error ? `${id}-err` : ''].filter(Boolean).join(' ') || undefined;
+  const control = isValidElement<Record<string, unknown>>(children)
+    ? cloneElement(children, { id, 'aria-describedby': describedBy, 'aria-invalid': error ? true : undefined })
+    : children;
   return (
-    <label className={`field ${error ? 'invalid' : ''}`}>
-      <span>{label}</span>
-      {children}
-      {hint && !error && <span className="dim small">{hint}</span>}
-      {error && <span className="err" role="alert">{error}</span>}
-    </label>
+    <div className={`field ${error ? 'invalid' : ''}`}>
+      <label htmlFor={id}>{label}</label>
+      {control}
+      {hint && !error && <span id={`${id}-hint`} className="dim small">{hint}</span>}
+      {error && <span id={`${id}-err`} className="err" role="alert">{error}</span>}
+    </div>
   );
 }
+
+const LABELS: Record<string, string> = {
+  online: 'online', offline: 'offline', degraded: 'degradado', maintenance: 'manutenção', unconfigured: 'não configurado', disabled: 'desativado',
+  pairing: 'pareando', error: 'erro', passed: 'aprovado', failed: 'falhou', not_available: 'indisponível', draft: 'rascunho',
+  published: 'publicado', unpublished: 'despublicado', archived: 'arquivado', open: 'aberto', in_progress: 'em andamento', resolved: 'resolvido', closed: 'fechado',
+};
 
 export function StatusPill({ status, map, tone }: { status: string; map?: Record<string, string>; tone?: string }) {
   const t = tone || ({ confirmed: 'green', approved: 'green', active: 'cyan', completed: 'purple', pending_payment: 'amber', pending: 'amber',
     cancelled: 'red', rejected: 'red', expired: 'red', no_show: 'red', needs_resolution: 'amber', refunded: 'purple', online: 'green',
     offline: 'red', maintenance: 'amber', passed: 'green', failed: 'red', not_available: 'amber' } as Record<string, string>)[status] || '';
-  return <span className={`pill ${t}`}>{map?.[status] || status}</span>;
+  return <span className={`pill ${t}`}>{map?.[status] || LABELS[status] || status}</span>;
 }
 
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {

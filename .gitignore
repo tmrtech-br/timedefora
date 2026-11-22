@@ -11,3 +11,6 @@ backend/media/
 frontend/test-results/
 frontend/playwright-report/
 *.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e/screenshots/
