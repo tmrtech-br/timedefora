@@ -20,7 +20,7 @@ export default function Pricing() {
       <section className="card stack"><h2>Novo pacote</h2><div className="grid3">
         <Field label="Nome"><input value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} /></Field>
         <Field label="Minutos"><input type="number" value={p.minutes} onChange={(e) => setP({ ...p, minutes: Number(e.target.value) })} /></Field>
-        <Field label="Preço (R$)"><input inputMode="decimal" value={p.price} onChange={(e) => setP({ ...p, price: e.target.value })} /></Field>
+        <Field label="Preço (R$)"><input maxLength={10} inputMode="decimal" value={p.price} onChange={(e) => setP({ ...p, price: e.target.value })} /></Field>
         <Field label="Jogo (opcional)"><select value={p.game_id} onChange={(e) => setP({ ...p, game_id: e.target.value })}><option value="">Todos</option>{games?.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</select></Field>
         <Field label="Plataforma (opcional)"><select value={p.platform_code} onChange={(e) => setP({ ...p, platform_code: e.target.value })}><option value="">Todas</option>{['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((x) => <option key={x}>{x}</option>)}</select></Field>
         <Field label="Válido até (opcional)"><input type="datetime-local" value={p.valid_until} onChange={(e) => setP({ ...p, valid_until: e.target.value })} /></Field>
@@ -35,7 +35,7 @@ export default function Pricing() {
           ['Ativo', (r) => <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/packages/${r.id}`, { active: !r.active }); pk.reload(); })}>{r.active ? 'ativo (desativar)' : 'inativo (ativar)'}</button>]]} />
       </section>
       <section className="card stack"><h2>Novo cupom</h2><div className="grid3">
-        <Field label="Código"><input value={c.code} onChange={(e) => setC({ ...c, code: e.target.value.toUpperCase() })} /></Field>
+        <Field label="Código"><input maxLength={30} value={c.code} onChange={(e) => setC({ ...c, code: e.target.value.toUpperCase() })} /></Field>
         <Field label="Tipo"><select value={c.discount_type} onChange={(e) => setC({ ...c, discount_type: e.target.value })}><option value="percent">Percentual</option><option value="fixed">Valor fixo (centavos)</option></select></Field>
         <Field label="Valor"><input type="number" value={c.discount_value} onChange={(e) => setC({ ...c, discount_value: Number(e.target.value) })} /></Field>
         <Field label="Limite total"><input type="number" value={c.max_redemptions} onChange={(e) => setC({ ...c, max_redemptions: e.target.value })} /></Field>

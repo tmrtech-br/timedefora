@@ -1,5 +1,5 @@
 'use client';
-import { cloneElement, isValidElement, useId } from 'react';
+import { cloneElement, isValidElement, useId, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
 import type { ApiError } from '@/lib/api';
 
@@ -38,18 +38,49 @@ export function Loading({ label = 'Carregando…' }: { label?: string }) {
   return <div className="row muted" role="status"><Loader2 className="spin" size={18} aria-hidden />{label}</div>;
 }
 
-export function Field({ label, error, children, hint }: { label: string; error?: string; children: React.ReactNode; hint?: string }) {
+/** Limite padrão de caracteres dos campos de texto do site (campos mais longos informam `maxLength` explicitamente). */
+export const TEXT_MAX = 50;
+const TEXTAREA_MAX = 2000;
+const COUNTED_TYPES = new Set(['text', 'search', 'tel', 'url']);
+
+type ControlProps = { type?: string; value?: unknown; maxLength?: number; onBlur?: (e: React.FocusEvent) => void; [k: string]: unknown };
+
+/**
+ * Campo com rótulo, dica, erro, contador de caracteres e obrigatoriedade.
+ * - Inputs de texto recebem `maxLength` padrão de 50 (textarea: 2000) e exibem o contador "n/máx".
+ * - `required`: ao sair do campo vazio, mostra "Preencha este campo." (o servidor também valida).
+ */
+export function Field({ label, error, children, hint, required }: { label: string; error?: string; children: React.ReactNode; hint?: string; required?: boolean }) {
   const id = useId();
-  const describedBy = [hint && !error ? `${id}-hint` : '', error ? `${id}-err` : ''].filter(Boolean).join(' ') || undefined;
-  const control = isValidElement<Record<string, unknown>>(children)
-    ? cloneElement(children, { id, 'aria-describedby': describedBy, 'aria-invalid': error ? true : undefined })
+  const [touched, setTouched] = useState(false);
+  const el = isValidElement<ControlProps>(children) ? children : null;
+  const tag = el && typeof el.type === 'string' ? el.type : '';
+  const props = (el?.props || {}) as ControlProps;
+  const isText = tag === 'textarea' || (tag === 'input' && COUNTED_TYPES.has(props.type ?? 'text'));
+  const max = isText ? (props.maxLength ?? (tag === 'textarea' ? TEXTAREA_MAX : TEXT_MAX)) : props.maxLength;
+  const value = typeof props.value === 'string' ? props.value : null;
+  const emptyErr = required && touched && value !== null && !value.trim() ? 'Preencha este campo.' : undefined;
+  const shownError = error || emptyErr;
+  const describedBy = [hint && !shownError ? `${id}-hint` : '', shownError ? `${id}-err` : '', isText && value !== null ? `${id}-count` : ''].filter(Boolean).join(' ') || undefined;
+  const control = el
+    ? cloneElement(el, {
+      id, 'aria-describedby': describedBy, 'aria-invalid': shownError ? true : undefined,
+      ...(max ? { maxLength: max } : {}), ...(required ? { required: true, 'aria-required': true } : {}),
+      onBlur: (e: React.FocusEvent) => { setTouched(true); props.onBlur?.(e); },
+    })
     : children;
+  const near = max && value !== null && value.length >= max * 0.9;
   return (
-    <div className={`field ${error ? 'invalid' : ''}`}>
-      <label htmlFor={id}>{label}</label>
+    <div className={`field ${shownError ? 'invalid' : ''}`}>
+      <label htmlFor={id}>{label}{required && <span className="req" aria-hidden> *</span>}</label>
       {control}
-      {hint && !error && <span id={`${id}-hint`} className="dim small">{hint}</span>}
-      {error && <span id={`${id}-err`} className="err" role="alert">{error}</span>}
+      <div className="field-foot">
+        <span>
+          {hint && !shownError && <span id={`${id}-hint`} className="dim small">{hint}</span>}
+          {shownError && <span id={`${id}-err`} className="err" role="alert">{shownError}</span>}
+        </span>
+        {isText && max && value !== null && <span id={`${id}-count`} className={`counter ${near ? 'near' : ''}`} aria-live="polite">{value.length}/{max}</span>}
+      </div>
     </div>
   );
 }

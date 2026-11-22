@@ -11,7 +11,7 @@ const SECTIONS: [string, string, string][] = [
   ['filas', 'Filas', 'operator'], ['reservas', 'Reservas', 'operator'], ['sessoes', 'Sessões e incidentes', 'operator'],
   ['transmissoes', 'Transmissões', 'operator'], ['financeiro', 'Financeiro e relatórios', 'admin'], ['usuarios', 'Usuários e permissões', 'operator'],
   ['notificacoes', 'Notificações', 'admin'], ['suporte', 'Suporte', 'operator'], ['lgpd', 'Solicitações LGPD', 'admin'],
-  ['auditoria', 'Auditoria', 'admin'], ['configuracoes', 'Configurações', 'admin'],
+  ['auditoria', 'Auditoria', 'admin'], ['parametros', 'Parâmetros', 'admin'], ['configuracoes', 'Configurações avançadas e políticas', 'admin'],
 ];
 const RANK: Record<string, number> = { client: 0, operator: 1, admin: 2, superadmin: 3 };
 

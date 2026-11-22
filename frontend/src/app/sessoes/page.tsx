@@ -3,7 +3,7 @@ import Link from 'next/link';
 import RequireAuth from '@/components/RequireAuth';
 import { Empty, ErrorBox, PageHeader, Skeleton, StatusPill } from '@/components/ui';
 import { useApi } from '@/lib/hooks';
-import { dateTime, duration, money, RESERVATION_STATUS, time } from '@/lib/format';
+import { RESERVATION_STATUS, SESSION_STATUS, dateTime, duration, money, time } from '@/lib/format';
 import type { Reservation } from '@/lib/types';
 
 type Hist = { id: string; status: string; title: string; code: string; minutes: number; contract_starts_at: string; contract_ends_at: string;
@@ -34,7 +34,7 @@ function Sessoes() {
         <div className="table-wrap card"><table className="table"><thead><tr><th>Jogo</th><th>Contratado</th><th>Primeira conexão</th><th>Tempo usado</th><th>Encerramento</th></tr></thead>
           <tbody>{hist.data.map((h) => (
             <tr key={h.id}><td>{h.title}<div className="small dim">{h.code}</div></td><td>{dateTime(h.contract_starts_at)} – {time(h.contract_ends_at)}</td>
-              <td>{dateTime(h.first_connected_at)}</td><td>{duration(h.seconds_used)}</td><td>{h.end_reason ? END[h.end_reason] || h.end_reason : h.status}</td></tr>
+              <td>{dateTime(h.first_connected_at)}</td><td>{duration(h.seconds_used)}</td><td>{h.end_reason ? END[h.end_reason] || h.end_reason : SESSION_STATUS[h.status] || h.status}</td></tr>
           ))}</tbody></table></div>
       )}
     </>

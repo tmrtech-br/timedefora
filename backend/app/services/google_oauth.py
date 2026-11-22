@@ -19,6 +19,7 @@ from ..core import security, timeutil
 from ..core.db import insert, tx
 from ..core.errors import AppError
 from . import auth
+from .settings_store import get_settings
 
 AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
 TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -100,6 +101,8 @@ def callback(code: str, state: str, ip: str, ua: str) -> dict:
         else:
             if conn.execute('select 1 from users where lower(email)=%s and deleted_at is null', (email,)).fetchone():
                 return {'redirect': '/entrar?erro=google_vincular'}
+            if not get_settings(conn).get('signup_enabled', True):
+                return {'redirect': '/entrar?erro=cadastro_desativado'}
             u = insert(conn, 'users', {'full_name': (info.get('name') or email.split('@')[0])[:120].ljust(3, '_'),
                                        'username': _unique_username(conn, info.get('given_name') or info.get('name') or ''),
                                        'email': email, 'status': 'active', 'email_verified_at': timeutil.now(),

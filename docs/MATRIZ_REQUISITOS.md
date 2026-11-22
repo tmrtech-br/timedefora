@@ -67,3 +67,6 @@ Testes: `B:` backend (`backend/tests/…`), `E:` Playwright (`frontend/e2e/…`)
 | R59 | CI, Docker Compose, .env.example | .github/workflows, docker-compose.yml | IMPLEMENTADO | CI não executado nesta entrega (sem repositório remoto) |
 | R60 | Observabilidade (métricas, tracing, alertas externos), backups automáticos | — | PENDENTE | Logs estruturados básicos e /health existem |
 | R61 | Testes de carga | — | PENDENTE | |
+| R62 | Parâmetros liga/desliga no painel (plataformas, vendas, modos fila/horário, cupons, cadastro, Google, teclado/mouse, transmissões, chamados) aplicados no servidor | services/settings_store.py, admin/Params.tsx, GET /features | VALIDADO | B: tests/test_parametros.py (8 testes); visual por screenshot |
+| R63 | Teste de conexão real (latência, variação, download) na sala de espera | GET /net/ping, /net/download, NetworkTest.tsx | IMPLEMENTADO | Mede até o servidor da API, não até o console |
+| R64 | Limite de caracteres com contador e campos obrigatórios em todos os formulários | components/ui.tsx (Field) | IMPLEMENTADO | Padrão 50; campos longos com limite explícito; servidor também valida |

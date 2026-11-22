@@ -14,6 +14,7 @@ from ..core.errors import AppError, conflict, forbidden, not_found
 from ..gamebridge import AdapterError, get_adapter
 from . import notifications, scheduling
 from .consoles import console_ref
+from .settings_store import require_enabled
 
 
 def _event(conn, session_id, kind: str, details: dict | None = None) -> None:
@@ -41,6 +42,8 @@ def join(user, reservation_id, input_device: str, ip: str, ua: str) -> dict:
         raise AppError(422, 'validation_error', 'Escolha teclado e mouse ou controle.')
     n = timeutil.now()
     with tx() as conn:
+        if input_device == 'keyboard_mouse':
+            require_enabled(conn, 'keyboard_mouse_enabled', 'Jogar com teclado e mouse está desativado no momento. Use um controle.')
         r = conn.execute('select * from reservations where id=%s for update', (reservation_id,)).fetchone()
         if not r or str(r['user_id']) != user.user_id:
             raise not_found('Reserva não encontrada.')

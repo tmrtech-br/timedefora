@@ -6,6 +6,7 @@ import { ErrorBox, Skeleton } from '@/components/ui';
 import { useApi } from '@/lib/hooks';
 import { minutesLabel, moneyShort } from '@/lib/format';
 import type { GameCard as G } from '@/lib/types';
+import { useFeatures } from '@/lib/features';
 
 type Home = {
   demo_mode: boolean; sales_paused: boolean;
@@ -25,6 +26,7 @@ function Title({ text }: { text: string }) {
 
 export default function HomePage() {
   const { data, error, reload } = useApi<Home>('/catalog/home', 15000);
+  const features = useFeatures();
   const f = data?.featured;
   return (
     <>
@@ -45,7 +47,7 @@ export default function HomePage() {
             <p>{f.description}</p>
             <div className="hero-actions">
               <Link className="btn-primary" href={`/jogos/${f.slug}#reservar`}><Play size={19} aria-hidden />Jogar agora</Link>
-              <Link className="btn-ghost" href={`/jogos/${f.slug}#ao-vivo`}><Radio size={19} aria-hidden />Assistir ao vivo</Link>
+              {features?.public_streams_enabled !== false && <Link className="btn-ghost" href={`/jogos/${f.slug}#ao-vivo`}><Radio size={19} aria-hidden />Assistir ao vivo</Link>}
             </div>
           </div>
           <aside className="hero-panel" aria-label="Pacotes e disponibilidade">

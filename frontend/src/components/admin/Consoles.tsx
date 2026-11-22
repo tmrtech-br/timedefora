@@ -57,8 +57,8 @@ function Editor({ c, onChange }: { c: C; onChange: () => void }) {
           <Field label="Nome"><input value={basic.name} onChange={(e) => setBasic({ ...basic, name: e.target.value })} /></Field>
           <Field label="Modelo"><input value={basic.model} onChange={(e) => setBasic({ ...basic, model: e.target.value })} /></Field>
           <Field label="Série / identificador"><input value={basic.serial_number} onChange={(e) => setBasic({ ...basic, serial_number: e.target.value })} /></Field>
-          <Field label="Localização operacional"><input value={basic.location} onChange={(e) => setBasic({ ...basic, location: e.target.value })} /></Field>
-          <Field label="Descrição / observações"><input value={basic.description} onChange={(e) => setBasic({ ...basic, description: e.target.value })} /></Field>
+          <Field label="Localização operacional"><input maxLength={120} value={basic.location} onChange={(e) => setBasic({ ...basic, location: e.target.value })} /></Field>
+          <Field label="Descrição / observações"><input maxLength={500} value={basic.description} onChange={(e) => setBasic({ ...basic, description: e.target.value })} /></Field>
         </div>
         <button className="btn" style={{ marginTop: 10 }} disabled={busy} onClick={() => run(async () => { await patch(`/admin/consoles/${c.id}`, { ...basic, serial_number: basic.serial_number || null }); onChange(); }, 'Dados salvos.')}>Salvar dados</button>
       </section>
@@ -73,7 +73,7 @@ function Editor({ c, onChange }: { c: C; onChange: () => void }) {
             {agents?.filter((a) => (m === 'simulated') === a.is_simulated).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
           {m === 'remote_play_chiaki' && <>
             <Field label="Descoberta"><select value={String(cfg.discovery_mode)} onChange={(e) => set('discovery_mode', e.target.value)}><option value="manual">IP/hostname manual</option><option value="lan_discovery">Descoberta na LAN</option></select></Field>
-            <Field label="IP / hostname interno"><input value={String(cfg.internal_host)} onChange={(e) => set('internal_host', e.target.value)} placeholder="192.168.0.20" /></Field>
+            <Field label="IP / hostname interno"><input maxLength={253} value={String(cfg.internal_host)} onChange={(e) => set('internal_host', e.target.value)} placeholder="192.168.0.20" /></Field>
             <Field label="Identificação do console"><input value={String(cfg.console_identifier)} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
           </>}
           {m === 'hdmi_capture' && <>
@@ -90,7 +90,7 @@ function Editor({ c, onChange }: { c: C; onChange: () => void }) {
           <label className="check"><input type="checkbox" checked={!!cfg.low_latency} onChange={(e) => set('low_latency', e.target.checked)} />Perfil de baixa latência</label>
           <label className="check"><input type="checkbox" checked={!!cfg.audio_enabled} onChange={(e) => set('audio_enabled', e.target.checked)} />Áudio</label>
         </div>}
-        <Field label="Motivo da alteração (registrado na auditoria)"><input value={String(cfg.reason || '')} onChange={(e) => set('reason', e.target.value)} /></Field>
+        <Field label="Motivo da alteração (registrado na auditoria)"><input maxLength={500} value={String(cfg.reason || '')} onChange={(e) => set('reason', e.target.value)} /></Field>
         <div className="row"><button className="btn primary" disabled={busy} onClick={save}>Salvar configuração</button>
           <button className="btn" disabled={busy || m === 'unconfigured'} onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/connection`, { method: 'unconfigured', reason: 'Desativado no painel' }); onChange(); }, 'Conexão desativada.')}>Desativar</button></div>
       </section>
@@ -117,7 +117,7 @@ function Editor({ c, onChange }: { c: C; onChange: () => void }) {
       <div className="grid2">
         <section className="card stack">
           <h2>Manutenção / status</h2>
-          <Field label="Justificativa"><input value={statusReason} onChange={(e) => setStatusReason(e.target.value)} /></Field>
+          <Field label="Justificativa"><input maxLength={500} value={statusReason} onChange={(e) => setStatusReason(e.target.value)} /></Field>
           <div className="row">
             <button className="btn" disabled={busy || statusReason.length < 3} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'maintenance', reason: statusReason }); onChange(); }, 'Em manutenção.')}>Manutenção</button>
             <button className="btn danger" disabled={busy || statusReason.length < 3} onClick={() => confirm('Cancelar e reembolsar as reservas afetadas?') && run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'maintenance', reason: statusReason, resolution: 'cancel_and_refund' }); onChange(); }, 'Em manutenção; reservas afetadas canceladas e reembolsadas.')}>Manutenção + reembolsar afetados</button>

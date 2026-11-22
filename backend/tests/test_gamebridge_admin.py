@@ -64,7 +64,7 @@ def test_adaptadores_de_hardware_recusam_sem_configuracao():
 def test_servicos_de_negocio_nao_importam_adaptadores_concretos():
     root = Path(__file__).resolve().parents[1] / 'app'
     for f in list((root / 'services').glob('*.py')) + list((root / 'routers').glob('*.py')):
-        tree = ast.parse(f.read_text())
+        tree = ast.parse(f.read_text(encoding='utf-8'))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:
                 assert not any(x in node.module for x in ('simulated', 'agent_client', 'chiaki')), f'{f.name} importa {node.module}'

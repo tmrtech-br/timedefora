@@ -241,7 +241,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .player { position: relative; aspect-ratio: 16/9; border-radius: 14px; overflow: hidden; background: #050409; border: 1px solid var(--line2); display: grid; place-items: center; }
 .player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 .sim-screen { text-align: center; color: #8d84b5; padding: 20px; }
-.gamepad-vis { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+.gamepad-vis { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
 .gamepad-vis span { padding: 6px; text-align: center; border-radius: 6px; background: #1d1838; font-size: 11px; }
 .gamepad-vis span.on { background: var(--purple); }
 .mobile-only { display: none; }
@@ -315,3 +315,78 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
   .countdown { font-size: 38px; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ---------------------------------------------------------------- selects (seta própria; lista sempre escura) */
+select, .field select, select.btn { -webkit-appearance: none; -moz-appearance: none; appearance: none; color-scheme: dark; cursor: pointer;
+  background-color: #0f0c20;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23c9b8ff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center; background-size: 12px; padding-right: 34px; }
+select:hover:not(:disabled), .field select:hover:not(:disabled), select.btn:hover:not(:disabled) { border-color: #6d5aa8; background-color: #151130; }
+select option, select optgroup { background: #151130; color: var(--text); }
+select option:checked { background: #3b2470; }
+select.btn.sm { padding-right: 28px; background-position: right 9px center; }
+
+/* ---------------------------------------------------------------- campos: contador e obrigatório */
+.field-foot { display: flex; justify-content: space-between; gap: 8px; min-height: 0; }
+.field-foot:empty { display: none; }
+.counter { margin-left: auto; font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.counter.near { color: var(--amber); }
+.req { color: #ff8f9a; }
+
+/* ---------------------------------------------------------------- MFA */
+.mfa-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+
+/* ---------------------------------------------------------------- teste de entrada (teclado/controle) */
+.keymap { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+.keymap div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 8px; background: #1a1534; border: 1px solid var(--line); }
+kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 24px; padding: 0 7px; border-radius: 6px;
+  background: #2a2350; border: 1px solid #4b3f80; border-bottom-width: 3px; font: 600 12px/1 'Poppins', system-ui, sans-serif; color: #fff; }
+.keytest { display: flex; align-items: center; gap: 10px; }
+.keytest kbd { min-width: 44px; height: 38px; font-size: 16px; }
+.gamepad-vis span { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.gamepad-vis .sym { font-size: 16px; line-height: 1; font-weight: 700; }
+.gamepad-vis .sym.cross { color: #7fb4ff; } .gamepad-vis .sym.circle { color: #ff7a8a; } .gamepad-vis .sym.square { color: #ff9be6; } .gamepad-vis .sym.triangle { color: #5fe3b5; }
+.gamepad-vis span.on .sym { color: #fff; }
+.gamepad-vis .lbl { font-size: 10px; color: var(--muted); }
+.gamepad-vis span.on .lbl { color: #fff; }
+.prep-tests { display: flex; flex-wrap: wrap; gap: 10px; }
+.prep-tests > div { flex: 1 1 220px; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: #15112b; border: 1px solid var(--line); }
+.prep-tests .btn { align-self: flex-start; }
+
+/* ---------------------------------------------------------------- calendário do dia (régua de horas) */
+.cal2 { display: grid; gap: 6px; font-size: 12px; overflow-x: auto; }
+.cal2-row { display: grid; grid-template-columns: 150px minmax(640px, 1fr); gap: 10px; align-items: center; }
+.cal2-name { font-weight: 600; line-height: 1.2; }
+.cal2-name small { display: block; color: var(--dim); font-weight: 400; }
+.cal2-ruler { position: relative; height: 20px; }
+.cal2-ruler span { position: absolute; top: 0; transform: translateX(-50%); font-size: 11px; color: var(--muted); }
+.cal2-ruler span:first-child { transform: none; } .cal2-ruler span:last-child { transform: translateX(-100%); }
+.cal2-track { position: relative; height: 52px; border-radius: 8px; background: rgba(255, 255, 255, .025); border: 1px solid var(--line); overflow: hidden;
+  background-image: repeating-linear-gradient(90deg, rgba(255, 255, 255, .07) 0 1px, transparent 1px calc(100% / 24)); }
+.cal2-ev { position: absolute; border-radius: 6px; padding: 2px 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; line-height: 1.25; cursor: default; }
+.cal2-ev.assignment { top: 3px; height: 21px; background: rgba(120, 45, 205, .45); border: 1px solid rgba(170, 90, 255, .8); }
+.cal2-ev.reservation { top: 27px; height: 21px; background: rgba(41, 214, 240, .3); border: 1px solid var(--cyan); color: #dffaff; }
+.cal2-ev.blackout { top: 3px; bottom: 3px; background: repeating-linear-gradient(45deg, rgba(255, 75, 92, .4) 0 6px, rgba(255, 75, 92, .15) 6px 12px); border: 1px solid var(--red); z-index: 2; }
+.cal2-now { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--amber); box-shadow: 0 0 6px var(--amber); z-index: 3; }
+.cal2-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; font-size: 12px; color: var(--muted); }
+.cal2-legend i { display: inline-block; width: 22px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
+.cal2-legend i.assignment { background: rgba(120, 45, 205, .45); border: 1px solid rgba(170, 90, 255, .8); }
+.cal2-legend i.reservation { background: rgba(41, 214, 240, .3); border: 1px solid var(--cyan); }
+.cal2-legend i.blackout { background: repeating-linear-gradient(45deg, rgba(255, 75, 92, .4) 0 4px, rgba(255, 75, 92, .15) 4px 8px); border: 1px solid var(--red); }
+.cal2-legend i.now { width: 3px; background: var(--amber); }
+
+/* ---------------------------------------------------------------- parâmetros (liga/desliga) */
+.params { display: grid; gap: 10px; }
+.param { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; border-radius: 10px; background: #15112b; border: 1px solid var(--line); }
+.param h3 { margin: 0 0 2px; font-size: 14px; }
+.param p { margin: 0; font-size: 12px; color: var(--muted); }
+.switch { position: relative; flex-shrink: 0; width: 46px; height: 26px; border-radius: 999px; border: 1px solid var(--line2); background: #2a2440; transition: background .15s; padding: 0; }
+.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #cfc8e6; transition: transform .15s; }
+.switch[aria-checked='true'] { background: linear-gradient(90deg, #9b2ff0, #c13eff); border-color: transparent; }
+.switch[aria-checked='true']::after { transform: translateX(20px); background: #fff; }
+.param.off { border-color: rgba(255, 75, 92, .35); }
+.table .group-row td { background: rgba(140, 80, 255, .1); font-weight: 600; border-top: 1px solid var(--line2); }
+.table .group-row td::first-letter { text-transform: uppercase; }
+.cal2-ev.reservation.pending, .cal2-legend i.reservation.pending { background: rgba(41, 214, 240, .08); border-style: dashed; }
+.cal2-ev.reservation.cancel-req, .cal2-legend i.reservation.cancel-req { background: repeating-linear-gradient(45deg, rgba(255, 191, 60, .35) 0 5px, rgba(41, 214, 240, .15) 5px 10px); border-color: var(--amber); }
+.cal2-ev.reservation.past { opacity: .5; }

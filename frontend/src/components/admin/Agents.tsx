@@ -23,9 +23,9 @@ export default function Agents() {
       {secret && <Alert kind="warn"><span>Tokens gerados (exibidos uma única vez): agente→API <code>{secret.agent_token}</code> · API→agente <code>{secret.api_to_agent_token}</code></span></Alert>}
       <section className="card stack"><h2>Novo agente</h2><div className="grid3">
         <Field label="Nome"><input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value })} /></Field>
-        <Field label="Host"><input value={a.host_name} onChange={(e) => setA({ ...a, host_name: e.target.value })} /></Field>
-        <Field label="Endpoint HTTPS do agente"><input value={a.endpoint_url} onChange={(e) => setA({ ...a, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
-        <Field label="Localização"><input value={a.location} onChange={(e) => setA({ ...a, location: e.target.value })} /></Field>
+        <Field label="Host"><input maxLength={253} value={a.host_name} onChange={(e) => setA({ ...a, host_name: e.target.value })} /></Field>
+        <Field label="Endpoint HTTPS do agente"><input maxLength={500} value={a.endpoint_url} onChange={(e) => setA({ ...a, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
+        <Field label="Localização"><input maxLength={120} value={a.location} onChange={(e) => setA({ ...a, location: e.target.value })} /></Field>
         <label className="check"><input type="checkbox" checked={a.is_simulated} onChange={(e) => setA({ ...a, is_simulated: e.target.checked })} />Agente SIMULADO (desenvolvimento)</label></div>
         <button className="btn primary" onClick={() => run(async () => { setSecret(await post('/admin/agents', { ...a, endpoint_url: a.endpoint_url || null })); agents.reload(); }, 'Agente cadastrado.')}>Cadastrar</button>
         <DataTable rows={agents.data} cols={[['Nome', (r) => String(r.name)], ['Host', (r) => String(r.host_name)], ['Status', (r) => String(r.status)], ['Simulado', (r) => (r.is_simulated ? 'sim' : 'não')],

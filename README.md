@@ -36,6 +36,14 @@ locaplay/
 ## Pré-requisitos
 Node 20+, Python 3.11+, PostgreSQL 15+ (ou Docker, ou um projeto Supabase).
 
+## Ambiente local em um comando (Windows/Linux)
+```bash
+python dev.py            # prepara o que faltar e sobe PostgreSQL (5433) + API (8000) + Next (3000); Ctrl+C encerra tudo
+python dev.py --setup    # só prepara (banco, .venv, npm, .env, migrations, seed)
+python dev.py --demo     # recria os dados demonstrativos (SIMULADOS)
+```
+Usa um cluster PostgreSQL próprio de desenvolvimento (fora do repositório, `LOCAPLAY_PGDATA`), encerra processos esquecidos nas portas 8000/3000 e gera `backend/.env` na primeira vez (a senha do admin aparece no terminal).
+
 ## Banco de dados
 **Supabase (recomendado):** siga `docs/SUPABASE.md` (cria o projeto, pega a connection string do *Session pooler* e roda as migrations).
 

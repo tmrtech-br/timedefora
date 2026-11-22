@@ -9,6 +9,7 @@ import { ApiError, post } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 
 const GOOGLE_ERR: Record<string, string> = {
+  cadastro_desativado: 'Novos cadastros estão desativados no momento.',
   google_vincular: 'Já existe uma conta com este e-mail. Entre com sua senha e vincule o Google em Perfil > Contas vinculadas.',
   google_cancelado: 'Login com Google cancelado.', conta_suspensa: 'Conta suspensa. Fale com o suporte.',
   google_not_configured: 'Login com Google não configurado.', invalid_state: 'Sessão de login expirada. Tente novamente.',
@@ -40,7 +41,7 @@ function LoginForm() {
     <AuthCard title="Entrar no LocaPlay" subtitle="Acesse sua conta para reservar e jogar.">
       {error && <Alert kind="error">{error}</Alert>}
       <form className="stack" onSubmit={submit} noValidate>
-        <Field label="E-mail"><input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+        <Field label="E-mail"><input maxLength={254} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         <Field label="Senha"><input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
         <button className="btn primary block" disabled={busy || !email || !password}>{busy ? 'Entrando…' : 'Entrar'}</button>
       </form>

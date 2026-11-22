@@ -16,7 +16,7 @@ export default function Recuperar() {
     <AuthCard title="Recuperar senha" subtitle="Enviaremos um link válido por 30 minutos.">
       {msg && <Alert kind={msg.k}>{msg.t}</Alert>}
       <form className="stack" onSubmit={submit}>
-        <Field label="E-mail da conta"><input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
+        <Field label="E-mail da conta"><input maxLength={254} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
         <button className="btn primary block" disabled={!email}>Enviar instruções</button>
       </form>
     </AuthCard>

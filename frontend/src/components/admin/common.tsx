@@ -3,6 +3,15 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui';
 import type { ApiError } from '@/lib/api';
 
+/** Nomes dos campos da API em português (para mensagens de validação). */
+export const FIELD_LABELS: Record<string, string> = {
+  starts_at: 'Início', ends_at: 'Fim', console_id: 'Console', game_id: 'Jogo', reason: 'Motivo/justificativa', name: 'Nome', code: 'Código',
+  title: 'Título', slug: 'Slug', minutes: 'Minutos', price_cents: 'Preço', valid_from: 'Válido de', valid_until: 'Válido até', occurrences: 'Ocorrências',
+  discount_value: 'Desconto', discount_type: 'Tipo de desconto', email: 'E-mail', username: 'Nome de usuário', full_name: 'Nome completo',
+  channel_name: 'Nome do canal', external_url: 'URL', provider: 'Plataforma', version: 'Versão', body: 'Texto', subject: 'Assunto', value: 'Valor',
+  host_name: 'Host', endpoint_url: 'Endpoint', platform_code: 'Plataforma', model: 'Modelo', serial: 'Série', location: 'Localização', method: 'Método',
+};
+
 export function useAction() {
   const [msg, setMsg] = useState<{ k: 'ok' | 'error'; t: string; extra?: unknown } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -11,7 +20,8 @@ export function useAction() {
     try { const r = await fn(); if (ok) setMsg({ k: 'ok', t: ok }); return r; }
     catch (e) {
       const a = e as ApiError;
-      const fields = a.fields && Object.keys(a.fields).length ? ' ' + Object.entries(a.fields).map(([k, v]) => `${k}: ${v}`).join(' · ') : '';
+      const fields = a.fields && Object.keys(a.fields).length
+        ? ' ' + Object.entries(a.fields).map(([k, v]) => `${FIELD_LABELS[k] || k}: ${String(v).replace(/^Valor inválido\.?$/, 'preencha corretamente')}`).join(' · ') : '';
       setMsg({ k: 'error', t: a.message + fields, extra: a.data });
     } finally { setBusy(false); }
   }

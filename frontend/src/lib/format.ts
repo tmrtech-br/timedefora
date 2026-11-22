@@ -29,3 +29,8 @@ export const PAYMENT_STATUS: Record<string, string> = {
 };
 export const QUEUE_STATUS: Record<string, string> = { playing: 'jogando', next: 'próximo', waiting: 'aguardando' };
 export const PLATFORM_SHORT: Record<string, string> = { PS5: 'PS5', PS4: 'PS4', XBOX_SERIES: 'Xbox Series', XBOX_ONE: 'Xbox One', SWITCH: 'Nintendo Switch' };
+export const CANCEL_REQUEST_STATUS: Record<string, string> = { requested: 'Em análise', approved: 'Aprovada', denied: 'Recusada' };
+export const DATA_REQUEST_STATUS: Record<string, string> = { open: 'Aberta', in_progress: 'Em andamento', completed: 'Concluída', rejected: 'Recusada' };
+export const SESSION_STATUS: Record<string, string> = { ready: 'Pronta', active: 'Em andamento', ended: 'Encerrada', expired: 'Expirada', failed: 'Falhou' };
+export const TICKET_STATUS: Record<string, string> = { open: 'Aberto', in_progress: 'Em andamento', resolved: 'Resolvido', closed: 'Fechado' };
+export const TICKET_CATEGORY: Record<string, string> = { geral: 'Geral', pagamento: 'Pagamento', sessao: 'Sessão', conta: 'Conta', reembolso: 'Reembolso', tecnico: 'Técnico' };

@@ -13,7 +13,7 @@ from ..core.deps import Principal, client_ip, current_user, verified_user
 from ..core.errors import AppError, bad_request, conflict, not_found
 from ..services import notifications, payments, scheduling, sessions
 from ..services.payment_providers import verify_mp_signature
-from ..services.settings_store import get_settings
+from ..services.settings_store import get_settings, require_enabled
 from .common import jsonable
 
 router = APIRouter(tags=['jogador'])
@@ -269,6 +269,8 @@ def my_tickets(p: Principal = Depends(current_user)):
 def open_ticket(body: TicketIn, p: Principal = Depends(current_user)):
     if body.category not in ('geral', 'pagamento', 'sessao', 'conta', 'reembolso', 'tecnico'):
         raise bad_request('invalid_category', 'Categoria inválida.')
+    with tx() as conn:
+        require_enabled(conn, 'support_tickets_enabled', 'A abertura de novos chamados está desativada no momento.')
     security.rate_limit(f'ticket:{p.user_id}', 5, 3600)
     with tx() as conn:
         if body.reservation_id and not one(conn, 'select 1 from reservations where id=%s and user_id=%s', (body.reservation_id, p.user_id)):

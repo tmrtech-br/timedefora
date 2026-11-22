@@ -19,7 +19,7 @@ from ..core import timeutil
 from ..core.db import audit_event, insert
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found, unprocessable
 from . import notifications
-from .settings_store import get_settings
+from .settings_store import disabled_platforms, get_settings
 
 OCCUPYING = ('pending_payment', 'confirmed', 'active')
 
@@ -73,8 +73,9 @@ def eligible_consoles(conn, game_id, console_id=None, lock: bool = False) -> lis
            where c.deleted_at is null and c.is_published and c.status='online' and cfg.validated_at is not null
              and cfg.method <> 'unconfigured'
              and exists (select 1 from console_game_assignments a where a.console_id=c.id and a.game_id=%s
-                         and a.status='active' and a.ends_at > %s)"""
-    params: list = [game_id, timeutil.now()]
+                         and a.status='active' and a.ends_at > %s)
+             and not exists (select 1 from platforms pl where pl.id=c.platform_id and pl.code = any(%s))"""
+    params: list = [game_id, timeutil.now(), disabled_platforms(conn)]
     if console_id:
         q += ' and c.id=%s'
         params.append(console_id)
@@ -263,6 +264,12 @@ def create_reservation(user, game_id, minutes: int, mode: str, start_at: datetim
     if not accept_policy:
         raise unprocessable('policy_required', 'É necessário aceitar a política de agendamento, ausência e cancelamento.')
     st = get_settings(conn)
+    if mode == 'queue' and not st['queue_mode_enabled']:
+        raise AppError(409, 'feature_disabled', 'A compra em modo fila está desativada no momento.')
+    if mode == 'scheduled' and not st['scheduled_mode_enabled']:
+        raise AppError(409, 'feature_disabled', 'A compra com horário marcado está desativada no momento.')
+    if coupon_code and not st['coupons_enabled']:
+        raise AppError(409, 'feature_disabled', 'O uso de cupons está desativado no momento.')
     if st['sales_paused']:
         raise AppError(409, 'sales_paused', 'Vendas pausadas temporariamente. ' + (st.get('sales_paused_reason') or ''))
     game = conn.execute('select * from games where id=%s', (game_id,)).fetchone()

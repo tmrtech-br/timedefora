@@ -11,6 +11,7 @@ import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
 import { dateTime, minutesLabel, money, time } from '@/lib/format';
 import type { GameCard as G, QueueItem, Reservation } from '@/lib/types';
+import { useFeatures } from '@/lib/features';
 
 type ConsoleAvail = { console_id: string; console_name: string; messages: string[]; queue_size: number; playing_now: string | null;
   current_window: { starts_at: string; ends_at: string; remaining_minutes: number } | null; next_window: { starts_at: string } | null;
@@ -31,6 +32,12 @@ export default function GamePage() {
   const [mode, setMode] = useState<'queue' | 'scheduled'>('queue');
   const [startLocal, setStartLocal] = useState('');
   const [coupon, setCoupon] = useState('');
+  const features = useFeatures();
+  useEffect(() => {
+    if (!features) return;
+    if (mode === 'queue' && !features.queue_mode_enabled && features.scheduled_mode_enabled) setMode('scheduled');
+    if (mode === 'scheduled' && !features.scheduled_mode_enabled && features.queue_mode_enabled) setMode('queue');
+  }, [features, mode]);
   const [accept, setAccept] = useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [busy, setBusy] = useState(false);
@@ -101,8 +108,9 @@ export default function GamePage() {
             ))}
           </div>
           <div className="row" style={{ margin: '14px 0' }} role="radiogroup" aria-label="Tipo de reserva">
-            <label className="check"><input type="radio" checked={mode === 'queue'} onChange={() => setMode('queue')} /><span><b>Entrar na fila</b> — início estimado, pode antecipar</span></label>
-            <label className="check"><input type="radio" checked={mode === 'scheduled'} onChange={() => setMode('scheduled')} /><span><b>Horário fixo</b></span></label>
+            {features?.queue_mode_enabled !== false && <label className="check"><input type="radio" checked={mode === 'queue'} onChange={() => setMode('queue')} /><span><b>Entrar na fila</b> — início estimado, pode antecipar</span></label>}
+            {features?.scheduled_mode_enabled !== false && <label className="check"><input type="radio" checked={mode === 'scheduled'} onChange={() => setMode('scheduled')} /><span><b>Horário fixo</b></span></label>}
+            {features && !features.queue_mode_enabled && !features.scheduled_mode_enabled && <Alert kind="warn">Compras temporariamente indisponíveis.</Alert>}
           </div>
           {mode === 'scheduled' && <Field label="Data e hora de início (horário de Fortaleza)"><input type="datetime-local" step={60} value={startLocal} onChange={(e) => setStartLocal(e.target.value)} /></Field>}
           {quote && (quote.available ? (
@@ -110,7 +118,7 @@ export default function GamePage() {
               <span className="small">{quote.estimate_notice} Seu tempo conta a partir do início reservado.</span></span></Alert>
           ) : <Alert kind="warn">{quote.message}</Alert>)}
           <div className="stack" style={{ marginTop: 12 }}>
-            <Field label="Cupom (opcional)"><input value={coupon} onChange={(e) => setCoupon(e.target.value.toUpperCase())} maxLength={30} /></Field>
+            {features?.coupons_enabled !== false && <Field label="Cupom (opcional)"><input value={coupon} onChange={(e) => setCoupon(e.target.value.toUpperCase())} maxLength={30} /></Field>}
             {g.cancellation_policy && (
               <details className="small"><summary>{g.cancellation_policy.title} (v{g.cancellation_policy.version})</summary>
                 <p style={{ whiteSpace: 'pre-line' }} className="muted">{g.cancellation_policy.body}</p></details>

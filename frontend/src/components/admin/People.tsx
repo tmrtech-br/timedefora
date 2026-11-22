@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Field, PageHeader } from '@/components/ui';
+import { Alert, Field, PageHeader } from '@/components/ui';
 import { patch, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
@@ -40,9 +40,9 @@ export function Notifications() {
       <PageHeader title="Notificações" subtitle="Templates HTML/texto, entregas, falhas e reenvio. Variáveis entre chaves, ex.: {nome_usuario}." />
       {msg}
       {edit && <section className="card stack"><h2>{String(edit.code)} · {String(edit.channel)}</h2>
-        <Field label="Assunto / título"><input value={String(edit.subject)} onChange={(e) => setEdit({ ...edit, subject: e.target.value })} /></Field>
-        <Field label="Texto"><textarea value={String(edit.body_text)} onChange={(e) => setEdit({ ...edit, body_text: e.target.value })} /></Field>
-        {edit.channel === 'email' && <Field label="HTML"><textarea value={String(edit.body_html)} onChange={(e) => setEdit({ ...edit, body_html: e.target.value })} /></Field>}
+        <Field label="Assunto / título"><input maxLength={200} value={String(edit.subject)} onChange={(e) => setEdit({ ...edit, subject: e.target.value })} /></Field>
+        <Field label="Texto"><textarea maxLength={50000} value={String(edit.body_text)} onChange={(e) => setEdit({ ...edit, body_text: e.target.value })} /></Field>
+        {edit.channel === 'email' && <Field label="HTML"><textarea maxLength={50000} value={String(edit.body_html)} onChange={(e) => setEdit({ ...edit, body_html: e.target.value })} /></Field>}
         <div className="row"><button className="btn primary" onClick={() => run(async () => { await put(`/admin/notification-templates/${edit.id}`, { subject: edit.subject, body_text: edit.body_text, body_html: edit.body_html, active: edit.active }); setEdit(null); t.reload(); }, 'Template salvo.')}>Salvar</button>
           <button className="btn" onClick={() => setEdit(null)}>Fechar</button></div></section>}
       <section className="card"><h2>Templates</h2><DataTable rows={t.data} cols={[['Código', (r) => String(r.code)], ['Canal', (r) => String(r.channel)], ['Assunto', (r) => String(r.subject)], ['Versão', (r) => String(r.version)],
@@ -102,6 +102,12 @@ export function Audit() {
   );
 }
 
+// Chaves editadas na tela Parâmetros (com rótulos e validação próprios).
+const IN_PARAMS = new Set(['sales_paused', 'sales_paused_reason', 'disabled_platforms', 'signup_enabled', 'google_login_enabled', 'queue_mode_enabled',
+  'scheduled_mode_enabled', 'coupons_enabled', 'keyboard_mouse_enabled', 'public_streams_enabled', 'support_tickets_enabled', 'hold_minutes', 'setup_minutes',
+  'scheduled_lead_minutes', 'queue_lead_minutes', 'booking_horizon_days', 'max_pending_holds_per_user', 'max_future_reservations_per_user',
+  'cancel_full_refund_min_minutes_before', 'no_show_tolerance_minutes', 'featured_window_days', 'agent_heartbeat_timeout_seconds']);
+
 export function Settings() {
   const s = useApi<{ values: Record<string, unknown>; defaults: Record<string, unknown>; critical: string[] }>('/admin/settings');
   const pol = useApi<R[]>('/admin/policies');
@@ -113,13 +119,14 @@ export function Settings() {
     <div className="stack">
       <PageHeader title="Configurações operacionais" subtitle="Alterações auditadas. Itens críticos exigem superadministrador." />
       {msg}
-      <section className="card"><DataTable rows={s.data ? Object.entries(s.data.values).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
+      <Alert kind="info"><span>Liga/desliga de funções, plataformas e regras de agenda ficam em <a className="link-purple" href="/admin/parametros">Parâmetros</a>. Aqui ficam os ajustes avançados.</span></Alert>
+      <section className="card"><DataTable rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
         ['Valor', (r) => <input className="btn sm" style={{ width: 280 }} value={vals[String(r.k)] ?? (Array.isArray(r.v) ? (r.v as number[]).join(',') : String(r.v))} onChange={(e) => setVals({ ...vals, [String(r.k)]: e.target.value })} />],
         ['', (r) => <button className="btn sm" disabled={vals[String(r.k)] === undefined} onClick={() => { const reason = prompt('Motivo da alteração:') || ''; run(async () => { await put(`/admin/settings/${r.k}`, { value: parse(String(r.k), vals[String(r.k)]), reason }); s.reload(); }, 'Configuração salva.'); }}>Salvar</button>]]} /></section>
       <section className="card stack"><h2>Políticas (termos, privacidade, cancelamento)</h2>
         <div className="grid3"><Field label="Tipo"><select value={p.kind} onChange={(e) => setP({ ...p, kind: e.target.value })}><option value="terms">Termos</option><option value="privacy">Privacidade</option><option value="cancellation">Cancelamento</option></select></Field>
-          <Field label="Versão"><input value={p.version} onChange={(e) => setP({ ...p, version: e.target.value })} /></Field><Field label="Título"><input value={p.title} onChange={(e) => setP({ ...p, title: e.target.value })} /></Field></div>
-        <Field label="Texto"><textarea style={{ minHeight: 160 }} value={p.body} onChange={(e) => setP({ ...p, body: e.target.value })} /></Field>
+          <Field label="Versão"><input maxLength={20} value={p.version} onChange={(e) => setP({ ...p, version: e.target.value })} /></Field><Field label="Título"><input maxLength={200} value={p.title} onChange={(e) => setP({ ...p, title: e.target.value })} /></Field></div>
+        <Field label="Texto"><textarea maxLength={50000} style={{ minHeight: 160 }} value={p.body} onChange={(e) => setP({ ...p, body: e.target.value })} /></Field>
         <button className="btn primary" onClick={() => run(async () => { await post('/admin/policies', p); pol.reload(); }, 'Nova versão publicada.')}>Publicar nova versão</button>
         <DataTable rows={pol.data} cols={[['Tipo', (r) => String(r.kind)], ['Versão', (r) => String(r.version)], ['Atual', (r) => (r.is_current ? 'sim' : 'não')], ['Publicada', (r) => dateTime(r.published_at as string)]]} /></section>
     </div>

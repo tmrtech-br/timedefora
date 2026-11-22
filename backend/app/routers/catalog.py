@@ -1,12 +1,14 @@
 """Rotas públicas: home/dashboard, catálogo, página do jogo, filas públicas, políticas."""
-from fastapi import APIRouter, Depends, Query
+import os
 
-from ..core import timeutil
+from fastapi import APIRouter, Depends, Query, Request, Response
+
+from ..core import security, timeutil
 from ..core.db import all_, one, tx
-from ..core.deps import Principal, optional_user
+from ..core.deps import Principal, client_ip, optional_user
 from ..core.errors import not_found
 from ..services import catalog, scheduling
-from ..services.settings_store import get_settings
+from ..services.settings_store import PUBLIC_FLAGS, disabled_platforms, get_settings
 from .common import jsonable
 
 router = APIRouter(tags=['catálogo'])
@@ -99,10 +101,33 @@ def games(q: str = '', platform: str = '', genre: str = '', availability: str = 
     return cards
 
 
+@router.get('/net/ping')
+def net_ping():
+    """Usado pelo teste de conexão da sala de espera (latência até o servidor)."""
+    return Response(status_code=204, headers={'Cache-Control': 'no-store'})
+
+
+@router.get('/net/download')
+def net_download(request: Request, kb: int = Query(1024, ge=64, le=4096)):
+    """Bytes aleatórios (não compressíveis) para estimar a velocidade de download até o servidor."""
+    security.rate_limit(f'net:{client_ip(request)}', 30, 600)
+    return Response(os.urandom(kb * 1024), media_type='application/octet-stream',
+                    headers={'Cache-Control': 'no-store', 'Content-Encoding': 'identity'})
+
+
+@router.get('/features')
+def features():
+    """Parâmetros liga/desliga públicos, para a interface esconder o que estiver desativado (o servidor também bloqueia)."""
+    with tx() as conn:
+        st = get_settings(conn)
+    return {k: st[k] for k in PUBLIC_FLAGS}
+
+
 @router.get('/catalog/filters')
 def filters():
     with tx() as conn:
-        return {'platforms': jsonable(all_(conn, 'select code, name, family from platforms order by name')),
+        off = disabled_platforms(conn)
+        return {'platforms': jsonable(all_(conn, 'select code, name, family from platforms where not (code = any(%s)) order by name', (off,))),
                 'genres': [r['name'] for r in all_(conn, 'select name from genres order by name')],
                 'statuses': catalog.STATUS_LABEL}
 
@@ -110,7 +135,8 @@ def filters():
 @router.get('/catalog/games/{slug}')
 def game_detail(slug: str, p: Principal | None = Depends(optional_user)):
     with tx() as conn:
-        g = one(conn, "select * from games where slug=%s and deleted_at is null and status='published'", (slug,))
+        g = one(conn, f"select * from games where slug=%s and deleted_at is null and status='published' and {catalog.PLATFORM_ON}",
+                (slug, disabled_platforms(conn)))
         if not g:
             raise not_found('Jogo não encontrado.')
         out = catalog.card(conn, g)
@@ -128,7 +154,8 @@ def game_detail(slug: str, p: Principal | None = Depends(optional_user)):
                           (select console_id from console_game_assignments where game_id=%s and status='active'
                            and starts_at <= %s and ends_at > %s)) order by (status='live') desc limit 1""",
                  (g['id'], g['id'], timeutil.now(), timeutil.now()))
-        out['public_stream'] = jsonable(ch) if ch and g['stream_rights_allowed'] else None
+        streams_on = bool(get_settings(conn).get('public_streams_enabled', True))
+        out['public_stream'] = jsonable(ch) if ch and g['stream_rights_allowed'] and streams_on else None
         out['is_favorite'] = bool(p and one(conn, 'select 1 from favorites where user_id=%s and game_id=%s', (p.user_id, g['id'])))
         cp = one(conn, "select title, body, version from policy_documents where kind='cancellation' and is_current")
         out['cancellation_policy'] = jsonable(cp)

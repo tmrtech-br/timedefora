@@ -57,8 +57,8 @@ def _resolve_affected(conn, affected: list[dict], resolution: str | None, reason
     if not affected:
         return
     if resolution != 'cancel_and_refund':
-        raise conflict('affected_reservations', f'{len(affected)} reserva(s) afetada(s). Informe resolution="cancel_and_refund" '
-                       'e uma justificativa para cancelar com reembolso integral.',
+        raise conflict('affected_reservations', f'{len(affected)} reserva(s) de clientes seriam afetadas. Use a opção "reembolsar afetados" '
+                       '(com justificativa) para cancelá-las com reembolso integral.',
                        reservations=[{'code': r['code'], 'starts_at': r['starts_at'].isoformat(), 'status': r['status']} for r in affected])
     if len(reason.strip()) < 5:
         raise unprocessable('reason_required', 'Informe a justificativa.')
@@ -907,10 +907,14 @@ def calendar(date_from: datetime, date_to: datetime, console_id: uuid.UUID | Non
                            from console_game_assignments where status='active' and starts_at < %s and ends_at > %s{cf}""", [date_to, date_from, *extra])
         b = all_(conn, f"""select id, console_id, starts_at, ends_at, reason title, 'blackout' kind from blackout_windows
                            where status='active' and starts_at < %s and ends_at > %s{cf}""", [date_to, date_from, *extra])
-        r = all_(conn, f"""select r.id, r.console_id, r.starts_at, r.ends_at, r.code || ' · ' || u.username title, 'reservation' kind, r.status
+        # Reservas que ocupam o console: sem holds vencidos (pagamento não feito) nem canceladas/expiradas.
+        r = all_(conn, f"""select r.id, r.console_id, r.starts_at, r.ends_at, r.code || ' · ' || u.username title, 'reservation' kind, r.status,
+                                  exists(select 1 from cancellation_requests cr where cr.reservation_id=r.id and cr.status='requested') cancel_requested
                            from reservations r join users u on u.id=r.user_id
-                           where r.status in ('pending_payment','confirmed','active','completed','no_show') and r.starts_at < %s and r.ends_at > %s{cf.replace('console_id', 'r.console_id')}""",
-                   [date_to, date_from, *extra])
+                           where r.status in ('pending_payment','confirmed','active','completed','no_show')
+                             and not (r.status='pending_payment' and r.hold_expires_at <= %s)
+                             and r.starts_at < %s and r.ends_at > %s{cf.replace('console_id', 'r.console_id')}""",
+                   [timeutil.now(), date_to, date_from, *extra])
     return {'consoles': jsonable(consoles), 'events': jsonable(a + b + r)}
 
 
@@ -1013,9 +1017,31 @@ class ChannelIn(BaseModel):
 
 @router.get('/channels')
 def channels(p: Principal = Depends(OPERATOR)):
+    """Lista canais com diagnóstico: por que o canal (não) aparece na página do jogo."""
+    n = timeutil.now()
     with tx() as conn:
-        return jsonable(all_(conn, '''select s.*, c.name console_name, g.title game_title from streaming_channels s
-                                      left join consoles c on c.id=s.console_id left join games g on g.id=s.game_id order by s.created_at'''))
+        streams_on = bool(get_settings(conn).get('public_streams_enabled', True))
+        rows = all_(conn, '''select s.*, c.name console_name, g.title game_title from streaming_channels s
+                             left join consoles c on c.id=s.console_id left join games g on g.id=s.game_id order by s.created_at''')
+        for r in rows:
+            games = all_(conn, '''select id, title, stream_rights_allowed from games where deleted_at is null and status='published' and
+                                  (id=%s or id in (select game_id from console_game_assignments where console_id=%s and status='active'
+                                                   and starts_at <= %s and ends_at > %s))''', (r['game_id'], r['console_id'], n, n))
+            issues = []
+            if not streams_on:
+                issues.append('Transmissões estão desligadas em Parâmetros.')
+            if r['status'] == 'disabled':
+                issues.append('Canal desativado.')
+            elif r['status'] != 'live':
+                issues.append('Status "offline": a página mostra "não há transmissão agora". Mude para "ao vivo".')
+            if not games:
+                issues.append('Nenhum jogo publicado ligado a este canal agora (escolha um jogo ou um console com vínculo ativo).')
+            blocked = [g['title'] for g in games if not g['stream_rights_allowed']]
+            if blocked:
+                issues.append('Jogo(s) sem "Transmissão pública autorizada" (Painel → Jogos): ' + ', '.join(blocked) + '.')
+            r['issues'] = issues
+            r['shown_on'] = [g['title'] for g in games if g['stream_rights_allowed']] if streams_on and r['status'] != 'disabled' else []
+        return jsonable(rows)
 
 
 @router.post('/channels', status_code=201)
@@ -1535,6 +1561,10 @@ def put_setting(key: str, body: SettingIn, p: Principal = Depends(ADMIN)):
        isinstance(default, list) and not isinstance(body.value, list) or isinstance(default, str) and not isinstance(body.value, str):
         raise unprocessable('validation_error', 'Tipo de valor inválido para esta configuração.')
     with tx() as conn:
+        if key == 'disabled_platforms':
+            known = {r['code'] for r in conn.execute('select code from platforms').fetchall()}
+            if not all(isinstance(v, str) and v in known for v in body.value):
+                raise unprocessable('validation_error', 'Plataforma desconhecida.')
         conn.execute('''insert into global_settings(key, value, updated_by) values (%s,%s,%s)
                         on conflict (key) do update set value=excluded.value, updated_by=excluded.updated_by''', (key, Jsonb(body.value), p.user_id))
         audit_event(conn, 'settings.changed', 'global_settings', key, reason=body.reason, details={'value': body.value})

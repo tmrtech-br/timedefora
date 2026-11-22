@@ -21,7 +21,7 @@ function Mfa() {
     <AuthCard title="Verificação em duas etapas" subtitle="Digite o código do seu aplicativo autenticador (ou um código de recuperação).">
       {error && <Alert kind="error">{error}</Alert>}
       <form className="stack" onSubmit={submit}>
-        <Field label="Código"><input autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.trim())} /></Field>
+        <Field label="Código"><input maxLength={20} autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.trim())} /></Field>
         <button className="btn primary block" disabled={code.length < 6}>Confirmar</button>
       </form>
     </AuthCard>
