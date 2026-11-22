@@ -1,136 +1,120 @@
-"""LocaPlay API: server-side demo of game/console inventory, scheduling and simulated sessions.
-NOT production auth, billing, webhook or hardware control. Those endpoints remain disabled.
-"""
-import os, sqlite3, uuid
-from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from fastapi import FastAPI, HTTPException
+"""LocaPlay API — FastAPI + PostgreSQL/Supabase."""
+import logging
+import uuid
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from .adapters import ADAPTERS, AdapterKind, AdapterError
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
-DB_PATH = os.getenv('LOCAPLAY_DB', str(Path(__file__).resolve().parents[1] / 'locaplay_demo.db'))
-app = FastAPI(title='LocaPlay API (demo)', version='0.1.0')
-app.add_middleware(CORSMiddleware, allow_origins=os.getenv('LOCAPLAY_CORS','http://localhost:3000').split(','),allow_credentials=False,allow_methods=['GET','POST','PUT'],allow_headers=['Content-Type'])
+from .config import settings
+from .core.context import actor_id_var, actor_ip_var, request_id_var
+from .core.db import close_pool, get_pool
+from .core.deps import CSRF_COOKIE, SESSION_COOKIE, client_ip, load_principal
+from .core.errors import AppError
+from .gamebridge import CONTRACT_VERSION
+from .routers import admin, auth, catalog, me, play
+from .routers.me import MEDIA_DIR
 
-def now(): return datetime.now(timezone.utc)
-@contextmanager
-def db():
-    conn=sqlite3.connect(DB_PATH, timeout=20, isolation_level=None)
-    conn.row_factory=sqlite3.Row
-    conn.execute('PRAGMA foreign_keys=ON')
-    try: yield conn
-    finally: conn.close()
+log = logging.getLogger('locaplay')
+CSRF_EXEMPT_PREFIXES = ('/webhooks/', '/agents/')
 
-def init_db():
-    with db() as c:
-        c.executescript('''CREATE TABLE IF NOT EXISTS games(id TEXT PRIMARY KEY,title TEXT NOT NULL,platform TEXT NOT NULL,licensed INTEGER DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS consoles(id TEXT PRIMARY KEY,name TEXT NOT NULL,platform TEXT NOT NULL,adapter TEXT NOT NULL DEFAULT 'unconfigured',validated INTEGER NOT NULL DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS assignments(id TEXT PRIMARY KEY,game_id TEXT NOT NULL REFERENCES games(id),console_id TEXT NOT NULL REFERENCES consoles(id),start_at TEXT NOT NULL,end_at TEXT NOT NULL, CHECK(start_at<end_at));
-        CREATE TABLE IF NOT EXISTS reservations(id TEXT PRIMARY KEY,assignment_id TEXT NOT NULL REFERENCES assignments(id),user_public_name TEXT NOT NULL,start_at TEXT NOT NULL,end_at TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,reservation_id TEXT NOT NULL UNIQUE REFERENCES reservations(id),started_at TEXT NOT NULL,ends_at TEXT NOT NULL,status TEXT NOT NULL);''')
-        if not c.execute('SELECT 1 FROM games LIMIT 1').fetchone():
-            c.executemany('INSERT INTO games(id,title,platform,licensed) VALUES (?,?,?,0)', [('gta','GTA VI','PS5'),('gow','God of War','PS5'),('zelda','Zelda','Switch')])
-            c.executemany('INSERT INTO consoles(id,name,platform,adapter,validated) VALUES (?,?,?,?,?)',[('ps5-01','PS5 nº 01','PS5','simulated',1),('ps5-02','PS5 nº 02','PS5','unconfigured',0)])
 
-@app.on_event('startup')
-def startup():init_db()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings.validate()
+    get_pool()
+    worker = None
+    if settings.run_worker:
+        from .worker import WorkerThread
+        worker = WorkerThread()
+        worker.start()
+    yield
+    if worker:
+        worker.stop()
+    close_pool()
 
-class ConsoleInput(BaseModel):
-    name:str=Field(min_length=2,max_length=100)
-    platform:str
-    adapter:str='unconfigured'
-class AssignmentInput(BaseModel):
-    game_id:str
-    console_id:str
-    start_at:datetime
-    end_at:datetime
-class ReservationInput(BaseModel):
-    assignment_id:str
-    user_public_name:str=Field(min_length=2,max_length=50)
-    start_at:datetime
-    minutes:int=Field(ge=1,le=240)
-class InputCommand(BaseModel):
-    command:str
+
+app = FastAPI(title='LocaPlay API', version='1.0.0', lifespan=lifespan,
+              docs_url=None if settings.is_production else '/docs', redoc_url=None)
+app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=True,
+                   allow_methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+                   allow_headers=['Content-Type', 'X-CSRF-Token', 'X-Input-Token'])
+
+
+@app.middleware('http')
+async def security_middleware(request: Request, call_next):
+    rid = request.headers.get('x-request-id') or uuid.uuid4().hex
+    request_id_var.set(rid[:64])
+    actor_ip_var.set(client_ip(request))
+    actor_id_var.set(None)
+    request.state.principal = None
+    path = request.url.path
+    token = request.cookies.get(SESSION_COOKIE)
+    if request.method not in ('GET', 'HEAD', 'OPTIONS') and not path.startswith(CSRF_EXEMPT_PREFIXES):
+        origin = request.headers.get('origin')
+        if origin and origin not in settings.cors_origins:
+            return JSONResponse({'detail': 'Origem não permitida.', 'code': 'bad_origin'}, status_code=403)
+        if token:
+            header, cookie = request.headers.get('x-csrf-token'), request.cookies.get(CSRF_COOKIE)
+            if not header or not cookie or header != cookie:
+                return JSONResponse({'detail': 'Falha na verificação CSRF. Recarregue a página.', 'code': 'csrf'}, status_code=403)
+    if token:
+        p = load_principal(token)
+        request.state.principal = p
+        if p:
+            actor_id_var.set(p.user_id)
+    response = await call_next(request)
+    response.headers['X-Request-ID'] = rid[:64]
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Cache-Control'] = response.headers.get('Cache-Control', 'no-store')
+    if settings.cookie_secure:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    return response
+
+
+@app.exception_handler(AppError)
+async def app_error(request: Request, exc: AppError):
+    headers = {'Retry-After': str(exc.extra['retry_after'])} if 'retry_after' in exc.extra else None
+    return JSONResponse({'detail': exc.message, 'code': exc.code, **exc.extra}, status_code=exc.status, headers=headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    fields = {}
+    for e in exc.errors():
+        loc = [str(x) for x in e['loc'] if x not in ('body', 'query', 'path')]
+        fields['.'.join(loc) or 'request'] = 'Valor inválido.' if e['type'] != 'missing' else 'Campo obrigatório.'
+    return JSONResponse({'detail': 'Verifique os dados enviados.', 'code': 'validation_error', 'fields': fields}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def unhandled(request: Request, exc: Exception):
+    log.exception('Erro não tratado (request_id=%s)', request_id_var.get())
+    return JSONResponse({'detail': 'Erro interno. Tente novamente.', 'code': 'internal_error', 'request_id': request_id_var.get()},
+                        status_code=500)
+
 
 @app.get('/health')
-def health():return {'status':'ok','mode':'demo','real_payments':False,'real_consoles':False}
-@app.get('/games')
-def games():
-    with db() as c:return [dict(x) for x in c.execute('SELECT * FROM games ORDER BY title')]
-@app.get('/consoles')
-def consoles():
-    with db() as c:return [dict(x) for x in c.execute('SELECT * FROM consoles ORDER BY name')]
-@app.post('/consoles',status_code=201)
-def create_console(payload:ConsoleInput):
-    if payload.adapter not in [x.value for x in AdapterKind]+['unconfigured']:raise HTTPException(422,'Unknown adapter')
-    cid=str(uuid.uuid4())
-    with db() as c:c.execute('INSERT INTO consoles VALUES(?,?,?,?,0)',(cid,payload.name,payload.platform,payload.adapter))
-    return {'id':cid,'validated':False,'note':'Hardware not validated'}
-@app.get('/adapters')
-def adapters():return {'available':[x.value for x in AdapterKind],'hardware_ready':False,'simulator_ready':True}
-@app.get('/assignments')
-def assignments():
-    with db() as c:return [dict(x) for x in c.execute('SELECT * FROM assignments ORDER BY start_at')]
-@app.post('/assignments',status_code=201)
-def create_assignment(payload:AssignmentInput):
-    a,b=payload.start_at,payload.end_at
-    if a.tzinfo is None or b.tzinfo is None:raise HTTPException(422,'Timezone required')
-    a,b=a.astimezone(timezone.utc),b.astimezone(timezone.utc)
-    if a>=b:raise HTTPException(422,'Invalid interval')
-    with db() as c:
-        c.execute('BEGIN IMMEDIATE')
-        if not c.execute('SELECT 1 FROM consoles WHERE id=?',(payload.console_id,)).fetchone():raise HTTPException(404,'Console missing')
-        if not c.execute('SELECT 1 FROM games WHERE id=?',(payload.game_id,)).fetchone():raise HTTPException(404,'Game missing')
-        if c.execute('SELECT 1 FROM assignments WHERE console_id=? AND start_at<? AND end_at>?',(payload.console_id,b.isoformat(),a.isoformat())).fetchone():raise HTTPException(409,'Overlapping console assignment')
-        aid=str(uuid.uuid4());c.execute('INSERT INTO assignments VALUES(?,?,?,?,?)',(aid,payload.game_id,payload.console_id,a.isoformat(),b.isoformat()));c.commit()
-    return {'id':aid,'start_at':a,'end_at':b}
-@app.post('/reservations',status_code=201)
-def reserve(payload:ReservationInput):
-    if payload.start_at.tzinfo is None:raise HTTPException(422,'Timezone required')
-    start=payload.start_at.astimezone(timezone.utc);end=start+timedelta(minutes=payload.minutes)
-    if start<now():raise HTTPException(409,'Cannot reserve past time')
-    with db() as c:
-        c.execute('BEGIN IMMEDIATE')
-        assignment=c.execute('SELECT a.*,c.adapter,c.validated FROM assignments a JOIN consoles c ON a.console_id=c.id WHERE a.id=?',(payload.assignment_id,)).fetchone()
-        if not assignment:raise HTTPException(404,'Assignment missing')
-        if assignment['adapter']!='simulated' or not assignment['validated']:raise HTTPException(409,'Console not validated for demo operation')
-        if start.isoformat()<assignment['start_at'] or end.isoformat()>assignment['end_at']:raise HTTPException(409,'Requested duration exceeds availability window')
-        conflict=c.execute('SELECT 1 FROM reservations WHERE assignment_id=? AND status IN (\'confirmed\',\'active\') AND start_at<? AND end_at>?',(payload.assignment_id,end.isoformat(),start.isoformat())).fetchone()
-        if conflict:raise HTTPException(409,'Schedule conflict')
-        rid=str(uuid.uuid4());c.execute('INSERT INTO reservations VALUES(?,?,?,?,?,?,?)',(rid,payload.assignment_id,payload.user_public_name,start.isoformat(),end.isoformat(),'confirmed',now().isoformat()));c.commit()
-    return {'id':rid,'start_at':start,'end_at':end,'status':'confirmed','payment':'not charged — demo'}
-@app.get('/reservations')
-def reservations():
-    # Demo only; NEVER expose this unauthenticated in production.
-    with db() as c:return [dict(x) for x in c.execute('SELECT * FROM reservations ORDER BY created_at DESC')]
-@app.post('/sessions/{reservation_id}/start')
-async def start_session(reservation_id:str):
-    with db() as c:
-        c.execute('BEGIN IMMEDIATE')
-        reservation=c.execute('SELECT r.*,a.console_id FROM reservations r JOIN assignments a ON r.assignment_id=a.id WHERE r.id=?',(reservation_id,)).fetchone()
-        if not reservation:raise HTTPException(404,'Reservation not found')
-        if reservation['status']!='confirmed':raise HTTPException(409,'Already started or ended')
-        current=now()
-        if not (datetime.fromisoformat(reservation['start_at'])<=current<datetime.fromisoformat(reservation['end_at'])):raise HTTPException(409,'Outside confirmed session time')
-        if c.execute('''SELECT 1 FROM sessions s JOIN reservations r ON s.reservation_id=r.id JOIN assignments a ON r.assignment_id=a.id WHERE a.console_id=? AND s.status='active' ''',(reservation['console_id'],)).fetchone():raise HTTPException(409,'Console already controlled')
-        sid=str(uuid.uuid4());c.execute('INSERT INTO sessions VALUES(?,?,?,?,?)',(sid,reservation_id,current.isoformat(),reservation['end_at'],'active'));c.execute('UPDATE reservations SET status=? WHERE id=?',('active',reservation_id));c.commit()
-    await ADAPTERS[AdapterKind.SIMULATED].start_stream(sid)
-    return {'session_id':sid,'simulated':True,'ends_at':reservation['end_at']}
-@app.post('/sessions/{session_id}/input')
-async def session_input(session_id:str,payload:InputCommand):
-    with db() as c:
-        s=c.execute('SELECT * FROM sessions WHERE id=?',(session_id,)).fetchone()
-        if not s or s['status']!='active' or now()>=datetime.fromisoformat(s['ends_at']):raise HTTPException(403,'Session expired')
-    try:return await ADAPTERS[AdapterKind.SIMULATED].send_input(session_id,{'command':payload.command})
-    except AdapterError as e:raise HTTPException(403,str(e))
-@app.post('/sessions/{session_id}/end')
-async def end_session(session_id:str):
-    with db() as c:
-        c.execute('BEGIN IMMEDIATE');s=c.execute('SELECT * FROM sessions WHERE id=?',(session_id,)).fetchone()
-        if not s:raise HTTPException(404,'Session missing')
-        c.execute('UPDATE sessions SET status=? WHERE id=?',('ended',session_id));c.execute('UPDATE reservations SET status=? WHERE id=?',('ended',s['reservation_id']));c.commit()
-    await ADAPTERS[AdapterKind.SIMULATED].revoke_input(session_id)
-    await ADAPTERS[AdapterKind.SIMULATED].stop_stream(session_id)
-    return {'status':'ended'}
+def health():
+    db_ok = True
+    try:
+        with get_pool().connection() as c:
+            c.execute('select 1')
+    except Exception:  # noqa: BLE001
+        db_ok = False
+    return {'status': 'ok' if db_ok else 'degraded', 'database': db_ok, 'env': settings.env,
+            'payment_provider': settings.payment_provider, 'payments_simulated': settings.payment_provider == 'simulated',
+            'email_provider': settings.email_provider, 'gamebridge_contract': CONTRACT_VERSION,
+            'real_consoles_validated': False}
+
+
+for r in (auth.router, me.router, catalog.router, play.router, admin.router):
+    app.include_router(r)
+
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+app.mount('/media', StaticFiles(directory=str(MEDIA_DIR)), name='media')
