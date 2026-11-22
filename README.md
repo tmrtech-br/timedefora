@@ -40,6 +40,7 @@ Node 20+, Python 3.11+, PostgreSQL 15+ (ou Docker, ou um projeto Supabase).
 ```bash
 python dev.py            # prepara o que faltar e sobe PostgreSQL (5433) + API (8000) + Next (3000); Ctrl+C encerra tudo
 python dev.py --setup    # só prepara (banco, .venv, npm, .env, migrations, seed)
+python dev.py --db       # sobe só o PostgreSQL (HeidiSQL/pgAdmin: 127.0.0.1:5433, usuário postgres, sem senha, banco locaplay)
 python dev.py --demo     # recria os dados demonstrativos (SIMULADOS)
 ```
 Usa um cluster PostgreSQL próprio de desenvolvimento (fora do repositório, `LOCAPLAY_PGDATA`), encerra processos esquecidos nas portas 8000/3000 e gera `backend/.env` na primeira vez (a senha do admin aparece no terminal).

@@ -3,6 +3,7 @@
     python dev.py              # prepara o que faltar e sobe banco + API + frontend
     python dev.py --demo       # idem, recriando os dados demonstrativos (SIMULADOS)
     python dev.py --setup      # só prepara (banco, dependências, .env, migrations) e sai
+    python dev.py --db         # sobe SÓ o PostgreSQL (ex.: para usar HeidiSQL/pgAdmin); Ctrl+C desliga
 
 O que ele faz, nesta ordem (cada passo é pulado se já estiver pronto):
   0. Encerra o que estiver ocupando as portas 8000 (API) e 3000 (Next), ex.: terminais esquecidos.
@@ -381,6 +382,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description='Sobe o ambiente local do LocaPlay.')
     ap.add_argument('--demo', action='store_true', help='recria os dados demonstrativos (SIMULADOS)')
     ap.add_argument('--setup', action='store_true', help='só prepara o ambiente e sai')
+    ap.add_argument('--db', action='store_true', help='sobe só o PostgreSQL (para HeidiSQL/pgAdmin)')
     args = ap.parse_args()
 
     if sys.version_info < (3, 11):
@@ -389,7 +391,7 @@ def main() -> None:
         def _on_break(*_):
             raise KeyboardInterrupt
         signal.signal(signal.SIGBREAK, _on_break)
-    if not args.setup:
+    if not args.setup and not args.db:
         for port, name in ((8000, 'API'), (3000, 'frontend')):
             free_port(port, name)
 
@@ -398,6 +400,14 @@ def main() -> None:
     procs: list[subprocess.Popen] = []
     try:
         ensure_databases(bin_dir)
+        if args.db:
+            log('-' * 60)
+            log(f'PostgreSQL rodando: host 127.0.0.1 · porta {PGPORT} · usuário postgres · sem senha · banco locaplay')
+            log('Ctrl+C desliga o banco.')
+            log('-' * 60)
+            while pg_proc is None or pg_proc.poll() is None:
+                time.sleep(1)
+            die(f'PostgreSQL encerrou inesperadamente. Veja {PGLOG}')
         ensure_venv()
         new_password = ensure_backend_env()
         migrate_and_seed(args.demo)
