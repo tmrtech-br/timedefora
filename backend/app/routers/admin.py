@@ -465,7 +465,7 @@ def create_console(body: ConsoleIn, p: Principal = Depends(ADMIN)):
         plat = one(conn, 'select * from platforms where code=%s', (body.platform_code,))
         if not plat:
             raise unprocessable('invalid_platform', 'Plataforma inválida.')
-        if one(conn, 'select 1 from consoles where code=%s', (code,)):
+        if one(conn, 'select 1 from consoles where code=%s and deleted_at is null', (code,)):
             raise conflict('code_taken', 'Já existe console com este código.')
         data = body.model_dump(exclude={'platform_code'})
         data['code'] = code
@@ -524,8 +524,17 @@ def set_console_status(cid: uuid.UUID, body: StatusIn, p: Principal = Depends(OP
 @router.delete('/consoles/{cid}')
 def delete_console(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
     with tx() as conn:
-        if _future_paid(conn, console_id=cid):
-            raise conflict('has_reservations', 'Não é possível excluir: há reservas futuras neste console.')
+        c = one(conn, 'select id from consoles where id=%s and deleted_at is null for update', (cid,))
+        if not c:
+            raise not_found('Console não encontrado.')
+        if one(conn, "select 1 from game_sessions where console_id=%s and status in ('ready','active')", (cid,)):
+            raise conflict('active_session', 'Não é possível excluir: há uma sessão de jogo ativa neste console.')
+        fut = _future_paid(conn, console_id=cid)
+        if fut:
+            raise conflict('has_reservations', f'Não é possível excluir: {len(fut)} reserva(s) futura(s) neste console. '
+                           'Coloque em manutenção com reembolso (ou remarque as reservas) antes de excluir.',
+                           reservations=[{'code': r['code'], 'starts_at': r['starts_at'].isoformat()} for r in fut])
+        audit_event(conn, 'console.deleted', 'consoles', cid)
         conn.execute("update consoles set deleted_at=%s, is_published=false, status='disabled' where id=%s", (timeutil.now(), cid))
         conn.execute("update console_game_assignments set status='archived' where console_id=%s and status='active' and ends_at > %s", (cid, timeutil.now()))
         conn.execute('update console_connection_configs set capture_device_id=null, control_adapter_id=null, connection_status=%s, method=%s where console_id=%s',

@@ -227,3 +227,20 @@ def test_rota_de_rede_remote_play_pela_internet(freeze):
     assert r.status_code == 200 and r.json()['connection']['public_host'] is None
     r = api.put(url, json={'method': 'simulated', 'network_route': 'internet_psn'})
     assert r.status_code == 422 and 'network_route' in r.json()['fields']
+
+
+def test_excluir_console_bloqueia_com_reserva_e_libera_codigo(world, freeze):
+    freeze(at(2, 8, 0))
+    api, _ = admin_api()
+    cid = str(world['console']['id'])
+    user = login(make_user('excl_user'))
+    rid = reserve(user, world, 10).json()['id']
+    assert pay(user, rid).status_code == 200
+    r = api.delete(f'/admin/consoles/{cid}')
+    assert r.status_code == 409 and r.json()['code'] == 'has_reservations'
+    # Sem reservas: exclui e o código pode ser reutilizado
+    c = _new_console(api, 'PS4-77', 'PS4')
+    assert api.delete(f"/admin/consoles/{c['id']}").status_code == 200
+    assert api.delete(f"/admin/consoles/{c['id']}").status_code == 404
+    assert not any(x['id'] == c['id'] for x in api.get('/admin/consoles').json())
+    assert _new_console(api, 'PS4-77', 'PS4')['id'] != c['id']

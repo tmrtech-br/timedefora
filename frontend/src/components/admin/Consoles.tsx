@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Field, PageHeader, StatusPill } from '@/components/ui';
-import { get, patch, post, put } from '@/lib/api';
+import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
+import { del, get, patch, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
 import { DataTable, useAction } from './common';
@@ -27,7 +27,7 @@ const TESTS: [string, string][] = [['discover', 'Descobrir console'], ['pair', '
   ['controls', 'Testar controles'], ['heartbeat', 'Verificar heartbeat'], ['latency', 'Medir latência']];
 const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-function Editor({ c, onChange }: { c: C; onChange: () => void }) {
+function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelete: () => void }) {
   const methods = useApi<Method[]>(`/admin/connection-methods?platform=${c.platform_code}`).data;
   const agents = useApi<Agent[]>('/admin/agents').data;
   const caps = useApi<Dev[]>('/admin/capture-devices').data;
@@ -161,6 +161,12 @@ function Editor({ c, onChange }: { c: C; onChange: () => void }) {
       {c.method_history && c.method_history.length > 0 && <section className="card"><h2>Histórico de métodos (rollback)</h2>
         <DataTable rows={c.method_history as unknown as Record<string, unknown>[]} cols={[['De', (r) => String(r.from_method)], ['Para', (r) => String(r.to_method)], ['Motivo', (r) => String(r.reason)],
           ['Quando', (r) => dateTime(String(r.created_at))], ['', (r) => <button className="btn sm" onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/connection/rollback/${r.id}`); onChange(); }, 'Configuração anterior restaurada (requer nova validação).')}>Restaurar</button>]]} /></section>}
+      <section className="card stack" style={{ borderColor: 'rgba(255, 75, 92, .45)' }}>
+        <h2 style={{ margin: 0 }}>Excluir console</h2>
+        <p className="small muted" style={{ margin: 0 }}>Remove o console da operação: despublica, arquiva os vínculos futuros e libera capturadora/controle. O histórico (reservas, sessões, auditoria) é mantido.
+          Bloqueado se houver sessão ativa ou reservas futuras.</p>
+        <div><button className="btn danger" onClick={onDelete}>Excluir este console</button></div>
+      </section>
     </div>
   );
 }
@@ -172,11 +178,21 @@ export default function Consoles() {
   const [nc, setNc] = useState({ code: '', name: '', platform_code: 'PS5' });
   const { run, msg } = useAction();
   const load = async (id: string) => setDetail(await get<C>(`/admin/consoles/${id}`));
+  const [delC, setDelC] = useState<{ id: string; code: string; name: string } | null>(null);
+  const [delTyped, setDelTyped] = useState('');
+  const del_ = useAction();
+  async function confirmDelete() {
+    if (!delC) return;
+    const ok = await del_.run(async () => { await del(`/admin/consoles/${delC.id}`); return true; }, `Console ${delC.name} excluído.`);
+    if (ok) { if (sel === delC.id) { setSel(null); setDetail(null); } setDelC(null); list.reload(); }
+  }
+  const askDelete = (x: { id: string; code: string; name: string }) => { setDelTyped(''); setDelC(x); };
   useEffect(() => { if (sel) load(sel); }, [sel]);
   return (
     <div className="stack">
       <PageHeader title="Consoles e conexão" subtitle="Cadastro independente de jogos; método de conexão individual por console." />
       {msg}
+      {!delC && del_.msg}
       <section className="card"><h2>Novo console</h2><div className="row">
         <input className="btn" placeholder="Código (PS5-05)" value={nc.code} onChange={(e) => setNc({ ...nc, code: e.target.value.toUpperCase() })} />
         <input className="btn" placeholder="Nome (PS5 nº 05)" value={nc.name} onChange={(e) => setNc({ ...nc, name: e.target.value })} />
@@ -185,8 +201,19 @@ export default function Consoles() {
       <section className="card"><DataTable rows={list.data as unknown as Record<string, unknown>[] | null} cols={[
         ['Console', (r) => <button className="btn sm" onClick={() => setSel(String(r.id))}>{String(r.name)}</button>], ['Plataforma', (r) => String(r.platform_code)],
         ['Método', (r) => String((r.connection as Conn)?.method_label || '—')], ['Status', (r) => <StatusPill status={String(r.status)} />],
-        ['Publicado', (r) => (r.is_published ? 'sim' : 'não')], ['Jogo agora', (r) => String((r.current_assignment as { title?: string })?.title || '—')]]} /></section>
-      {detail && <Editor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onChange={() => { load(detail.id); list.reload(); }} />}
+        ['Publicado', (r) => (r.is_published ? 'sim' : 'não')], ['Jogo agora', (r) => String((r.current_assignment as { title?: string })?.title || '—')],
+        ['', (r) => <button className="btn sm danger" onClick={() => askDelete({ id: String(r.id), code: String(r.code), name: String(r.name) })}>Excluir</button>]]} /></section>
+      {detail && <Editor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onChange={() => { load(detail.id); list.reload(); }} onDelete={() => askDelete(detail)} />}
+      {delC && (
+        <Modal title="Excluir console" onClose={() => setDelC(null)}>
+          <div className="stack">
+            <p style={{ margin: 0 }}>Excluir <b>{delC.name}</b>? Ele sai da operação e do painel; o histórico é mantido.</p>
+            <Field label={`Digite o código do console para confirmar: ${delC.code}`}><input value={delTyped} onChange={(e) => setDelTyped(e.target.value.toUpperCase())} /></Field>
+            <div className="row"><button className="btn danger" disabled={del_.busy || delTyped !== delC.code} onClick={confirmDelete}>Excluir definitivamente</button>
+              <button className="btn" onClick={() => setDelC(null)}>Cancelar</button></div>
+            {del_.msg}
+          </div>
+        </Modal>)}
     </div>
   );
 }
