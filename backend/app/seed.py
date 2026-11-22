@@ -154,7 +154,7 @@ def demo(conn) -> None:
         g = one(conn, 'select id from games where slug=%s', (slug,))
         if not g:
             g = insert(conn, 'games', {'slug': slug, 'title': title, 'short_description': short, 'description': desc,
-                                       'cover_url': img, 'banner_url': '/assets/hero-scene.webp' if slug == 'gta-vi' else img,
+                                       'cover_url': img, 'banner_url': '/assets/hero-characters.webp' if slug == 'gta-vi' else img,
                                        'status': 'published', 'min_minutes': 10, 'max_minutes': 120, 'is_demo': True,
                                        'featured_manual': slug == 'gta-vi', 'featured_rank': rank, 'age_rating': '16',
                                        'image_rights_notes': 'Arte derivada da imagem de referência fornecida pelo cliente. Substituir por material licenciado antes de publicar.',

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..core import timeutil
 from ..core.db import all_, audit_event, insert, one, tx
-from ..core.deps import Principal, current_user
+from ..core.deps import Principal, current_user, optional_user
 from ..core.errors import bad_request, conflict, not_found, unprocessable
 from ..services import auth
 from .common import clear_session_cookies, jsonable, pick
@@ -29,6 +29,14 @@ def _profile(conn, user_id: str) -> dict:
     out.update({'email_verified': u['email_verified_at'] is not None, 'roles': roles,
                 'mfa_enabled': bool(mfa and mfa['confirmed_at']), 'has_password': u['password_hash'] is not None})
     return out
+
+
+@router.get('/session', tags=['perfil'])
+def session(p: Principal | None = Depends(optional_user)):
+    """Estado da sessão sem erro 401 (evita ruído no navegador para visitantes)."""
+    if not p:
+        return {'authenticated': False}
+    return {'authenticated': True, 'user': me(p)}
 
 
 @router.get('')

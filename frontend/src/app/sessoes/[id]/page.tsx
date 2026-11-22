@@ -1,0 +1,96 @@
+'use client';
+import Link from 'next/link';
+import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { Gamepad2, Keyboard, Wifi } from 'lucide-react';
+import InputTester from '@/components/InputTester';
+import QueueList from '@/components/QueueList';
+import RequireAuth from '@/components/RequireAuth';
+import { Alert, ErrorBox, Field, PageHeader, Skeleton, StatusPill } from '@/components/ui';
+import { ApiError, post } from '@/lib/api';
+import { useApi, useServerClock } from '@/lib/hooks';
+import { dateTime, duration, money, RESERVATION_STATUS, time } from '@/lib/format';
+import type { Reservation } from '@/lib/types';
+
+type Room = Reservation & { seconds_to_start: number; can_join: boolean; allocation_policy: string };
+
+function Room() {
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const { data: r, error, reload } = useApi<Room>(`/reservations/${id}/waiting-room`, 5000);
+  const now = useServerClock(r?.server_time);
+  const [device, setDevice] = useState<'keyboard_mouse' | 'gamepad'>('gamepad');
+  const [net, setNet] = useState<string>('');
+  const [err, setErr] = useState('');
+  const [reason, setReason] = useState('');
+  const [msg, setMsg] = useState('');
+  useEffect(() => {
+    const c = (navigator as Navigator & { connection?: { downlink?: number; rtt?: number } }).connection;
+    if (c?.downlink) setNet(`~${c.downlink} Mbps, RTT ~${c.rtt} ms (estimativa do navegador)`);
+  }, []);
+  if (error) return <ErrorBox error={error} onRetry={reload} />;
+  if (!r) return <Skeleton h={300} />;
+  const startIn = (new Date(r.starts_at).getTime() - now()) / 1000;
+  const canJoin = ['confirmed', 'active'].includes(r.status) && startIn <= 0 && new Date(r.ends_at).getTime() > now();
+  async function join() {
+    setErr('');
+    try {
+      const j = await post<{ session_id: string; input_token: string }>(`/reservations/${id}/join`, { input_device: device });
+      try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); } catch { /* armazenamento indisponível */ }
+      router.push(`/jogar/${j.session_id}`);
+    } catch (e) { setErr(e instanceof ApiError ? e.message : 'Erro ao entrar.'); }
+  }
+  async function cancel() {
+    try { const res = await post<{ message: string }>(`/reservations/${id}/cancel`, { reason }); setMsg(res.message); reload(); }
+    catch (e) { setErr(e instanceof ApiError ? e.message : 'Erro.'); }
+  }
+  async function testAudio() {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new Ctx(); const o = ctx.createOscillator(); o.frequency.value = 440; o.connect(ctx.destination); o.start(); setTimeout(() => { o.stop(); ctx.close(); }, 400);
+  }
+  return (
+    <div className="stack">
+      <PageHeader title="Sala de espera" subtitle={`${r.game.title} · ${r.console_name} · reserva ${r.code}`}><StatusPill status={r.status} map={RESERVATION_STATUS} /></PageHeader>
+      {r.resolution_notes && <Alert kind="warn">{r.resolution_notes}</Alert>}
+      <div className="grid2">
+        <section className="card" style={{ textAlign: 'center' }}>
+          {['confirmed', 'active'].includes(r.status) ? (startIn > 0 ? <>
+            <p className="muted">{r.mode === 'queue' ? 'Início estimado em' : 'Começa em'}</p>
+            <div className="countdown" aria-live="polite">{duration(startIn)}</div>
+            <p>{dateTime(r.starts_at)} – {time(r.ends_at)} · {r.minutes} min</p>
+            {startIn <= 300 && <Alert kind="info">Sua vez está chegando! Prepare controle ou teclado/mouse e verifique sua conexão.</Alert>}
+          </> : <>
+            <p className="muted">Tempo restante do período contratado</p>
+            <div className="countdown">{duration((new Date(r.ends_at).getTime() - now()) / 1000)}</div>
+          </>) : r.status === 'pending_payment' ? <Link className="btn primary" href={`/checkout/${r.id}`}>Concluir pagamento ({money(r.total_cents)})</Link>
+            : <p className="muted">Esta reserva está {RESERVATION_STATUS[r.status].toLowerCase()}.</p>}
+          {['confirmed', 'active'].includes(r.status) && (
+            <button className="btn primary block" style={{ marginTop: 14, height: 48 }} disabled={!canJoin} onClick={join}>
+              {canJoin ? 'Começar a jogar' : 'O botão será liberado no horário de início'}</button>)}
+          {err && <div style={{ marginTop: 10 }}><Alert kind="error">{err}</Alert></div>}
+        </section>
+        <section className="card stack">
+          <h2>Prepare-se</h2>
+          <div className="row" role="radiogroup" aria-label="Dispositivo de entrada">
+            <button className={`btn ${device === 'gamepad' ? 'primary' : ''}`} role="radio" aria-checked={device === 'gamepad'} onClick={() => setDevice('gamepad')}><Gamepad2 size={16} />Controle</button>
+            <button className={`btn ${device === 'keyboard_mouse' ? 'primary' : ''}`} role="radio" aria-checked={device === 'keyboard_mouse'} onClick={() => setDevice('keyboard_mouse')}><Keyboard size={16} />Teclado e mouse</button>
+          </div>
+          <InputTester mode={device} />
+          <div className="row small"><Wifi size={16} /> Rede: {net || 'informação não disponível neste navegador'}</div>
+          <button className="btn sm" onClick={testAudio}>Testar áudio</button>
+        </section>
+      </div>
+      {r.public_queue && r.public_queue.length > 0 && <section className="card"><h2>Fila do console</h2><QueueList items={r.public_queue} /></section>}
+      <section className="card small"><h3>Política de alocação</h3><p className="muted">{r.allocation_policy}</p>
+        {r.status === 'confirmed' && !r.cancellation_request && (
+          <div className="stack" style={{ maxWidth: 520 }}>
+            <Field label="Solicitar cancelamento (motivo)"><input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+            <button className="btn danger" disabled={reason.length < 3} onClick={cancel}>Solicitar cancelamento</button>
+          </div>)}
+        {r.cancellation_request && <p>Solicitação de cancelamento: <b>{r.cancellation_request.status}</b> {r.cancellation_request.decision_notes}</p>}
+        {msg && <Alert kind="ok">{msg}</Alert>}
+      </section>
+    </div>
+  );
+}
+export default function Page() { return <RequireAuth><Room /></RequireAuth>; }
