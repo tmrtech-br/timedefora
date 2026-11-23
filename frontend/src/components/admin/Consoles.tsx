@@ -5,6 +5,7 @@ import { del, get, patch, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
 import { DataTable, useAction } from './common';
+import { toast } from '@/components/Toaster';
 
 type Method = { method: string; label: string; status: string; applicable: boolean; operational: boolean; guide: string; needs: string[] };
 type Conn = Record<string, unknown> & { method: string; method_label?: string; connection_status: string; agent_id: string | null; validated_at: string | null;
@@ -25,6 +26,7 @@ const ROUTE_HINT: Record<string, string> = {
 
 const TESTS: [string, string][] = [['discover', 'Descobrir console'], ['pair', 'Parear'], ['connection', 'Testar conexão'], ['video_audio', 'Testar imagem e áudio'],
   ['controls', 'Testar controles'], ['heartbeat', 'Verificar heartbeat'], ['latency', 'Medir latência']];
+const RESULT_PT: Record<string, string> = { passed: 'aprovado', failed: 'falhou', not_available: 'não disponível' };
 const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelete: () => void }) {
@@ -125,7 +127,7 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
         <div className="row">{TESTS.map(([t, l]) => <button key={t} className="btn sm" disabled={busy} onClick={() => run(async () => {
           const r = await post<{ result: string; message: string; simulated: boolean }>(`/admin/consoles/${c.id}/tests/${t}`, t === 'pair' ? { code: pairCode || null } : {});
           onChange(); return r;
-        }).then((r) => r && alert(`${l}: ${r.result}${r.simulated ? ' (SIMULADO)' : ''}\n${r.message}`))}>{l}</button>)}</div>
+        }).then((r) => r && toast(r.result === 'passed' ? 'ok' : 'error', `${l}: ${RESULT_PT[r.result] || r.result}${r.simulated ? ' (SIMULADO)' : ''} — ${r.message}`))}>{l}</button>)}</div>
         <div className="row">
           <button className="btn primary" disabled={busy || c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/publish`); onChange(); }, 'Console publicado para vendas.')}>Publicar</button>
           <button className="btn" disabled={busy || !c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/unpublish`); onChange(); }, 'Console despublicado.')}>Despublicar</button>
