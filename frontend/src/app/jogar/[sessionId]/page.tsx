@@ -18,10 +18,6 @@ const KEYMAP: Record<string, string> = { Space: 'cross', KeyE: 'circle', KeyQ: '
   ArrowUp: 'dpad_up', ArrowDown: 'dpad_down', ArrowLeft: 'dpad_left', ArrowRight: 'dpad_right', Enter: 'options' };
 // Botões do controle (índices do "standard mapping") que nunca são enviados ao console.
 const BLOCKED_PAD: Record<number, string> = { 16: 'PS', 17: 'Touchpad' };
-const BLOCK_REASON: Record<string, string> = {
-  PS: 'ele abriria a tela inicial do console.', Touchpad: 'ele abre menus do sistema em alguns jogos.',
-  Share: 'ele abriria o menu de compartilhar/transmitir da conta do console.',
-};
 
 function Player() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -40,7 +36,7 @@ function Player() {
     const t = Date.now();
     if (t - (lastBlock.current[name] || 0) < 4000) return;
     lastBlock.current[name] = t;
-    toast('error', `Botão ${name} bloqueado por segurança: ${BLOCK_REASON[name] || 'ele não está disponível nesta plataforma.'}`);
+    toast('error', `Botão ${name} bloqueado por segurança`);
   }, []);
   useEffect(() => { try { setToken(sessionStorage.getItem(`lp_input_${sessionId}`)); } catch { setToken(null); } }, [sessionId]);
   const send = useCallback(async (command: InputCommand) => {
