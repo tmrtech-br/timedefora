@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { Eraser } from 'lucide-react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, get, patch, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
@@ -139,6 +140,11 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
           <button className="btn primary" disabled={busy || c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/publish`); onChange(); }, 'Console publicado para vendas.')}>Publicar</button>
           <button className="btn" disabled={busy || !c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/unpublish`); onChange(); }, 'Console despublicado.')}>Despublicar</button>
         </div>
+        <div className="spread"><h3 style={{ margin: 0 }}>Histórico de testes</h3>
+          <button className="btn sm" disabled={busy || !c.tests?.length} title="Apaga só o histórico exibido; as validações continuam valendo"
+            onClick={() => { if (confirm('Limpar o histórico de testes deste console? As validações (vídeo, áudio, controle, heartbeat) continuam valendo.'))
+              run(async () => { await del(`/admin/consoles/${c.id}/tests`); onChange(); }, 'Histórico de testes limpo.'); }}>
+            <Eraser size={14} aria-hidden />Limpar testes</button></div>
         <DataTable rows={c.tests as unknown as Record<string, unknown>[]} empty="Nenhum teste executado." cols={[['Teste', (r) => String(r.test_type)], ['Resultado', (r) => <StatusPill status={String(r.result)} />],
           ['Simulado', (r) => (r.simulated ? 'sim' : 'não')], ['Mensagem', (r) => String(r.message)], ['Quando', (r) => dateTime(String(r.run_at))]]} />
         <p className="small muted">Telemetria: {c.last_health ? `${c.last_health.status} · FPS ${c.last_health.fps ?? 'não disponível'} · RTT ${c.last_health.rtt_ms ?? 'não disponível'} · bitrate ${c.last_health.bitrate_kbps ?? 'não disponível'} · ${dateTime(String(c.last_health.checked_at))}${c.last_health.simulated ? ' (simulado)' : ''}` : 'sem amostras'}</p>

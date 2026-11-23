@@ -274,6 +274,17 @@ class DirectLink:
 
     def pair(self, t, pin: str):
         pin = (pin or '').strip()
+        if not pin:                                   # sem PIN: só confere se o console já está registrado
+            try:
+                dev = self._device(t.host)
+                profiles = load_profiles()
+                user = self._user_for(dev, t, profiles)
+            except LinkError as e:
+                return False, str(e)
+            if user:
+                return True, f'Console {dev.host_name or t.host} já registrado neste agente (conta PSN "{user}").'
+            return False, ('Console ainda não registrado neste agente. Informe o PIN de 8 dígitos exibido no console '
+                           '(Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo).')
         if not (pin.isdigit() and len(pin) == 8):
             return False, 'Informe o PIN de 8 dígitos exibido no console (Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo).'
         try:

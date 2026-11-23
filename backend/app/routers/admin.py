@@ -681,6 +681,18 @@ class PairIn(BaseModel):
     code: str | None = Field(default=None, max_length=12)
 
 
+@router.delete('/consoles/{cid}/tests')
+def clear_tests(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
+    """Limpa o HISTÓRICO de testes exibido no painel. As validações (vídeo/áudio/controle/heartbeat) não mudam.
+    Cada linha apagada fica registrada na auditoria (trigger), além do evento abaixo."""
+    with tx() as conn:
+        if not one(conn, 'select 1 from consoles where id=%s and deleted_at is null', (cid,)):
+            raise not_found()
+        n = conn.execute('delete from console_connection_tests where console_id=%s', (cid,)).rowcount
+        audit_event(conn, 'console.tests_cleared', 'consoles', cid, details={'removed': n})
+    return {'ok': True, 'removed': n}
+
+
 @router.post('/consoles/{cid}/tests/{test_type}')
 def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Principal = Depends(ADMIN)):
     """Executa teste REAL via adaptador. O simulador responde como simulado; métodos não implementados falham."""

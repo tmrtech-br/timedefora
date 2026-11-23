@@ -249,6 +249,23 @@ def test_remote_play_direto_so_rede_local_com_ip_e_identificacao(freeze):
     assert r.status_code == 422 and 'method' in r.json()['fields']                  # não aplicável a Switch
 
 
+def test_limpar_historico_de_testes_mantem_validacoes(freeze):
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    c = _new_console(api, 'PS4-41', 'PS4')
+    ag = api.post('/admin/agents', json={'name': 'sim', 'host_name': 'sim', 'is_simulated': True}).json()
+    assert api.put(f"/admin/consoles/{c['id']}/connection", json={'method': 'simulated', 'agent_id': ag['id']}).status_code == 200
+    for t in ('heartbeat', 'discover'):
+        api.post(f"/admin/consoles/{c['id']}/tests/{t}")
+    before = api.get(f"/admin/consoles/{c['id']}").json()
+    assert len(before['tests']) == 2 and before['connection']['heartbeat_validated_at']
+    r = api.delete(f"/admin/consoles/{c['id']}/tests")
+    assert r.status_code == 200 and r.json()['removed'] == 2
+    after = api.get(f"/admin/consoles/{c['id']}").json()
+    assert after['tests'] == [] and after['connection']['heartbeat_validated_at'] == before['connection']['heartbeat_validated_at']
+    assert api.delete('/admin/consoles/00000000-0000-0000-0000-000000000000/tests').status_code == 404
+
+
 def test_excluir_console_bloqueia_com_reserva_e_libera_codigo(world, freeze):
     freeze(at(2, 8, 0))
     api, _ = admin_api()
