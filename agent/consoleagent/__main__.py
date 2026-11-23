@@ -146,11 +146,23 @@ def _check(cfg, args) -> int:
     for name, fn in (('Imagem e áudio', lambda: _test_video_audio(r)), ('Controles', lambda: _test_controls(cfg, r))):
         res = fn()
         print(f'{name}: {"OK" if res["ok"] else "NÃO APROVADO"} — {res["message"]}')
-    if sys.stdin and sys.stdin.isatty():
-        input('Enter para desconectar e sair… ')
-    else:
-        time.sleep(float(getattr(args, 'hold', 0) or 0))
-    r.disconnect()
+    try:                                        # evidência: a tela que o agente estava vendo
+        from pathlib import Path
+        shot = Path(__file__).resolve().parent.parent / 'logs' / f'check_{t.identifier or "console"}.png'
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        f = r.link.frame()
+        if f.image is not None:
+            f.image.save(shot)
+            print(f'Imagem da tela salva em {shot}')
+    except Exception as e:  # noqa: BLE001 — a imagem é só apoio
+        print(f'(não foi possível salvar a imagem da tela: {e})')
+    try:
+        if sys.stdin and sys.stdin.isatty():
+            input('Enter para desconectar e sair… ')
+    except (EOFError, KeyboardInterrupt):      # sem terminal interativo (ex.: entrada redirecionada para NUL)
+        pass
+    finally:
+        r.disconnect()                         # sempre fecha o chiaki-ng / a sessão aberta pelo teste
     return 0
 
 

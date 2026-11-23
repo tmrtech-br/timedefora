@@ -199,7 +199,9 @@ class ConsoleRuntime:
             self.ensure_pad()                                      # direto: o controle pertence à sessão
 
         j.step = 'aguardando a imagem do console'
-        deadline = time.monotonic() + float(cfg.stream_timeout_seconds)
+        # Pela PSN a conexão (descoberta pela Sony + atravessar os roteadores) leva bem mais que na rede local.
+        wait = float(cfg.stream_timeout_seconds) * (2 if t.route == 'internet_psn' else 1)
+        deadline = time.monotonic() + wait
         last = None
         while time.monotonic() < deadline:
             if not link.running:

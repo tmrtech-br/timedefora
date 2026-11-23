@@ -12,6 +12,12 @@ from dataclasses import dataclass
 from . import winutil
 
 BLACK_MEAN, FLAT_STD = 8.0, 3.0
+# Tela quase preta com poucos pixels claros (ex.: chiaki-ng ainda conectando, cursor/ícone) não é imagem do console.
+NEAR_BLACK_MEAN, NEAR_BLACK_STD = 12.0, 10.0
+
+
+def _is_black(mean: float, std: float) -> bool:
+    return mean < 4.0 or (mean < BLACK_MEAN and std < FLAT_STD) or (mean < NEAR_BLACK_MEAN and std < NEAR_BLACK_STD)
 
 
 @dataclass
@@ -38,7 +44,7 @@ def frame(pid: int | None) -> Frame:
     g = img.convert('L')
     st = ImageStat.Stat(g)
     mean, std = round(st.mean[0], 1), round(st.stddev[0], 1)
-    if mean < BLACK_MEAN and std < FLAT_STD:
+    if _is_black(mean, std):
         return Frame(False, f'Imagem preta ({w.size[0]}×{w.size[1]}): o console ainda não está transmitindo.', mean, std, w.size, g)
     if std < FLAT_STD:
         return Frame(False, f'Imagem uniforme ({w.size[0]}×{w.size[1]}, brilho {mean}): sem conteúdo do console.', mean, std, w.size, g)
@@ -53,7 +59,7 @@ def frame_from_luma(luma, size: tuple[int, int]) -> Frame:
     mean, std = round(float(arr.mean()), 1), round(float(arr.std()), 1)
     img = Image.fromarray(np.clip(arr, 0, 255).astype('uint8'), 'L')
     w, h = size
-    if mean < BLACK_MEAN and std < FLAT_STD:
+    if _is_black(mean, std):
         return Frame(False, f'Imagem preta ({w}×{h}): o console ainda não está transmitindo.', mean, std, size, img)
     if std < FLAT_STD:
         return Frame(False, f'Imagem uniforme ({w}×{h}, brilho {mean}): sem conteúdo do console.', mean, std, size, img)
