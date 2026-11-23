@@ -13,9 +13,10 @@ _ADAPTERS: dict[str, ConsoleStreamingAdapter] = {
 METHODS = [
     {'method': 'remote_play_chiaki', 'label': 'Remote Play — Chiaki (experimental)', 'status': 'experimental',
      'platforms': ['PS4', 'PS5'], 'needs': ['agent', 'internal_host', 'pairing'],
-     'guide': 'Usa a rede local e o protocolo Remote Play. Habilite Remote Play no console, informe o IP interno, '
-              'inicie o pareamento pelo agente e digite o código exibido no console. Requer análise da licença '
-              'AGPL-3.0 do Chiaki-NG e autorização de uso comercial. Não há compatibilidade com Xbox/Switch.'},
+     'guide': 'Protocolo Remote Play via ConsoleAgent + chiaki-ng. Habilite o Uso Remoto no console e escolha a rota: '
+              'mesma rede do agente (IP interno ou descoberta), internet via PSN (identificação do console) ou internet '
+              'com portas abertas (IP público/DDNS). O console precisa estar registrado no chiaki-ng do agente. '
+              'Requer análise da licença AGPL-3.0 do chiaki-ng e autorização de uso comercial. Não há compatibilidade com Xbox/Switch.'},
     {'method': 'hdmi_capture', 'label': 'Placa de captura HDMI', 'status': 'requires_hardware',
      'platforms': ['PS4', 'PS5', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'], 'needs': ['agent', 'capture_device', 'control_adapter'],
      'guide': 'A capturadora recebe apenas vídeo e áudio; é obrigatório um canal de controle separado e autorizado. '
