@@ -11,7 +11,6 @@ import time
 
 import aiohttp
 from aiohttp.client_exceptions import ContentTypeError
-from pyps4_2ndscreen.media_art import async_search_ps_store, ResultItem
 
 from pyremoteplay.receiver import AVReceiver
 from .const import (
@@ -210,34 +209,11 @@ class RPDevice:
         self._status = data
         if old_status != data:
             _LOGGER.debug("Status: %s", self.status)
-            title_id = self.status.get("running-app-titleid")
-            if title_id and asyncio.get_event_loop().is_running:
-                asyncio.ensure_future(self._get_media_info(title_id))
-            else:
-                self._media_info = None
-                self._image = None
-            if not title_id and self.callback:
-                # Call immediately since we don't have to get media.
+            # LocaPlay: removida a busca de capa/nome na PlayStation Store (dependia do pacote abandonado
+            # pyps4-2ndscreen e fazia chamada externa a cada mudança). O código do jogo em execução continua
+            # disponível em status["running-app-titleid"] / app_id.
+            if self.callback:
                 self.callback()  # pylint: disable=not-callable
-
-    async def _get_media_info(self, title_id: str, region="United States"):
-        """Retrieve Media info."""
-        result = await async_search_ps_store(title_id, region)
-        self._media_info = result
-        if self._media_info.cover_art:
-            await self._get_image(self.media_info.cover_art)
-        if self.callback:
-            self.callback()  # pylint: disable=not-callable
-
-    async def _get_image(self, url: str):
-        """Get media image."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                response = await session.get(url, timeout=3)
-                if response is not None:
-                    self._image = await response.read()
-        except (asyncio.TimeoutError, ContentTypeError, SSLError):
-            pass
 
     def create_session(
         self,
@@ -566,8 +542,8 @@ class RPDevice:
         return self.status.get("running-app-titleid")
 
     @property
-    def media_info(self) -> ResultItem:
-        """Return media info."""
+    def media_info(self) -> None:
+        """Return media info (LocaPlay: sempre None — busca na loja removida)."""
         return self._media_info
 
     @property

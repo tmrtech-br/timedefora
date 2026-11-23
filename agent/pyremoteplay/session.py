@@ -13,7 +13,10 @@ from struct import pack_into
 
 import requests
 from Cryptodome.Random import get_random_bytes
-from pyee import ExecutorEventEmitter
+try:  # LocaPlay: pyee 9+ moveu a classe para pyee.executor
+    from pyee.executor import ExecutorEventEmitter
+except ImportError:  # pragma: no cover - pyee < 9
+    from pyee import ExecutorEventEmitter
 
 from pyremoteplay.receiver import AVReceiver
 from .const import (

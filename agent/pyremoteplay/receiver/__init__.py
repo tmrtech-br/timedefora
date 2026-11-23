@@ -21,6 +21,17 @@ except ModuleNotFoundError:
     warnings.warn("av not installed")
 
 
+def _enum_member(enum_cls, name: str):
+    """Membro de enum do PyAV pelo nome antigo (MAIÚSCULO) ou novo (minúsculo); None se não existir."""
+    if enum_cls is None:
+        return None
+    for candidate in (name, name.lower()):
+        member = getattr(enum_cls, candidate, None)
+        if member is not None:
+            return member
+    return None
+
+
 class AVReceiver(abc.ABC):
     """Base Class for AV Receiver. Abstract. Must use subclass for session.
 
@@ -120,9 +131,16 @@ class AVReceiver(abc.ABC):
         elif codec_name.startswith("hevc"):
             codec_ctx.options = AVReceiver.AV_CODEC_OPTIONS_HEVC
         codec_ctx.pix_fmt = "yuv420p"
-        codec_ctx.flags = av.codec.context.Flags.LOW_DELAY
-        codec_ctx.flags2 = av.codec.context.Flags2.FAST
-        codec_ctx.thread_type = av.codec.context.ThreadType.AUTO
+        # LocaPlay: PyAV 14+ renomeou os membros dos enums (LOW_DELAY → low_delay); aceita os dois formatos.
+        ctx_mod = av.codec.context
+        low_delay = _enum_member(getattr(ctx_mod, "Flags", None), "LOW_DELAY")
+        if low_delay is not None:
+            codec_ctx.flags = low_delay
+        fast = _enum_member(getattr(ctx_mod, "Flags2", None), "FAST")
+        if fast is not None:
+            codec_ctx.flags2 = fast
+        thread_auto = _enum_member(getattr(ctx_mod, "ThreadType", None), "AUTO")
+        codec_ctx.thread_type = thread_auto if thread_auto is not None else "AUTO"
         return codec_ctx
 
     @staticmethod
@@ -138,10 +156,12 @@ class AVReceiver(abc.ABC):
     ) -> av.audio.resampler.AudioResampler:
         """Return Audio Resampler."""
         resampler = None
+        # LocaPlay: PyAV 10+ exige o layout como texto/AudioLayout (antes aceitava o número de canais).
+        layout = {1: "mono", 2: "stereo"}.get(channels, channels) if isinstance(channels, int) else channels
         try:
             resampler = av.audio.resampler.AudioResampler(
                 audio_format,
-                channels,
+                layout,
                 rate,
             )
         # pylint: disable=broad-except

@@ -217,7 +217,8 @@ class Profiles(UserDict):
 
         :param path: Path to file. If not given will use default path.
         """
-        write_profiles(self.data, path)
+        # LocaPlay: o original ignorava set_default_path() ao salvar (gravava sempre em ~/.pyremoteplay).
+        write_profiles(self.data, path or self.__class__.default_path())
 
     def get_users(self, device_id: str) -> list[str]:
         """Return all users that are registered with a device.

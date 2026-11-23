@@ -14,7 +14,7 @@ from typing import Optional, Union
 import ipaddress
 import sys
 
-import netifaces
+import psutil
 
 from .socket import AsyncUDPSocket
 from .const import TYPE_PS4, UDP_PORT, DDP_PORTS, DEFAULT_UDP_PORT, BROADCAST_IP, UDP_IP
@@ -30,46 +30,50 @@ DDP_MSG_TYPES = (DDP_TYPE_SEARCH, DDP_TYPE_LAUNCH, DDP_TYPE_WAKEUP)
 STATUS_OK = 200
 STATUS_STANDBY = 620
 
-# pylint: disable=c-extension-no-member
+def _ipv4_addresses() -> list[tuple[str, str | None, str | None]]:
+    """(endereço, máscara, broadcast) IPv4 de todas as interfaces.
+
+    LocaPlay: substitui o netifaces (sem pacote pronto para Python 3.11+ no Windows) pelo psutil.
+    """
+    out = []
+    for addrs in psutil.net_if_addrs().values():
+        for a in addrs:
+            if a.family == socket.AF_INET and a.address:
+                broadcast = a.broadcast
+                if not broadcast and a.netmask:  # Windows não informa o broadcast: calcula pela máscara
+                    try:
+                        broadcast = str(ipaddress.IPv4Network(f"{a.address}/{a.netmask}", strict=False).broadcast_address)
+                    except ValueError:
+                        broadcast = None
+                out.append((a.address, a.netmask, broadcast))
+    return out
+
+
 def _get_broadcast(ip_address: str) -> str:
     """Return broadcast address."""
     if ip_address == UDP_IP:
         return BROADCAST_IP
-    for interface in netifaces.interfaces():
-        addresses = netifaces.ifaddresses(interface).get(netifaces.AF_INET)
-        if not addresses:
-            continue
-        for address in addresses:
-            addr = address.get("addr")
-            if addr and addr == ip_address:
-                broadcast = address.get("broadcast")
-                if broadcast:
-                    return broadcast
+    for addr, _mask, broadcast in _ipv4_addresses():
+        if addr == ip_address and broadcast:
+            return broadcast
     return BROADCAST_IP
 
 
-# pylint: disable=c-extension-no-member
 def _get_private_addresses() -> list[str]:
     """Return Private Interface Addresses."""
     interfaces = []
-    for interface in netifaces.interfaces():
-        addresses = netifaces.ifaddresses(interface).get(netifaces.AF_INET)
-        if not addresses:
-            continue
-        for address in addresses:
-            addr = address.get("addr")
-            if addr:
-                ip_address = ipaddress.IPv4Address(addr)
-                if all(
-                    [
-                        ip_address.is_private,
-                        not ip_address.is_link_local,
-                        not ip_address.is_loopback,
-                        not ip_address.is_multicast,
-                        not ip_address.is_unspecified,
-                    ]
-                ):
-                    interfaces.append(addr)
+    for addr, _mask, _broadcast in _ipv4_addresses():
+        ip_address = ipaddress.IPv4Address(addr)
+        if all(
+            [
+                ip_address.is_private,
+                not ip_address.is_link_local,
+                not ip_address.is_loopback,
+                not ip_address.is_multicast,
+                not ip_address.is_unspecified,
+            ]
+        ):
+            interfaces.append(addr)
     return interfaces
 
 
