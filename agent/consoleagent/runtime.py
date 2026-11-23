@@ -254,9 +254,9 @@ class ConsoleRuntime:
     def start_session(self, session_id: str) -> tuple[bool, str]:
         if not self.streaming:
             return False, 'Console não está conectado (a preparação não terminou).'
+        # A conexão com o console basta: tela preta/carregando/aviso aberto no momento não pode travar o jogador
+        # (a imagem foi validada na preparação; aqui ela é só informativa).
         f = self.link.frame()
-        if not f.ok:
-            return False, f.message
         pad = self.ensure_pad()
         pad.reset()
         self.session_id = session_id

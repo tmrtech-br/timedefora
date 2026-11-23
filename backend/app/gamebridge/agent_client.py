@@ -49,7 +49,9 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
             msg = str(body.get('message') or body.get('detail') or f'ConsoleAgent respondeu {r.status_code}.')
             if r.status_code == 501 or body.get('code') == 'not_implemented':
                 raise AdapterError('not_implemented', msg)
-            if r.status_code in (401, 403):
+            if body.get('code') in ('input_revoked', 'blocked_command', 'invalid_command', 'invalid_offer'):
+                raise AdapterError(body['code'], msg)          # recusa de negócio do agente (não é credencial)
+            if r.status_code == 401 or body.get('code') == 'unauthorized':
                 raise AdapterError('agent_error', 'ConsoleAgent recusou a credencial (token API→agente). Rotacione os tokens e atualize o agente.')
             raise AdapterError('agent_error', msg)
         return r.json()

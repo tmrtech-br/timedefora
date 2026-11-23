@@ -249,6 +249,22 @@ def test_remote_play_direto_so_rede_local_com_ip_e_identificacao(freeze):
     assert r.status_code == 422 and 'method' in r.json()['fields']                  # não aplicável a Switch
 
 
+def test_recusa_de_negocio_do_agente_nao_vira_erro_de_credencial(monkeypatch):
+    """403 'input_revoked' do agente = sessão não associada (recuperável); só 401 é credencial."""
+    import httpx
+
+    from app.gamebridge.agent_client import DirectRemotePlayAdapter
+    ref = ConsoleRef('c', 'PS4', 'remote_play_direct', 'http://127.0.0.1:9', 'tok', settings={'network_route': 'lan'})
+    replies = {'input_revoked': httpx.Response(403, json={'code': 'input_revoked', 'message': 'sessão'}),
+               'unauthorized': httpx.Response(401, json={'code': 'unauthorized', 'message': 'x'})}
+    for code, resp in replies.items():
+        monkeypatch.setattr(httpx, 'post', lambda *a, _r=resp, **k: _r)
+        with pytest.raises(AdapterError) as e:
+            DirectRemotePlayAdapter().webrtc_offer(ref, 's1', {'type': 'offer', 'sdp': 'v=0'})
+        assert e.value.code == ('input_revoked' if code == 'input_revoked' else 'agent_error')
+        assert ('credencial' in e.value.message) == (code == 'unauthorized')
+
+
 def test_limpar_historico_de_testes_mantem_validacoes(freeze):
     freeze(at(1, 10))
     api, _ = admin_api()

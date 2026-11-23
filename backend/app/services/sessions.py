@@ -122,7 +122,15 @@ def webrtc_offer(session_id, token: str, offer: dict) -> dict:
         ref = console_ref(conn, t['console_id'])
     adapter = get_adapter(ref.method)
     try:
-        res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']})
+        try:
+            res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']})
+        except AdapterError as e:
+            if e.code != 'input_revoked':
+                raise
+            # O agente perdeu a associação com a sessão (reinício, queda da conexão com o console…). O token acabou
+            # de ser validado aqui — a API é a autoridade —, então reativa a sessão no agente e tenta uma vez mais.
+            adapter.start_stream(ref, str(session_id))
+            res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']})
     except AdapterError as e:
         status = 501 if e.code == 'not_implemented' else 503
         raise AppError(status, 'video_unavailable', e.message)
@@ -139,8 +147,16 @@ def send_input(session_id, token: str, command: dict) -> dict:
         if str((command or {}).get('name', '')).lower() == 'share' and not get_settings(conn).get('share_button_enabled', False):
             raise AppError(400, 'blocked_command', 'O botão Share está bloqueado nesta plataforma.')
         ref = console_ref(conn, t['console_id'])
+    adapter = get_adapter(ref.method)
     try:
-        res = get_adapter(ref.method).send_input(ref, str(session_id), command)
+        try:
+            res = adapter.send_input(ref, str(session_id), command)
+        except AdapterError as e:
+            if e.code != 'input_revoked':
+                raise
+            # Token válido aqui (autoridade é a API): o agente só perdeu a associação — reativa e reenvia uma vez.
+            adapter.start_stream(ref, str(session_id))
+            res = adapter.send_input(ref, str(session_id), command)
     except AdapterError as e:
         status = 400 if e.code in ('invalid_command', 'blocked_command') else 403
         raise AppError(status, e.code, e.message)
