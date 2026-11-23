@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { useFeatures } from '@/lib/features';
 
 // Ordem do "standard mapping" da Gamepad API (índices 0–15).
 const NAMES = ['cross', 'circle', 'square', 'triangle', 'l1', 'r1', 'l2', 'r2', 'share', 'options', 'l3', 'r3', 'dpad_up', 'dpad_down', 'dpad_left', 'dpad_right'];
@@ -45,6 +46,7 @@ export default function InputTester({ mode }: { mode: 'keyboard_mouse' | 'gamepa
   const [pressed, setPressed] = useState<boolean[]>([]);
   const [axes, setAxes] = useState<number[]>([]);
   const [lastKey, setLastKey] = useState('');
+  const shareBlocked = useFeatures()?.share_button_enabled !== true;
   useEffect(() => {
     if (mode !== 'gamepad') return;
     let raf = 0;
@@ -84,6 +86,7 @@ export default function InputTester({ mode }: { mode: 'keyboard_mouse' | 'gamepa
         <span key={n} className={pressed[i] ? 'on' : ''} title={BUTTON_PT[n].label}>
           <span className={`sym ${n}`} aria-hidden>{BUTTON_PT[n].sym}</span><span className="lbl">{BUTTON_PT[n].label}</span>
         </span>))}</div>
+      <p className="small dim" style={{ margin: 0 }}>Por segurança, os botões <b>PS</b>, <b>Touchpad</b>{shareBlocked && <> e <b>Share</b></>} não funcionam durante a sessão.</p>
       {axes.length > 0 && <p>Analógico esquerdo: {axes[0]?.toFixed(2)} / {axes[1]?.toFixed(2)} · direito: {axes[2]?.toFixed(2)} / {axes[3]?.toFixed(2)}</p>}
       <p className="dim">Compatibilidade varia conforme modelo, sistema e navegador — especialmente no celular.</p>
     </div>

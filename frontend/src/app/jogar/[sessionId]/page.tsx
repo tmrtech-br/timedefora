@@ -9,12 +9,19 @@ import { csrfToken, post } from '@/lib/api';
 import { useApi, useServerClock } from '@/lib/hooks';
 import { duration } from '@/lib/format';
 import { useFeatures } from '@/lib/features';
+import { toast } from '@/components/Toaster';
 import type { InputCommand, StreamMetrics } from '@/lib/gamebridge';
 
 type State = { id: string; status: string; game: string; console: string; contract_ends_at: string; server_time: string; remaining_seconds: number;
   input_device: string; simulated: boolean; metrics: StreamMetrics | null; end_reason: string | null };
 const KEYMAP: Record<string, string> = { Space: 'cross', KeyE: 'circle', KeyQ: 'square', KeyR: 'triangle', ShiftLeft: 'l1', ControlLeft: 'r1',
   ArrowUp: 'dpad_up', ArrowDown: 'dpad_down', ArrowLeft: 'dpad_left', ArrowRight: 'dpad_right', Enter: 'options' };
+// Botões do controle (índices do "standard mapping") que nunca são enviados ao console.
+const BLOCKED_PAD: Record<number, string> = { 16: 'PS', 17: 'Touchpad' };
+const BLOCK_REASON: Record<string, string> = {
+  PS: 'ele abriria a tela inicial do console.', Touchpad: 'ele abre menus do sistema em alguns jogos.',
+  Share: 'ele abriria o menu de compartilhar/transmitir da conta do console.',
+};
 
 function Player() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -27,17 +34,29 @@ function Player() {
   const screen = useRef<HTMLDivElement>(null);
   const prev = useRef<boolean[]>([]);
   const shareOn = useFeatures()?.share_button_enabled === true;   // Share bloqueado por padrão (Parâmetros)
+  const lastBlock = useRef<Record<string, number>>({});
+  /** Avisa (no máximo a cada 4 s por botão) que o botão está bloqueado por segurança. */
+  const warnBlocked = useCallback((name: string) => {
+    const t = Date.now();
+    if (t - (lastBlock.current[name] || 0) < 4000) return;
+    lastBlock.current[name] = t;
+    toast('error', `Botão ${name} bloqueado por segurança: ${BLOCK_REASON[name] || 'ele não está disponível nesta plataforma.'}`);
+  }, []);
   useEffect(() => { try { setToken(sessionStorage.getItem(`lp_input_${sessionId}`)); } catch { setToken(null); } }, [sessionId]);
   const send = useCallback(async (command: InputCommand) => {
     if (!token) return;
     const res = await fetch(`/api/sessions/${sessionId}/input`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Input-Token': token, 'X-CSRF-Token': csrfToken() }, body: JSON.stringify({ command }) });
-    if (res.status === 403) {
+    if (res.status === 400) {
+      const body = await res.json().catch(() => ({}));
+      if (body.code === 'blocked_command' && command.type === 'button') warnBlocked(command.name === 'share' ? 'Share' : command.name.toUpperCase());
+    }
+    else if (res.status === 403) {
       const body = await res.json().catch(() => ({}));
       if (['input_revoked', 'invalid_input_token'].includes(body.code)) { setInputStatus('revogado'); setToken(null); reload(); }
       else setInputStatus(`recusado: ${body.detail || res.status}`);
     }
     else if (res.ok) { setInputStatus('ativo'); setSent((x) => x + 1); }
-  }, [token, sessionId, reload]);
+  }, [token, sessionId, reload, warnBlocked]);
   useEffect(() => {
     if (!token) return;
     const down = (e: KeyboardEvent) => { const n = KEYMAP[e.code]; if (n && !e.repeat) { e.preventDefault(); send({ type: 'button', name: n, pressed: true }); } };
@@ -47,14 +66,17 @@ function Player() {
     const loop = () => {
       const pad = (navigator.getGamepads?.() || []).find(Boolean);
       if (pad) pad.buttons.forEach((b, i) => {
-        if (i < GAMEPAD_BUTTONS.length && b.pressed !== prev.current[i] && (GAMEPAD_BUTTONS[i] !== 'share' || shareOn)) send({ type: 'button', name: GAMEPAD_BUTTONS[i], pressed: b.pressed });
+        const changed = b.pressed !== prev.current[i];
+        if (changed && b.pressed && BLOCKED_PAD[i]) warnBlocked(BLOCKED_PAD[i]);
+        else if (changed && b.pressed && GAMEPAD_BUTTONS[i] === 'share' && !shareOn) warnBlocked('Share');
+        else if (i < GAMEPAD_BUTTONS.length && changed && (GAMEPAD_BUTTONS[i] !== 'share' || shareOn)) send({ type: 'button', name: GAMEPAD_BUTTONS[i], pressed: b.pressed });
         prev.current[i] = b.pressed;
       });
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); cancelAnimationFrame(raf); };
-  }, [token, send, shareOn]);
+  }, [token, send, shareOn, warnBlocked]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!s) return <Skeleton h={420} />;
   const left = Math.max(0, (new Date(s.contract_ends_at).getTime() - now()) / 1000);
