@@ -22,6 +22,7 @@ def main() -> int:
     ap.add_argument('--platform', default='PS4', help='PS4 ou PS5 (para --discover/--check)')
     ap.add_argument('--list', action='store_true', help='mostra os consoles registrados no chiaki-ng deste PC e sai')
     ap.add_argument('--psn-login', action='store_true', help='vincula uma conta PSN ao agente (necessário para o Remote Play direto)')
+    ap.add_argument('--psn-redirect', metavar='URL', help='conclui o login PSN com o endereço final copiado do navegador (sem prompt)')
     ap.add_argument('--pair', metavar='CONSOLE', help='registra o console no agente com o PIN (Remote Play direto)')
     ap.add_argument('--pin', help='PIN de 8 dígitos exibido no console (para --pair)')
     ap.add_argument('--check', metavar='CONSOLE', help='teste completo local do console; ex.: --check PS4-118')
@@ -41,8 +42,8 @@ def main() -> int:
             print(f'{c.host_name} ({c.host_type}) em {c.address}: {c.state} · sistema {c.system_version} · id {c.host_id}')
         return 0
 
-    if args.psn_login:
-        return _psn_login()
+    if args.psn_login or args.psn_redirect:
+        return _psn_login(args.psn_redirect)
 
     try:
         cfg = load(args.config)
@@ -81,8 +82,8 @@ def main() -> int:
     return 0
 
 
-def _psn_login() -> int:
-    """Login PSN uma única vez: o agente guarda só o ID da conta (não guarda a senha)."""
+def _psn_login(redirect: str | None = None) -> int:
+    """Login PSN uma única vez: o agente guarda só o ID da conta (não guarda a senha nem o token)."""
     from .links import LinkError, load_profiles, profiles_path
     try:
         profiles = load_profiles()
@@ -90,10 +91,13 @@ def _psn_login() -> int:
     except LinkError as e:
         print(f'ERRO: {e}')
         return 2
-    print('1) Abra este endereço no navegador e entre com a conta PSN que está logada no console:\n')
-    print('   ' + get_login_url() + '\n')
-    print('2) Depois do login a página fica em branco/"redirect". Copie o ENDEREÇO COMPLETO da barra do navegador e cole aqui.')
-    url = input('Endereço: ').strip()
+    if redirect:
+        url = redirect.strip()
+    else:
+        print('1) Abra este endereço no navegador e entre com a conta PSN que está logada no console:\n')
+        print('   ' + get_login_url() + '\n')
+        print('2) Depois do login a página fica em branco/"redirect". Copie o ENDEREÇO COMPLETO da barra do navegador e cole aqui.')
+        url = input('Endereço: ').strip()
     user = profiles.new_user(url, save=True)
     if not user:
         print('Não foi possível vincular a conta (endereço inválido ou expirado). Tente de novo.')
@@ -142,7 +146,10 @@ def _check(cfg, args) -> int:
     for name, fn in (('Imagem e áudio', lambda: _test_video_audio(r)), ('Controles', lambda: _test_controls(cfg, r))):
         res = fn()
         print(f'{name}: {"OK" if res["ok"] else "NÃO APROVADO"} — {res["message"]}')
-    input('Enter para desconectar e sair… ')
+    if sys.stdin and sys.stdin.isatty():
+        input('Enter para desconectar e sair… ')
+    else:
+        time.sleep(float(getattr(args, 'hold', 0) or 0))
     r.disconnect()
     return 0
 

@@ -90,7 +90,7 @@ def _get_token(code: str) -> str:
         headers=__HEADERS,
         data=body,
         auth=(__CLIENT_ID, base64.b64decode(__CLIENT_SECRET.encode()).decode()),
-        timeout=3,
+        timeout=15,  # LocaPlay: 3 s era curto para a Sony
     )
     if resp.status_code == 200:
         content = resp.json()
@@ -108,7 +108,7 @@ async def _async_get_token(code: str) -> str:
     body = __TOKEN_BODY.format(code).encode("ascii")
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            url=__TOKEN_URL, auth=auth, headers=__HEADERS, data=body, timeout=3
+            url=__TOKEN_URL, auth=auth, headers=__HEADERS, data=body, timeout=15
         ) as resp:
             if resp.status == 200:
                 content = await resp.json()
@@ -124,7 +124,7 @@ def _fetch_account_info(token: str) -> dict:
         f"{__TOKEN_URL}/{token}",
         headers=__HEADERS,
         auth=(__CLIENT_ID, base64.b64decode(__CLIENT_SECRET.encode()).decode()),
-        timeout=3,
+        timeout=15,  # LocaPlay: 3 s era curto para a Sony
     )
     if resp.status_code == 200:
         account_info = resp.json()
@@ -140,7 +140,7 @@ async def _async_fetch_account_info(token: str) -> dict:
     )
     async with aiohttp.ClientSession() as session:
         async with session.get(
-            url=f"{__TOKEN_URL}/{token}", auth=auth, timeout=3
+            url=f"{__TOKEN_URL}/{token}", auth=auth, timeout=15
         ) as resp:
             if resp.status == 200:
                 account_info = await resp.json()

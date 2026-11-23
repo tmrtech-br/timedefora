@@ -246,6 +246,10 @@ def _test_controls(cfg: AgentConfig, r: ConsoleRuntime) -> dict:
     pad.press(btn, 0.15)
     time.sleep(0.9)
     after = r.link.frame()
+    # Direcional: aperta o lado oposto para devolver a seleção da tela ao lugar (o teste não deixa rastro).
+    back = {'dpad_down': 'dpad_up', 'dpad_up': 'dpad_down', 'dpad_left': 'dpad_right', 'dpad_right': 'dpad_left'}.get(btn)
+    if back:
+        pad.press(back, 0.15)
     from .media import motion
     mv = motion(before, after)
     if mv is None:
