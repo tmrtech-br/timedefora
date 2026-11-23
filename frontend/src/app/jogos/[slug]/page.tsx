@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, CalendarClock, Clock3, Gamepad2, Heart, ListOrdered, Radio } from 'lucide-react';
 import PublicStream from '@/components/PublicStream';
 import QueueList from '@/components/QueueList';
+import ShareStream from '@/components/ShareStream';
 import { Alert, ErrorBox, Field, Skeleton } from '@/components/ui';
 import { ApiError, del, get, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -136,6 +137,7 @@ export default function GamePage() {
         <section className="card" id="ao-vivo" aria-labelledby="t-live">
           <h2 id="t-live"><Radio size={18} aria-hidden /> Assistir ao vivo</h2>
           <PublicStream channel={g.public_stream} />
+          {g.public_stream && <ShareStream title={g.title} live={g.public_stream.status === 'live'} />}
           <p className="small dim">Somente espectadores — este player não envia comandos ao console.</p>
         </section>
       </div>

@@ -10,7 +10,7 @@ import psycopg
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from ..config import settings
 from ..core import security, timeutil
@@ -962,6 +962,13 @@ def calendar(date_from: datetime, date_to: datetime, console_id: uuid.UUID | Non
 
 
 # ================================================================== preços e cupons
+def _must_be_future(v: datetime | None) -> datetime | None:
+    """'Válido até' no passado criaria pacote/cupom já vencido."""
+    if v is not None and v <= timeutil.now():
+        raise ValueError('Valor inválido.')
+    return v
+
+
 class PackageIn(BaseModel):
     name: str = Field(min_length=2, max_length=60)
     minutes: int = Field(ge=5, le=480)
@@ -976,6 +983,11 @@ class PackageIn(BaseModel):
     is_promotion: bool = False
     active: bool = True
     sort_order: int = 0
+
+    @field_validator('valid_until')
+    @classmethod
+    def _future(cls, v):
+        return _must_be_future(v)
 
 
 @router.get('/packages')
@@ -1013,13 +1025,18 @@ class CouponIn(BaseModel):
     description: str = ''
     discount_type: str
     discount_value: int = Field(gt=0)
-    max_redemptions: int | None = None
-    per_user_limit: int = 1
-    min_minutes: int | None = None
+    max_redemptions: int | None = Field(default=None, ge=1)
+    per_user_limit: int = Field(default=1, ge=1)
+    min_minutes: int | None = Field(default=None, ge=1)
     game_id: uuid.UUID | None = None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
     active: bool = True
+
+    @field_validator('valid_until')
+    @classmethod
+    def _future(cls, v):
+        return _must_be_future(v)
 
 
 @router.get('/coupons')
@@ -1256,6 +1273,10 @@ class ResolveIncidentIn(BaseModel):
 
 @router.post('/incidents/{iid}/resolve')
 def resolve_incident(iid: uuid.UUID, body: ResolveIncidentIn, p: Principal = Depends(ADMIN)):
+    if body.compensation not in ('none', 'extension', 'reschedule', 'refund'):
+        raise unprocessable('validation_error', 'Compensação inválida. Escolha: sem compensação, tempo extra, remarcação ou reembolso.')
+    if body.refund_cents is not None and body.refund_cents <= 0:
+        raise unprocessable('validation_error', 'Valor de reembolso deve ser maior que zero.')
     with tx() as conn:
         i = one(conn, 'select * from service_incidents where id=%s for update', (iid,))
         if not i:
@@ -1424,8 +1445,14 @@ def set_role(uid: uuid.UUID, body: RoleIn, p: Principal = Depends(SUPER)):
 
 
 # ================================================================== relatórios
+def _check_range(date_from: datetime, date_to: datetime) -> None:
+    if date_from > date_to:
+        raise bad_request('invalid_range', 'A data inicial não pode ser maior que a data final.')
+
+
 @router.get('/reports/summary')
 def report_summary(date_from: datetime, date_to: datetime, p: Principal = Depends(ADMIN)):
+    _check_range(date_from, date_to)
     with tx() as conn:
         rev_game = all_(conn, '''select g.title, count(*) payments, sum(pm.amount_cents) revenue_cents from payments pm
                                  join reservations r on r.id=pm.reservation_id join games g on g.id=r.game_id
@@ -1446,6 +1473,7 @@ def report_summary(date_from: datetime, date_to: datetime, p: Principal = Depend
 
 @router.get('/reports/export.csv')
 def export_csv(kind: str, date_from: datetime, date_to: datetime, p: Principal = Depends(ADMIN)):
+    _check_range(date_from, date_to)
     queries = {
         'payments': '''select pm.created_at, pm.approved_at, pm.status, pm.method, pm.provider, pm.amount_cents, r.code reserva, u.username
                        from payments pm join reservations r on r.id=pm.reservation_id join users u on u.id=pm.user_id

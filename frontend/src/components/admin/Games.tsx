@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Field, PageHeader, StatusPill } from '@/components/ui';
 import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
-import { DataTable, useAction } from './common';
+import { DataTable, MultiSelect, need, useAction } from './common';
 
 type Game = Record<string, unknown> & { id: string; slug: string; title: string; status: string; commercial_license_status: string; platform_codes: string[]; genres: string[] };
 const EMPTY = { slug: '', title: '', short_description: '', description: '', cover_url: '', banner_url: '', trailer_url: '', trailer_licensed: false, age_rating: '',
@@ -37,8 +37,8 @@ export default function Games() {
           <Field label="Capa (URL)"><input maxLength={500} value={String(f.cover_url)} onChange={(e) => set('cover_url', e.target.value)} /></Field>
           <Field label="Banner (URL)"><input maxLength={500} value={String(f.banner_url)} onChange={(e) => set('banner_url', e.target.value)} /></Field>
           <Field label="Trailer (URL)"><input maxLength={500} value={String(f.trailer_url)} onChange={(e) => set('trailer_url', e.target.value)} /></Field>
-          <Field label="Plataformas"><select multiple value={f.platform_codes as string[]} onChange={(e) => set('platform_codes', Array.from(e.target.selectedOptions).map((o) => o.value))} style={{ height: 90 }}>
-            {['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((p) => <option key={p}>{p}</option>)}</select></Field>
+          <Field label="Plataformas" hint="Marque uma ou mais"><MultiSelect label="Plataformas" value={f.platform_codes as string[]} onChange={(v) => set('platform_codes', v)}
+            options={['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((p) => ({ value: p, label: p }))} /></Field>
           <Field label="Gêneros (separados por vírgula)"><input maxLength={200} value={String(f.genres)} onChange={(e) => set('genres', e.target.value)} /></Field>
           <Field label="Classificação etária"><select value={String(f.age_rating)} onChange={(e) => set('age_rating', e.target.value)}><option value="">—</option>{['L', '10', '12', '14', '16', '18'].map((x) => <option key={x}>{x}</option>)}</select></Field>
           <Field label="Lançamento"><input type="date" value={String(f.release_date)} onChange={(e) => set('release_date', e.target.value)} /></Field>
@@ -54,7 +54,7 @@ export default function Games() {
           <label className="check"><input type="checkbox" checked={!!f.featured_manual} onChange={(e) => set('featured_manual', e.target.checked)} />Destaque manual na home</label>
         </div>
         <div className="row">
-          <button className="btn primary" disabled={busy} onClick={() => run(async () => { editing ? await patch(`/admin/games/${editing}`, body()) : await post('/admin/games', body()); list.reload(); }, editing ? 'Jogo atualizado.' : 'Jogo criado como rascunho.')}>{editing ? 'Salvar' : 'Cadastrar'}</button>
+          <button className="btn primary" disabled={busy} onClick={() => run(async () => { need((f.platform_codes as string[]).length, 'Marque pelo menos uma plataforma.'); editing ? await patch(`/admin/games/${editing}`, body()) : await post('/admin/games', body()); list.reload(); }, editing ? 'Jogo atualizado.' : 'Jogo criado como rascunho.')}>{editing ? 'Salvar' : 'Cadastrar'}</button>
           {editing && <button className="btn" onClick={() => { setEditing(null); setF(EMPTY); }}>Novo</button>}
         </div>
       </section>

@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { PageHeader, StatusPill } from '@/components/ui';
+import { Alert, PageHeader, StatusPill } from '@/components/ui';
 import { post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime, money, PAYMENT_STATUS } from '@/lib/format';
@@ -13,8 +13,9 @@ export default function Finance() {
   const today = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
   const [from, setFrom] = useState(today.slice(0, 8) + '01');
   const [to, setTo] = useState(today);
-  const range = `date_from=${new Date(from + 'T00:00:00-03:00').toISOString()}&date_to=${new Date(to + 'T23:59:59-03:00').toISOString()}`;
-  const sum = useApi<Sum>(`/admin/reports/summary?${range}`);
+  const rangeErr = !from || !to ? 'Informe as duas datas.' : from > to ? 'A data inicial não pode ser maior que a data final.' : '';
+  const range = rangeErr ? '' : `date_from=${new Date(from + 'T00:00:00-03:00').toISOString()}&date_to=${new Date(to + 'T23:59:59-03:00').toISOString()}`;
+  const sum = useApi<Sum>(rangeErr ? null : `/admin/reports/summary?${range}`);
   const pays = useApi<R[]>('/admin/payments');
   const refunds = useApi<R[]>('/admin/refunds');
   const hooks = useApi<R[]>('/admin/webhooks');
@@ -24,9 +25,10 @@ export default function Finance() {
       <PageHeader title="Financeiro e relatórios" />
       {msg}
       <section className="card stack">
-        <div className="row"><input className="btn" type="date" value={from} onChange={(e) => setFrom(e.target.value)} /> até <input className="btn" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          {['payments', 'reservations', 'sessions', 'refunds'].map((k) => <a key={k} className="btn sm" href={`/api/admin/reports/export.csv?kind=${k}&${range}`}>CSV {k}</a>)}</div>
-        {sum.data && <div className="kpis">{[['Bruto', money(sum.data.gross_cents)], ['Reembolsos', money(sum.data.refunds_cents)], ['Líquido', money(sum.data.net_cents)], ['Contestações', sum.data.chargebacks],
+        <div className="row"><input className="btn" type="date" aria-label="Data inicial" max={to || undefined} value={from} onChange={(e) => setFrom(e.target.value)} /> até <input className="btn" type="date" aria-label="Data final" min={from || undefined} value={to} onChange={(e) => setTo(e.target.value)} />
+          {!rangeErr && ['payments', 'reservations', 'sessions', 'refunds'].map((k) => <a key={k} className="btn sm" href={`/api/admin/reports/export.csv?kind=${k}&${range}`}>CSV {k}</a>)}</div>
+        {rangeErr && <Alert kind="error">{rangeErr}</Alert>}
+        {sum.data && !rangeErr && <div className="kpis">{[['Bruto', money(sum.data.gross_cents)], ['Reembolsos', money(sum.data.refunds_cents)], ['Líquido', money(sum.data.net_cents)], ['Contestações', sum.data.chargebacks],
           ['Minutos jogados', sum.data.minutes_played], ['Sessões', sum.data.sessions], ['Ausências', sum.data.no_shows]].map(([l, v]) => <div key={String(l)} className="card kpi"><span>{l}</span><strong>{v}</strong></div>)}</div>}
         <div className="grid2"><DataTable rows={sum.data?.revenue_by_game || null} cols={[['Jogo', (r) => String(r.title)], ['Pagamentos', (r) => String(r.payments)], ['Receita', (r) => money(Number(r.revenue_cents))]]} />
           <DataTable rows={sum.data?.revenue_by_console || null} cols={[['Console', (r) => String(r.name)], ['Minutos vendidos', (r) => String(r.minutes_sold)], ['Receita', (r) => money(Number(r.revenue_cents))]]} /></div>

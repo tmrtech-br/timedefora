@@ -82,7 +82,7 @@ export default function Params() {
             const codes = list.map((p) => p.code);
             const famOn = codes.some((c) => !off.includes(c));
             return (
-              <div key={fam} className="stack" style={{ gap: 6 }}>
+              <div key={fam} className="param-group">
                 <div className={`param ${famOn ? '' : 'off'}`}>
                   <div><h3>{FAMILY[fam] || fam} (todas)</h3><p>{list.map((p) => p.name).join(', ')}</p></div>
                   <button className="switch" role="switch" aria-checked={famOn} aria-label={`${FAMILY[fam] || fam}: ${famOn ? 'ligado' : 'desligado'}`} disabled={busy}
@@ -91,7 +91,7 @@ export default function Params() {
                 {list.length > 1 && list.map((p) => {
                   const on = !off.includes(p.code);
                   return (
-                    <div key={p.code} className={`param ${on ? '' : 'off'}`} style={{ marginLeft: 24 }}>
+                    <div key={p.code} className={`param sub ${on ? '' : 'off'}`}>
                       <div><h3>{p.name}</h3><p>{consoleCount(p.code)} console(s) cadastrado(s)</p></div>
                       <button className="switch" role="switch" aria-checked={on} aria-label={`${p.name}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
                         onClick={() => togglePlatforms([p.code], !on, p.name)} />
@@ -129,8 +129,8 @@ export default function Params() {
             return (
               <div key={n.key} className="param">
                 <div><h3>{n.title}{s.data!.critical.includes(n.key) && <span className="pill amber" style={{ marginLeft: 8 }}>crítico</span>}</h3><p>Atual: {cur} {n.unit} · padrão {String(s.data!.defaults[n.key])} · de {n.min} a {n.max}</p></div>
-                <div className="row" style={{ flexWrap: 'nowrap' }}>
-                  <input className="btn sm" style={{ width: 90 }} type="number" min={n.min} max={n.max} value={val} aria-label={n.title} aria-invalid={invalid || undefined}
+                <div className="param-ctrl">
+                  <input className="btn sm" type="number" min={n.min} max={n.max} value={val} aria-label={n.title} aria-invalid={invalid || undefined}
                     onChange={(e) => setNums({ ...nums, [n.key]: e.target.value })} />
                   <span className="small dim">{n.unit}</span>
                   <button className="btn sm" disabled={busy || invalid || val === cur} onClick={() => ask(n.key, num, `${n.title}: ${cur} → ${num} ${n.unit}`)}>Salvar</button>

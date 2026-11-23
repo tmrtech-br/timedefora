@@ -46,7 +46,9 @@ export default function Agenda() {
   const [day, setDay] = useState(() => new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10));
   const from = new Date(day + 'T00:00:00-03:00'), to = new Date(from.getTime() + 864e5);
   const cal = useApi<Cal>(`/admin/calendar?date_from=${from.toISOString()}&date_to=${to.toISOString()}`, 15000);
-  const assigns = useApi<A[]>(`/admin/assignments?date_from=${new Date().toISOString()}`);
+  // Data fixada na montagem: gerar `new Date()` a cada render mudava a URL e disparava requisições em loop.
+  const [assignsFrom] = useState(() => new Date().toISOString());
+  const assigns = useApi<A[]>(`/admin/assignments?date_from=${assignsFrom}`);
   const blackouts = useApi<{ id: string; console_name: string; starts_at: string; ends_at: string; reason: string }[]>('/admin/blackouts');
   const [f, setF] = useState({ console_id: '', game_id: '', starts_at: '', ends_at: '', repeat: 'none', occurrences: 1, notes: '' });
   const [fErr, setFErr] = useState<Record<string, string>>({});

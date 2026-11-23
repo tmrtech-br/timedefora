@@ -1,14 +1,20 @@
 'use client';
 import { useState } from 'react';
-import { Field, PageHeader, StatusPill } from '@/components/ui';
+import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { CANCEL_REQUEST_STATUS, dateTime, money, QUEUE_STATUS, RESERVATION_STATUS, time } from '@/lib/format';
-import { DataTable, fromLocalInput, useAction } from './common';
+import { DataTable, fromLocalInput, need, useAction } from './common';
 
 type R = Record<string, unknown>;
 const INPUT_LABEL: Record<string, string> = { gamepad: 'Controle', keyboard_mouse: 'Teclado e mouse' };
 const INCIDENT_LABEL: Record<string, string> = { console_failure: 'Falha de console', stream_failure: 'Falha de stream', platform_delay: 'Atraso da plataforma', agent_offline: 'Agente offline', other: 'Outro' };
+const COMPENSATION: Record<string, { label: string; hint: string }> = {
+  none: { label: 'Sem compensação', hint: 'O incidente é encerrado sem crédito ao cliente.' },
+  extension: { label: 'Tempo extra', hint: 'Registre nas observações quantos minutos extras foram concedidos.' },
+  reschedule: { label: 'Remarcação', hint: 'Registre nas observações a nova data/horário combinado com o cliente.' },
+  refund: { label: 'Reembolso', hint: 'Se houver reserva vinculada com pagamento aprovado, o valor integral é reembolsado.' },
+};
 const PROVIDER_LABEL: Record<string, string> = { twitch: 'Twitch', kick: 'Kick', external: 'Link externo' };
 
 export function Queues() {
@@ -56,8 +62,9 @@ export function Reservations() {
 export function Sessions() {
   const s = useApi<R[]>('/admin/sessions', 5000);
   const inc = useApi<R[]>('/admin/incidents');
-  const { run, msg } = useAction();
+  const { run, msg, busy } = useAction();
   const [i, setI] = useState({ description: '', kind: 'other' });
+  const [res, setRes] = useState<{ id: string; label: string; compensation: string; notes: string } | null>(null);
   return (
     <div className="stack">
       <PageHeader title="Sessões ativas e incidentes" />
@@ -72,8 +79,31 @@ export function Sessions() {
           <input className="btn" style={{ flex: 1 }} placeholder="Descrição" value={i.description} onChange={(e) => setI({ ...i, description: e.target.value })} />
           <button className="btn" onClick={() => run(async () => { await post('/admin/incidents', i); inc.reload(); }, 'Incidente registrado.')}>Registrar</button></div>
         <DataTable rows={inc.data} empty="Nenhum incidente aberto." cols={[['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')], ['Descrição', (r) => String(r.description)],
-          ['Desde', (r) => dateTime(String(r.started_at))], ['', (r) => <button className="btn sm" onClick={() => { const c = prompt('Compensação: none, extension, reschedule ou refund', 'none'); if (c) run(async () => { await post(`/admin/incidents/${r.id}/resolve`, { compensation: c, compensation_notes: '' }); inc.reload(); }, 'Resolvido.'); }}>Resolver</button>]]} />
+          ['Desde', (r) => dateTime(String(r.started_at))], ['', (r) => <button className="btn sm" onClick={() => setRes({ id: String(r.id), label: String(r.description), compensation: 'none', notes: '' })}>Resolver</button>]]} />
       </section>
+      {res && (
+        <Modal title="Resolver incidente" onClose={() => setRes(null)}>
+          <div className="stack">
+            <p className="small muted" style={{ margin: 0 }}>{res.label}</p>
+            <Field label="Compensação ao cliente" required>
+              <select value={res.compensation} onChange={(e) => setRes({ ...res, compensation: e.target.value })}>
+                {Object.entries(COMPENSATION).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></Field>
+            <p className="small dim" style={{ margin: 0 }}>{COMPENSATION[res.compensation].hint}</p>
+            <Field label="Observações (registradas no incidente)" required={res.compensation !== 'none'}>
+              <textarea maxLength={1000} value={res.notes} onChange={(e) => setRes({ ...res, notes: e.target.value })} /></Field>
+            <div className="row">
+              <button className={`btn ${res.compensation === 'refund' ? 'danger' : 'primary'}`} disabled={busy} onClick={async () => {
+                const ok = await run(async () => {
+                  need(res.compensation === 'none' || res.notes.trim().length >= 5, 'Descreva a compensação concedida (mínimo 5 caracteres).');
+                  await post(`/admin/incidents/${res.id}/resolve`, { compensation: res.compensation, compensation_notes: res.notes.trim() }); inc.reload(); return true;
+                }, 'Incidente resolvido.');
+                if (ok) setRes(null);
+              }}>Resolver incidente</button>
+              <button className="btn" onClick={() => setRes(null)}>Voltar</button>
+            </div>
+            {msg}
+          </div>
+        </Modal>)}
     </div>
   );
 }

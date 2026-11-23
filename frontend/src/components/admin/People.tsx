@@ -1,6 +1,8 @@
 'use client';
 import { useState } from 'react';
-import { Alert, Field, PageHeader } from '@/components/ui';
+import { Copy } from 'lucide-react';
+import { Alert, Field, Modal, PageHeader } from '@/components/ui';
+import { toast } from '@/components/Toaster';
 import { patch, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
@@ -89,6 +91,8 @@ export function Audit() {
   const [table, setTable] = useState('');
   const [record, setRecord] = useState('');
   const list = useApi<R[]>(`/admin/audit?limit=300${table ? `&table_name=${table}` : ''}${record ? `&record_id=${record}` : ''}`);
+  const [detail, setDetail] = useState<{ title: string; json: string } | null>(null);
+  const [copied, setCopied] = useState(false);
   return (
     <div className="stack">
       <PageHeader title="Auditoria" subtitle="Toda inserção, alteração e exclusão (trigger no banco) e ações de negócio. Registros imutáveis; segredos mascarados." />
@@ -97,7 +101,22 @@ export function Audit() {
       <section className="card"><DataTable rows={list.data} cols={[['Quando', (r) => dateTime(String(r.occurred_at))], ['Origem', (r) => String(r.source)], ['Ação', (r) => String(r.action)],
         ['Tabela / registro', (r) => `${r.table_name || '—'} · ${String(r.record_id || '').slice(0, 8)}`], ['Ator', (r) => String(r.actor_username || 'sistema')],
         ['Campos', (r) => ((r.changed_fields as string[]) || []).join(', ')], ['Motivo', (r) => String(r.reason || '')],
-        ['Detalhes', (r) => <details><summary className="small">ver</summary><pre className="small" style={{ maxWidth: 420, whiteSpace: 'pre-wrap' }}>{JSON.stringify({ antes: r.old_data, depois: r.new_data, ...((r.details as object) || {}) }, null, 1)}</pre></details>]]} /></section>
+        ['Detalhes', (r) => <button className="btn sm" onClick={() => { setCopied(false); setDetail({ title: `${r.action} · ${r.table_name || '—'} · ${dateTime(String(r.occurred_at))}`,
+          json: JSON.stringify({ antes: r.old_data, depois: r.new_data, ...((r.details as object) || {}) }, null, 2) }); }}>Ver detalhes</button>]]} /></section>
+      {detail && (
+        <Modal title="Detalhes do registro de auditoria" onClose={() => setDetail(null)}>
+          <div className="stack">
+            <p className="small muted" style={{ margin: 0 }}>{detail.title}</p>
+            <pre className="audit-json" tabIndex={0} aria-label="Conteúdo do registro">{detail.json}</pre>
+            <div className="row">
+              <button className="btn primary" onClick={async () => {
+                try { await navigator.clipboard.writeText(detail.json); setCopied(true); toast('ok', 'Detalhes copiados.'); }
+                catch { toast('error', 'Não foi possível copiar. Selecione o texto e use Ctrl+C.'); }
+              }}><Copy size={16} aria-hidden />{copied ? 'Copiado!' : 'Copiar detalhes'}</button>
+              <button className="btn" onClick={() => setDetail(null)}>Fechar</button>
+            </div>
+          </div>
+        </Modal>)}
     </div>
   );
 }
@@ -107,6 +126,28 @@ const IN_PARAMS = new Set(['sales_paused', 'sales_paused_reason', 'disabled_plat
   'scheduled_mode_enabled', 'coupons_enabled', 'keyboard_mouse_enabled', 'public_streams_enabled', 'support_tickets_enabled', 'share_button_enabled', 'hold_minutes', 'setup_minutes',
   'scheduled_lead_minutes', 'queue_lead_minutes', 'booking_horizon_days', 'max_pending_holds_per_user', 'max_future_reservations_per_user',
   'cancel_full_refund_min_minutes_before', 'no_show_tolerance_minutes', 'featured_window_days', 'agent_heartbeat_timeout_seconds']);
+
+/** Explicação curta de cada chave (exibida na tabela de Configurações operacionais). */
+const SETTING_HELP: Record<string, string> = {
+  reminder_minutes: 'Minutos antes do início em que o cliente recebe lembretes da reserva. Lista separada por vírgula (ex.: 15,10,5,1).',
+  session_end_warnings_seconds: 'Segundos antes do fim da sessão em que o jogador vê avisos de "tempo acabando". Lista separada por vírgula (ex.: 600,300,60,30).',
+  featured_metric: 'Critério do destaque "mais jogado" na home: minutes_played (minutos jogados), sessions_sold (sessões vendidas) ou revenue (receita).',
+  support_hours_text: 'Texto exibido na página de Suporte com o horário de atendimento.',
+  hold_minutes: 'Tempo que a reserva fica guardada aguardando o pagamento.',
+  setup_minutes: 'Intervalo de preparação/limpeza do console entre dois jogadores.',
+  queue_lead_minutes: 'Antecedência mínima para começar no modo fila (0 = assim que o console ficar livre).',
+  scheduled_lead_minutes: 'Antecedência mínima para comprar um horário marcado.',
+  booking_horizon_days: 'Até quantos dias à frente o cliente pode reservar.',
+  max_pending_holds_per_user: 'Quantas reservas aguardando pagamento um cliente pode ter ao mesmo tempo.',
+  max_future_reservations_per_user: 'Quantas reservas futuras um cliente pode ter ao mesmo tempo.',
+  cancel_full_refund_min_minutes_before: 'Cancelando com pelo menos esta antecedência (minutos), o cliente recebe reembolso integral.',
+  no_show_tolerance_minutes: 'Tolerância de atraso antes de considerar ausência (0 = o horário fica reservado até o fim).',
+  featured_window_days: 'Período (dias) usado para calcular os jogos em destaque.',
+  agent_heartbeat_timeout_seconds: 'Tempo sem sinal do agente local até o console ser marcado como offline.',
+  sales_paused: 'Pausa a venda de tempo novo (reservas pagas continuam valendo).',
+  sales_paused_reason: 'Mensagem mostrada aos clientes enquanto as vendas estiverem pausadas.',
+  disabled_platforms: 'Plataformas desligadas: consoles e jogos delas saem da venda.',
+};
 
 export function Settings() {
   const s = useApi<{ values: Record<string, unknown>; defaults: Record<string, unknown>; critical: string[] }>('/admin/settings');
@@ -121,7 +162,8 @@ export function Settings() {
       {msg}
       <Alert kind="info"><span>Liga/desliga de funções, plataformas e regras de agenda ficam em <a className="link-purple" href="/admin/parametros">Parâmetros</a>. Aqui ficam os ajustes avançados.</span></Alert>
       <section className="card"><DataTable rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
-        ['Valor', (r) => <input className="btn sm" style={{ width: 280 }} value={vals[String(r.k)] ?? (Array.isArray(r.v) ? (r.v as number[]).join(',') : String(r.v))} onChange={(e) => setVals({ ...vals, [String(r.k)]: e.target.value })} />],
+        ['O que é', (r) => <span className="small muted" style={{ display: 'block', maxWidth: 380 }}>{SETTING_HELP[String(r.k)] || 'Ajuste avançado do sistema.'}</span>],
+        ['Valor', (r) => <input className="btn sm" style={{ width: 260, maxWidth: '100%' }} value={vals[String(r.k)] ?? (Array.isArray(r.v) ? (r.v as number[]).join(',') : String(r.v))} onChange={(e) => setVals({ ...vals, [String(r.k)]: e.target.value })} />],
         ['', (r) => <button className="btn sm" disabled={vals[String(r.k)] === undefined} onClick={() => { const reason = prompt('Motivo da alteração:') || ''; run(async () => { await put(`/admin/settings/${r.k}`, { value: parse(String(r.k), vals[String(r.k)]), reason }); s.reload(); }, 'Configuração salva.'); }}>Salvar</button>]]} /></section>
       <section className="card stack"><h2>Políticas (termos, privacidade, cancelamento)</h2>
         <div className="grid3"><Field label="Tipo"><select value={p.kind} onChange={(e) => setP({ ...p, kind: e.target.value })}><option value="terms">Termos</option><option value="privacy">Privacidade</option><option value="cancellation">Cancelamento</option></select></Field>
