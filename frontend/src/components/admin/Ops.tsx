@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
-import { CANCEL_REQUEST_STATUS, dateTime, money, QUEUE_STATUS, RESERVATION_STATUS, time } from '@/lib/format';
+import { CANCEL_REQUEST_STATUS, dateTime, minutesLabel, money, QUEUE_STATUS, RESERVATION_STATUS, time } from '@/lib/format';
 import { DataTable, fromLocalInput, need, useAction } from './common';
 
 type R = Record<string, unknown>;
@@ -62,6 +62,8 @@ export function Reservations() {
 export function Sessions() {
   const s = useApi<R[]>('/admin/sessions', 5000);
   const inc = useApi<R[]>('/admin/incidents');
+  const all = useApi<R[]>('/admin/incidents?open_only=false');
+  const resolved = all.data ? all.data.filter((r) => r.resolved_at) : null;
   const { run, msg, busy } = useAction();
   const [i, setI] = useState({ description: '', kind: 'other' });
   const [res, setRes] = useState<{ id: string; label: string; compensation: string; notes: string } | null>(null);
@@ -81,6 +83,15 @@ export function Sessions() {
         <DataTable rows={inc.data} empty="Nenhum incidente aberto." cols={[['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')], ['Descrição', (r) => String(r.description)],
           ['Desde', (r) => dateTime(String(r.started_at))], ['', (r) => <button className="btn sm" onClick={() => setRes({ id: String(r.id), label: String(r.description), compensation: 'none', notes: '' })}>Resolver</button>]]} />
       </section>
+      <section className="card stack"><h2>Histórico de incidentes resolvidos</h2>
+        <DataTable rows={resolved} empty="Nenhum incidente resolvido ainda." cols={[
+          ['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')],
+          ['Descrição', (r) => <span className="small" style={{ display: 'block', maxWidth: 360 }}>{String(r.description)}</span>],
+          ['Aberto em', (r) => dateTime(String(r.started_at))], ['Resolvido em', (r) => dateTime(String(r.resolved_at))],
+          ['Duração', (r) => minutesLabel(Math.max(1, Math.round((new Date(String(r.resolved_at)).getTime() - new Date(String(r.started_at)).getTime()) / 60000)))],
+          ['Compensação', (r) => <span className={`pill ${r.compensation === 'refund' ? 'amber' : r.compensation && r.compensation !== 'none' ? 'purple' : ''}`}>{COMPENSATION[String(r.compensation || 'none')]?.label || String(r.compensation)}</span>],
+          ['Observações', (r) => <span className="small muted" style={{ display: 'block', maxWidth: 280 }}>{String(r.compensation_notes || '—')}</span>]]} />
+      </section>
       {res && (
         <Modal title="Resolver incidente" onClose={() => setRes(null)}>
           <div className="stack">
@@ -95,7 +106,7 @@ export function Sessions() {
               <button className={`btn ${res.compensation === 'refund' ? 'danger' : 'primary'}`} disabled={busy} onClick={async () => {
                 const ok = await run(async () => {
                   need(res.compensation === 'none' || res.notes.trim().length >= 5, 'Descreva a compensação concedida (mínimo 5 caracteres).');
-                  await post(`/admin/incidents/${res.id}/resolve`, { compensation: res.compensation, compensation_notes: res.notes.trim() }); inc.reload(); return true;
+                  await post(`/admin/incidents/${res.id}/resolve`, { compensation: res.compensation, compensation_notes: res.notes.trim() }); inc.reload(); all.reload(); return true;
                 }, 'Incidente resolvido.');
                 if (ok) setRes(null);
               }}>Resolver incidente</button>

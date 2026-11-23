@@ -25,7 +25,7 @@ const RULES = [
 
 export default function Page() {
   return (
-    <div className="stack how" style={{ maxWidth: 980 }}>
+    <div className="stack how" style={{ maxWidth: 1480 }}>
       <PageHeader title="Como funciona" subtitle="Aluguel de tempo em consoles físicos, jogado direto no navegador." />
 
       <ol className="timeline" aria-label="Passo a passo">
