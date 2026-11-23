@@ -28,6 +28,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // O proxy /api corta em 30 s por padrão; o teste de conexão do painel espera o console até 60 s.
+  experimental: { proxyTimeout: 90_000 },
   async rewrites() {
     return [{ source: '/api/:path*', destination: `${API_URL}/:path*` }];
   },

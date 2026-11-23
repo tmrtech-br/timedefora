@@ -3,6 +3,7 @@ Todas as mutações ficam no audit_logs (triggers) e ações sensíveis exigem j
 import csv
 import io
 import re
+import time as time_mod
 import uuid
 from datetime import date, datetime, time, timedelta
 
@@ -675,6 +676,7 @@ def rollback_connection(cid: uuid.UUID, change_id: uuid.UUID, p: Principal = Dep
 
 
 TEST_TYPES = ('discover', 'pair', 'connection', 'video_audio', 'controls', 'heartbeat', 'latency')
+CONNECT_WAIT = 60.0      # segundos que o teste manual de conexão espera o agente concluir
 
 
 class PairIn(BaseModel):
@@ -714,7 +716,13 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
         elif test_type == 'pair':
             r = adapter.pair_console(ref, body.code if body else None)
         elif test_type == 'connection':
+            # A conexão real (achar, autenticar, primeira imagem) leva de 5 a 60 s; cada chamada ao agente responde
+            # em até ~5 s com o andamento. No teste manual do painel esperamos aqui até concluir (máx. CONNECT_WAIT).
+            deadline = time_mod.monotonic() + CONNECT_WAIT
             r = adapter.connect(ref)
+            while not r.ok and (getattr(r, 'data', {}) or {}).get('running') and time_mod.monotonic() < deadline:
+                time_mod.sleep(2)
+                r = adapter.connect(ref)
         elif test_type == 'video_audio':
             r = adapter.test_video_audio(ref)
         elif test_type == 'controls':
@@ -722,10 +730,14 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
         elif test_type == 'latency':
             m = adapter.get_metrics(ref)
             metrics = m.to_dict()
-            r = type('R', (), {'ok': m.rtt_ms is not None, 'message': 'Latência medida.' if m.rtt_ms is not None else 'Latência não disponível (nenhuma medição real).', 'data': {}})()
+            r = type('R', (), {'ok': m.rtt_ms is not None, 'message': 'Latência medida.' if m.rtt_ms is not None else
+                               'Latência não disponível fora de uma sessão: é medida pelo navegador do jogador durante a partida.',
+                               'data': {'no_measurement': m.rtt_ms is None}})()
         else:
             r = adapter.health_check(ref)
         result, message, data = ('passed' if r.ok else 'failed'), r.message, getattr(r, 'data', {}) or {}
+        if test_type == 'latency' and data.get('no_measurement'):
+            result = 'not_available'        # ausência de medição não é falha do console
         reported_simulated = bool(getattr(r, 'simulated', False))
         if not r.ok and data.get('running'):
             # Conexão real em andamento no agente (acordar + conectar leva até 1 min): ainda não é falha.
