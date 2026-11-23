@@ -118,7 +118,13 @@ function Player() {
     const onScreen = (e: Event) => !!screen.current && screen.current.contains(e.target as Node);
     const mouseDown = (e: MouseEvent) => {
       if (!onScreen(e)) return;
-      if (bindings.mouse_look && !document.pointerLockElement) { screen.current?.requestPointerLock?.(); return; }  // 1º clique só "prende" o mouse
+      // Botões sobre a imagem (Tentar de novo, Ativar som…) são cliques normais: não prendem o mouse nem viram comando.
+      if (!document.pointerLockElement && (e.target as HTMLElement)?.closest('button, a, input, textarea, select')) return;
+      const playing = (screen.current?.querySelector('video')?.videoWidth || 0) > 0;
+      if (bindings.mouse_look && !document.pointerLockElement) {          // 1º clique só "prende" o mouse — e só com o jogo na tela
+        if (playing) screen.current?.requestPointerLock?.();
+        return;
+      }
       const a = codeToAction[`Mouse${e.button}`]; if (a) { e.preventDefault(); press(a, true); }
     };
     const mouseUp = (e: MouseEvent) => { const a = codeToAction[`Mouse${e.button}`]; if (a && (document.pointerLockElement || onScreen(e))) press(a, false); };
@@ -209,7 +215,7 @@ function Player() {
                 : <div className="sim-screen"><Gamepad2 size={64} aria-hidden /><h2>{s.simulated ? 'Stream simulado' : 'Sua partida está quase pronta…'}</h2>
                   {s.simulated && <p>Entrada: {inputStatus}</p>}
                   {!token && <p>Esta aba não tem o acesso ao controle. <button className="btn sm" onClick={() => router.push('/sessoes')}>Reconectar pela sala de espera</button></p>}</div>}
-              {bindings.mouse_look && token && !locked && <span className="mouse-hint">Clique na imagem para usar o mouse como câmera · Esc solta</span>}
+              {bindings.mouse_look && token && !locked && vstats && <span className="mouse-hint">Clique na imagem para usar o mouse como câmera · Esc solta</span>}
             </div>
             {s.reservation_id && <SupportPanel open={side === 'support'} onClose={() => { setSide(null); screen.current?.focus(); }} reservationId={s.reservation_id}
               game={s.game} consoleName={s.console} onStaffReply={setUnread} />}

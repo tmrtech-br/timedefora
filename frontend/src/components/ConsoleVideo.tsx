@@ -4,7 +4,9 @@ import { Loader2, RefreshCw, Volume2, VolumeX } from 'lucide-react';
 import { csrfToken } from '@/lib/api';
 
 export type VideoStats = { fps: number | null; bitrate_kbps: number | null; rtt_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null };
-type Phase = 'connecting' | 'live' | 'failed';
+type Phase = 'connecting' | 'retrying' | 'live' | 'failed';
+const MAX_AUTO = 8;          // ~1 min de tentativas automáticas (o console pode estar acordando/reconectando)
+const RETRY_MS = 6000;
 
 /**
  * Vídeo do console (WebRTC). A oferta vai para a API com o token de controle; o agente do console responde.
@@ -22,9 +24,17 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
   const call = useCallback(async (path: string, init?: RequestInit) => {
     const res = await fetch(`/api/sessions/${sessionId}/${path}`, { ...init, headers: { 'Content-Type': 'application/json', 'X-Input-Token': token, 'X-CSRF-Token': csrfToken(), ...(init?.headers || {}) } });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || body.message || `Erro ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(body.detail || body.message || `Erro ${res.status}`), { status: res.status, code: body.code });
     return body;
   }, [sessionId, token]);
+  // Tentativas automáticas (console reconectando, rede oscilando). Sessão encerrada/acesso revogado não tenta de novo.
+  const auto = useRef(0);
+  const retryLater = useCallback((reason: string) => {
+    if (auto.current >= MAX_AUTO) { setPhase('failed'); setError(reason); return; }
+    auto.current += 1;
+    setPhase('retrying');
+    setTimeout(() => setAttempt((x) => x + 1), RETRY_MS);
+  }, []);
 
   useEffect(() => {
     let closed = false;
@@ -44,8 +54,8 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
         };
         conn.onconnectionstatechange = () => {
           if (closed) return;
-          if (conn.connectionState === 'connected') setPhase('live');
-          if (conn.connectionState === 'failed') { setPhase('failed'); setError('A conexão de vídeo caiu (rede bloqueada ou instável).'); }
+          if (conn.connectionState === 'connected') { auto.current = 0; setPhase('live'); }
+          if (conn.connectionState === 'failed') retryLater('A conexão de vídeo caiu (rede bloqueada ou instável).');
         };
         await conn.setLocalDescription(await conn.createOffer());
         // Espera a coleta de candidatos (máx. 3 s): a troca é feita numa única ida e volta.
@@ -58,11 +68,14 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
         if (closed) return;
         await conn.setRemoteDescription(res.answer);
       } catch (e) {
-        if (!closed) { setPhase('failed'); setError(e instanceof Error ? e.message : 'Falha ao conectar o vídeo.'); }
+        if (closed) return;
+        const err = e as Error & { status?: number; code?: string };
+        if (err.status === 403) { setPhase('failed'); setError('Sua sessão terminou ou o acesso ao controle foi encerrado nesta aba.'); return; }
+        retryLater('Não conseguimos ligar a imagem do console agora. A equipe pode ajudar pelo botão Suporte.');
       }
     })();
     return () => { closed = true; pc.current?.close(); pcRef.current = null; last.current = null; };
-  }, [call, attempt]);
+  }, [call, attempt, retryLater]);
 
   // Métricas reais do navegador, a cada 2 s.
   useEffect(() => {
@@ -102,7 +115,10 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
         <div className="cv-overlay" role="status">
           {phase === 'connecting' ? <><Loader2 className="spin" size={36} aria-hidden /><p className="cv-title">Sua partida já vai começar! 🎮</p>
             <p className="small">Estamos ligando a imagem do console para você. Pegue o controle — leva só alguns segundos.</p></>
-            : <><p><b>Vídeo indisponível.</b> {error}</p><button className="btn sm" onClick={() => setAttempt((x) => x + 1)}><RefreshCw size={14} aria-hidden />Tentar de novo</button></>}
+            : phase === 'retrying' ? <><Loader2 className="spin" size={36} aria-hidden /><p className="cv-title">Reconectando ao console…</p>
+              <p className="small">A imagem caiu por um instante e já estamos trazendo de volta. Seu tempo e o controle continuam garantidos. (tentativa {auto.current} de {MAX_AUTO})</p></>
+            : <><p className="cv-title">Não foi possível mostrar a imagem agora</p><p className="small">{error}</p>
+              <button className="btn sm cv-retry" onClick={() => { auto.current = 0; setAttempt((x) => x + 1); }}><RefreshCw size={14} aria-hidden />Tentar de novo</button></>}
         </div>)}
       {phase === 'live' && (
         <button className="cv-sound" onClick={() => setMuted(!muted)} aria-label={muted ? 'Ativar som' : 'Silenciar'}>

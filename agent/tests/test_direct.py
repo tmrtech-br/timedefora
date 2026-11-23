@@ -85,6 +85,16 @@ def test_receptor_decodifica_video_e_audio_reais_e_checa_imagem():
     assert frames and frames[-1].format.name == 's16' and frames[-1].sample_rate == 48000
 
 
+def test_conexao_sem_quadros_novos_e_considerada_morta():
+    """PS4 em repouso: a biblioteca não percebe, mas sem quadro novo por >10 s o link deixa de estar 'running'."""
+    import time
+    link = fed_link()
+    link.device = type('D', (), {'session': type('S', (), {'is_stopped': False})(), 'connected': True, 'controller': FakeController()})()
+    assert link.running is True
+    link.receiver.last_video_at = time.monotonic() - (DirectLink.STALE_SECONDS + 1)
+    assert link.running is False and 'parou de enviar imagem' in link.log_tail()
+
+
 def test_faixa_de_audio_reempacota_em_20ms():
     link = fed_link()
 

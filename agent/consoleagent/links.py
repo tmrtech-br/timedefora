@@ -334,10 +334,25 @@ class DirectLink:
         dev.controller.start()
         self.error = ''
 
+    STALE_SECONDS = 10.0          # sem quadro novo por mais que isso = conexão morta (ex.: console entrou em repouso)
+
     @property
     def running(self) -> bool:
         d = self.device
-        return bool(d and d.session and d.connected and not d.session.is_stopped)
+        if not (d and d.session and d.connected and not d.session.is_stopped):
+            return False
+        rec = self.receiver
+        if rec is None:
+            return False
+        # A biblioteca nem sempre percebe que o console sumiu (repouso, queda de rede): o PS4 manda quadros sem parar
+        # enquanto transmite, então ficar sem quadro novo é sinal confiável de conexão morta.
+        last = rec.last_video_at or rec.created_at
+        if time.monotonic() - last > (self.STALE_SECONDS if rec.last_video_at else self.SESSION_TIMEOUT):
+            if not self.error:
+                self.error = 'O console parou de enviar imagem (repouso, desligado ou rede caiu).'
+                log.warning('Remote Play: %s', self.error)
+            return False
+        return True
 
     def stop(self) -> None:
         d, self.device = self.device, None
@@ -412,12 +427,15 @@ def _make_receiver(AVReceiver):
             self.video_format = 'yuv420p'
             self.latest_video = None
             self.video_frames = 0
+            self.last_video_at = 0.0
+            self.created_at = time.monotonic()
             self._audio = deque(maxlen=50)
             self._lock = threading.Lock()
 
         def handle_video(self, frame):
             self.latest_video = frame
             self.video_frames += 1
+            self.last_video_at = time.monotonic()
 
         def handle_audio(self, frame):
             with self._lock:

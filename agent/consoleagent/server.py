@@ -90,7 +90,7 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             log.info('comando %s para console %s', action, console_id)
         sid = str(body.get('session_id') or '')
         if action == 'stream/webrtc':
-            return await _webrtc(console_id, sid, body.get('offer') or {})
+            return await _webrtc(console_id, sid, body.get('offer') or {}, body)
         # As ações podem esperar (capturas de tela, preparação): fora do laço assíncrono do servidor.
         res = await run_in_threadpool(handle, console_id, action, body)
         if action in ('input/revoke', 'stream/stop'):
@@ -99,12 +99,15 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             await hub.close(console_id)
         return res
 
-    async def _webrtc(console_id: str, sid: str, offer: dict):
-        r = rt(console_id)
+    async def _webrtc(console_id: str, sid: str, offer: dict, body: dict):
+        r = rt(console_id, body.get('method'))
         if not sid or sid != r.session_id:
             return _error(403, 'input_revoked', 'Vídeo só para a sessão ativa neste console.')
         if not r.streaming:
-            return _result(False, 'O console não está transmitindo (preparação não concluída).', 'stopped')
+            # Console caiu (repouso, rede): dispara a reconexão em segundo plano (acorda + conecta); o navegador tenta de novo.
+            t = target_from(cfg, console_id, body)
+            await run_in_threadpool(r.start_job, t, 'connect', None, 0)
+            return _result(False, 'O console está reconectando (acordando/conectando). Tente de novo em alguns segundos.', 'connecting')
         if offer.get('type') != 'offer' or not isinstance(offer.get('sdp'), str):
             return _error(400, 'invalid_offer', 'Oferta de vídeo inválida.')
         try:

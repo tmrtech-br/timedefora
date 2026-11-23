@@ -156,7 +156,7 @@ class WebRtcHub:
         _require()
         from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
 
-        await self.close(console_id)
+        await self.close(console_id)                            # não bloqueia: o fechamento da anterior roda em segundo plano
         servers = [RTCIceServer(urls=s.get('urls'), username=s.get('username'), credential=s.get('credential')) for s in self.ice]
         pc = RTCPeerConnection(RTCConfiguration(iceServers=servers))
         entry = {'session_id': session_id, 'pc': pc, 'video': None, 'audio': None}
@@ -168,7 +168,17 @@ class WebRtcHub:
             if pc.connectionState in ('failed', 'closed') and self.peers.get(console_id) is entry:
                 await self.close(console_id)
 
-        await pc.setRemoteDescription(RTCSessionDescription(sdp=offer['sdp'], type=offer['type']))
+        async def step(name: str, coro, limit: float):
+            """Cada passo com limite: um passo travado vira erro com nome, nunca um agente mudo."""
+            try:
+                return await asyncio.wait_for(coro, limit)
+            except asyncio.TimeoutError:
+                log.error('WebRTC console %s: tempo esgotado em "%s"', console_id[:8], name)
+                if self.peers.get(console_id) is entry:
+                    await self.close(console_id)
+                raise RuntimeError(f'tempo esgotado em "{name}" ({limit:.0f}s)') from None
+
+        await step('ler a oferta do navegador', pc.setRemoteDescription(RTCSessionDescription(sdp=offer['sdp'], type=offer['type'])), 10)
         entry['video'] = make_video_track(link.video_frame, self.max_width)
         pc.addTrack(entry['video'])
         note = 'vídeo'
@@ -180,18 +190,29 @@ class WebRtcHub:
                 note += ' e áudio'
             else:
                 note += ' (áudio indisponível: instale soundcard no agente)'
-        await pc.setLocalDescription(await pc.createAnswer())      # aguarda a coleta de candidatos (STUN)
+        answer = await step('preparar a resposta', pc.createAnswer(), 10)
+        await step('coletar rotas de rede (STUN)', pc.setLocalDescription(answer), 15)
         return {'type': pc.localDescription.type, 'sdp': pc.localDescription.sdp}, f'Transmissão de {note} iniciada.'
 
     async def close(self, console_id: str, session_id: str | None = None) -> None:
+        """Retira a conexão e a fecha em SEGUNDO PLANO (com limite): fechar uma conexão presa não pode travar o agente."""
         e = self.peers.get(console_id)
         if not e or (session_id and e['session_id'] != session_id):
             return
         self.peers.pop(console_id, None)
         for t in (e['video'], e['audio']):
             if t is not None:
-                t.stop()
-        await e['pc'].close()
+                try:
+                    t.stop()
+                except Exception:
+                    pass
+
+        async def _close(pc):
+            try:
+                await asyncio.wait_for(pc.close(), 5)
+            except Exception as err:  # noqa: BLE001 — só registra; a conexão já foi retirada
+                log.warning('WebRTC console %s: fechamento da conexão anterior não terminou (%s)', console_id[:8], err.__class__.__name__)
+        asyncio.ensure_future(_close(e['pc']))
 
     def fps(self, console_id: str) -> float | None:
         e = self.peers.get(console_id)
