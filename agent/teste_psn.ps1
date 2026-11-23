@@ -26,7 +26,9 @@ while ((Get-Date) -lt $deadline) {
 if (-not $fora) { Write-Log 'FALHOU: o PC continuou enxergando o PS4 na rede local (não trocou de rede a tempo).'; Read-Host 'Enter para fechar'; exit 1 }
 # O PC não pode continuar na rede da casa por OUTRA placa (ex.: cabo de rede ligado): o teste não provaria a internet.
 $prefixo = ($ConsoleIp -split '\.')[0..2] -join '.'
-$naCasa = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -like "$prefixo.*" }
+$ativas = (Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up').ifIndex       # só placas conectadas
+$naCasa = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+  Where-Object { $_.IPAddress -like "$prefixo.*" -and $_.AddressState -eq 'Preferred' -and $ativas -contains $_.InterfaceIndex }
 if ($naCasa) {
   Write-Log "FALHOU: o PC ainda está na rede da casa por '$($naCasa[0].InterfaceAlias)' ($($naCasa[0].IPAddress)). Desconecte o CABO de rede (ou desative essa placa) e rode o teste de novo."
   Read-Host 'Enter para fechar'; exit 1
