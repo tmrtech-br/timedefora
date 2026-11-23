@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { Alert } from '@/components/ui';
 import type { ApiError } from '@/lib/api';
+import { toast } from '@/components/Toaster';
 
 /** Nomes dos campos da API em português (para mensagens de validação). */
 export const FIELD_LABELS: Record<string, string> = {
@@ -17,12 +18,13 @@ export function useAction() {
   const [busy, setBusy] = useState(false);
   async function run<T>(fn: () => Promise<T>, ok?: string): Promise<T | undefined> {
     setBusy(true); setMsg(null);
-    try { const r = await fn(); if (ok) setMsg({ k: 'ok', t: ok }); return r; }
+    try { const r = await fn(); if (ok) { setMsg({ k: 'ok', t: ok }); toast('ok', ok); } return r; }
     catch (e) {
       const a = e as ApiError;
       const fields = a.fields && Object.keys(a.fields).length
         ? ' ' + Object.entries(a.fields).map(([k, v]) => `${FIELD_LABELS[k] || k}: ${String(v).replace(/^Valor inválido\.?$/, 'preencha corretamente')}`).join(' · ') : '';
       setMsg({ k: 'error', t: a.message + fields, extra: a.data });
+      toast('error', a.message + fields);
     } finally { setBusy(false); }
   }
   const view = msg ? <Alert kind={msg.k}><span>{msg.t}{Array.isArray((msg.extra as { reservations?: unknown[] })?.reservations) &&

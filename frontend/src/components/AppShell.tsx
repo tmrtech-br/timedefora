@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth, isStaff } from '@/lib/auth';
 import { get } from '@/lib/api';
+import Toaster from '@/components/Toaster';
 
 function LogoIcon() {
   // Ícone próprio (ingresso/fita) — identidade LocaPlay
@@ -155,6 +156,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <Sidebar open={open} onNavigate={() => setOpen(false)} />
         <div className="main">
           <main id="conteudo" className={path === '/' ? 'content' : 'content pad'}>{children}</main>
+          <Toaster />
           <Footer />
         </div>
       </div>
