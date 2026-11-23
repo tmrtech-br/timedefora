@@ -110,3 +110,4 @@ cd frontend && npx playwright install chromium && E2E_ADMIN_EMAIL=... E2E_ADMIN_
 3. Hospedar API (Render/Railway/Fly) e frontend (Vercel) com HTTPS e `COOKIE_SECURE=true`.
 4. Desenvolver o ConsoleAgent e validar um PS4/PS5 próprio em rede privada (Fase A do adendo GameBridge).
 5. WebRTC (STUN/TURN) entre navegador e agente; revisão jurídica e licenças antes de vender.
+6. Controle virtual na tela para jogar pelo celular sem controle Bluetooth (sem PS/Touchpad/Share).
