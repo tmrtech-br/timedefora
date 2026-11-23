@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Gamepad2, Headphones, Maximize, Power, Unplug } from 'lucide-react';
 import ConsoleVideo, { type VideoStats } from '@/components/ConsoleVideo';
 import RequireAuth from '@/components/RequireAuth';
+import SupportPanel from '@/components/SupportPanel';
 import { GAMEPAD_BUTTONS } from '@/components/InputTester';
 import { Alert, ErrorBox, Skeleton } from '@/components/ui';
 import { csrfToken, post } from '@/lib/api';
@@ -13,7 +14,7 @@ import { useFeatures } from '@/lib/features';
 import { toast } from '@/components/Toaster';
 import type { InputCommand, StreamMetrics } from '@/lib/gamebridge';
 
-type State = { id: string; status: string; game: string; console: string; contract_ends_at: string; server_time: string; remaining_seconds: number;
+type State = { id: string; status: string; game: string; console: string; reservation_id?: string; contract_ends_at: string; server_time: string; remaining_seconds: number;
   input_device: string; simulated: boolean; metrics: StreamMetrics | null; end_reason: string | null };
 const KEYMAP: Record<string, string> = { Space: 'cross', KeyE: 'circle', KeyQ: 'square', KeyR: 'triangle', ShiftLeft: 'l1', ControlLeft: 'r1',
   ArrowUp: 'dpad_up', ArrowDown: 'dpad_down', ArrowLeft: 'dpad_left', ArrowRight: 'dpad_right', Enter: 'options' };
@@ -32,9 +33,12 @@ function Player() {
   const [inputStatus, setInputStatus] = useState('aguardando');
   const [sent, setSent] = useState(0);
   const screen = useRef<HTMLDivElement>(null);
+  const area = useRef<HTMLDivElement>(null);       // vídeo + suporte (tela cheia leva os dois)
   const prev = useRef<boolean[]>([]);
   const axes = useRef<Record<string, { v: number; t: number }>>({});
   const [vstats, setVstats] = useState<VideoStats | null>(null);
+  const [support, setSupport] = useState(false);
+  const [unread, setUnread] = useState(0);
   const shareOn = useFeatures()?.share_button_enabled === true;   // Share bloqueado por padrão (Parâmetros)
   const lastBlock = useRef<Record<string, number>>({});
   /** Avisa (no máximo a cada 4 s por botão) que o botão está bloqueado por segurança. */
@@ -61,8 +65,10 @@ function Player() {
   }, [token, sessionId, reload, warnBlocked]);
   useEffect(() => {
     if (!token) return;
-    const down = (e: KeyboardEvent) => { const n = KEYMAP[e.code]; if (n && !e.repeat) { e.preventDefault(); send({ type: 'button', name: n, pressed: true }); } };
-    const up = (e: KeyboardEvent) => { const n = KEYMAP[e.code]; if (n) send({ type: 'button', name: n, pressed: false }); };
+    // Digitando num campo (ex.: suporte): as teclas são do texto, não do console.
+    const typing = (e: KeyboardEvent) => { const el = e.target as HTMLElement | null; return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)); };
+    const down = (e: KeyboardEvent) => { const n = KEYMAP[e.code]; if (n && !e.repeat && !typing(e)) { e.preventDefault(); send({ type: 'button', name: n, pressed: true }); } };
+    const up = (e: KeyboardEvent) => { const n = KEYMAP[e.code]; if (n && !typing(e)) send({ type: 'button', name: n, pressed: false }); };
     window.addEventListener('keydown', down); window.addEventListener('keyup', up);
     let raf = 0;
     const loop = () => {
@@ -101,6 +107,7 @@ function Player() {
       {s.simulated && <Alert kind="warn">Sessão <b>SIMULADA</b>: não há vídeo de console real. Os comandos são validados pelo servidor e aceitos pelo simulador GameBridge.</Alert>}
       {warn && !ended && <Alert kind="info">{warn}</Alert>}
       {ended && <Alert kind="ok">Sessão encerrada. O controle do console foi revogado pelo servidor.</Alert>}
+      <div className={`play-area${support ? ' with-support' : ''}`} ref={area}>
       <div className="player" ref={screen} tabIndex={0} aria-label="Tela do jogo">
         {!s.simulated && token && !ended
           ? <ConsoleVideo sessionId={sessionId} token={token} onStats={setVstats} />
@@ -108,12 +115,16 @@ function Player() {
             <p>Entrada: {inputStatus} · comandos enviados: {sent}</p>
             {!token && !ended && <p>Token de controle ausente nesta aba. <button className="btn sm" onClick={() => router.push(`/sessoes`)}>Reconectar pela sala de espera</button></p>}</div>}
       </div>
+      {s.reservation_id && <SupportPanel open={support} onClose={() => { setSupport(false); screen.current?.focus(); }} reservationId={s.reservation_id}
+        game={s.game} consoleName={s.console} onStaffReply={setUnread} />}
+      </div>
       {!s.simulated && token && !ended && <p className="small dim" style={{ margin: 0 }}>Entrada: {inputStatus} · comandos enviados: {sent}</p>}
       <div className="row">
-        <button className="btn" onClick={() => screen.current?.requestFullscreen?.()}><Maximize size={16} />Tela cheia</button>
+        <button className="btn" onClick={() => area.current?.requestFullscreen?.()}><Maximize size={16} />Tela cheia</button>
         <button className="btn" onClick={async () => { await post(`/sessions/${sessionId}/disconnect`); setToken(null); router.push('/sessoes'); }} disabled={ended}><Unplug size={16} />Sair (posso voltar)</button>
         <button className="btn danger" onClick={async () => { if (confirm('Encerrar a sessão agora? O tempo restante não é transferido.')) { await post(`/sessions/${sessionId}/end`); reload(); } }} disabled={ended}><Power size={16} />Encerrar sessão</button>
-        <a className="btn" href="/suporte"><Headphones size={16} />Suporte</a>
+        <button className={`btn${support ? ' primary' : ''}`} onClick={() => setSupport(!support)} aria-expanded={support}>
+          <Headphones size={16} />Suporte{unread > 0 && !support && <span className="badge-dot" aria-label={`${unread} resposta(s) nova(s)`}>{unread}</span>}</button>
       </div>
       <section className="card small"><h3>Métricas</h3>
         {(() => { const m = { ...(s.metrics || {}), ...Object.fromEntries(Object.entries(vstats || {}).filter(([, v]) => v !== null)) } as Partial<VideoStats>;

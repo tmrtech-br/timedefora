@@ -221,7 +221,7 @@ def session_state(user, session_id) -> dict:
     except AdapterError:
         metrics = None
     return {'id': str(s['id']), 'status': s['status'], 'game': s['title'], 'slug': s['slug'], 'console': s['console_name'],
-            'reservation_code': s['code'], 'contract_starts_at': s['contract_starts_at'].isoformat(),
+            'reservation_code': s['code'], 'reservation_id': str(s['reservation_id']), 'contract_starts_at': s['contract_starts_at'].isoformat(),
             'contract_ends_at': s['contract_ends_at'].isoformat(), 'server_time': n.isoformat(),
             'remaining_seconds': max(0, int((s['contract_ends_at'] - n).total_seconds())) if s['status'] in ('ready', 'active') else 0,
             'input_device': s['input_device'], 'simulated': adapter.simulated, 'metrics': metrics, 'end_reason': s['end_reason']}

@@ -279,7 +279,7 @@ class MessageIn(BaseModel):
 @router.get('/support/tickets')
 def my_tickets(p: Principal = Depends(current_user)):
     with tx() as conn:
-        return jsonable(all_(conn, 'select id, subject, category, status, priority, created_at, updated_at from support_tickets where user_id=%s order by updated_at desc', (p.user_id,)))
+        return jsonable(all_(conn, 'select id, subject, category, status, priority, reservation_id, created_at, updated_at from support_tickets where user_id=%s order by updated_at desc', (p.user_id,)))
 
 
 @router.post('/support/tickets', status_code=201)

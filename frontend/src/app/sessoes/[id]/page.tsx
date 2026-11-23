@@ -69,6 +69,12 @@ function Room() {
             <button className="btn primary block" style={{ marginTop: 14, height: 48 }} disabled={!canJoin} onClick={join}>
               {canJoin ? 'Começar a jogar' : 'O botão será liberado no horário de início'}</button>)}
           {err && <div style={{ marginTop: 10 }}><Alert kind="error">{err}</Alert></div>}
+          {r.public_queue && r.public_queue.length > 0 && (
+            <div className="waiting-queue">
+              <div className="spread"><h2 style={{ margin: 0, fontSize: 18 }}>Fila do console</h2>
+                <span className="small muted">{r.public_queue.length} {r.public_queue.length === 1 ? 'pessoa' : 'pessoas'}</span></div>
+              <QueueList items={r.public_queue} maxVisible={5} />
+            </div>)}
         </section>
         <section className="card stack">
           <h2>Prepare-se</h2>
@@ -84,7 +90,6 @@ function Room() {
           </div>
         </section>
       </div>
-      {r.public_queue && r.public_queue.length > 0 && <section className="card"><h2>Fila do console</h2><QueueList items={r.public_queue} /></section>}
       <section className="card small"><h3>Política de alocação</h3><p className="muted">{r.allocation_policy}</p>
         {r.status === 'confirmed' && !r.cancellation_request && (
           <div className="stack" style={{ maxWidth: 520 }}>
