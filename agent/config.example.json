@@ -6,5 +6,22 @@
   "listen_port": 8765,
   "heartbeat_seconds": 30,
   "discovery_timeout_seconds": 2.0,
-  "chiaki_path": "C:\\Program Files\\chiaki-ng\\chiaki.exe"
+  "chiaki_path": "C:\\Program Files\\chiaki-ng\\chiaki.exe",
+  "wake_timeout_seconds": 60,
+  "stream_timeout_seconds": 60,
+  "stop_chiaki_after_session": false,
+  "require_game_script": false,
+  "control_test_button": "",
+  "consoles": {
+    "PS4-118": {
+      "nickname": "PS4-118",
+      "regist_key": "",
+      "passcode": "",
+      "profile": "",
+      "psn_gui_steps": [],
+      "games": {
+        "slug-do-jogo": ["ps", "wait:2", "dpad_right", "cross"]
+      }
+    }
+  }
 }

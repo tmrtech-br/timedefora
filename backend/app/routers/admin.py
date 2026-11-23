@@ -688,7 +688,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
         raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
     adapter = get_adapter(ref.method)
     result, message, data, metrics = 'failed', '', {}, {}
-    reported_simulated = False
+    reported_simulated = in_progress = False
     try:
         if test_type == 'discover':
             r = adapter.discover_console(ref)
@@ -708,6 +708,10 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
             r = adapter.health_check(ref)
         result, message, data = ('passed' if r.ok else 'failed'), r.message, getattr(r, 'data', {}) or {}
         reported_simulated = bool(getattr(r, 'simulated', False))
+        if not r.ok and data.get('running'):
+            # Conexão real em andamento no agente (acordar + conectar leva até 1 min): ainda não é falha.
+            in_progress, result = True, 'not_available'
+            message = f'{message} Clique em "Testar" de novo em alguns segundos para ver o resultado.'
     except AdapterError as e:
         result = 'not_available' if e.code == 'not_implemented' else 'failed'
         message = e.message
@@ -724,7 +728,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
         cfg = one(conn, 'select * from console_connection_configs where console_id=%s for update', (cid,))
         col = {'video_audio': ['video_validated_at', 'audio_validated_at'], 'controls': ['control_validated_at'],
                'heartbeat': ['heartbeat_validated_at'], 'connection': []}.get(test_type)
-        if col is not None:
+        if col is not None and not in_progress:
             if result == 'passed':
                 for k in col:
                     conn.execute(f'update console_connection_configs set {k}=%s where id=%s', (n, cfg['id']))

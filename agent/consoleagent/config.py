@@ -24,6 +24,17 @@ class AgentConfig:
     heartbeat_seconds: int = 30
     discovery_timeout_seconds: float = 2.0
     chiaki_path: str = DEFAULT_CHIAKI
+    # ---- Parte 2: dados que só o agente guarda, por console (chave = identificação do console no painel, ex.: "PS4-118")
+    #   {"nickname": apelido no chiaki-ng, "regist_key": chave de registro (hex) para acordar,
+    #    "passcode": senha de 4 dígitos do console (opcional), "profile": perfil do chiaki-ng (opcional),
+    #    "host": endereço (opcional; sobrepõe o do painel), "psn_gui_steps": roteiro de teclas (rota PSN),
+    #    "games": {"slug-do-jogo": ["ps", "wait:2", "dpad_right", "cross"]}}
+    consoles: dict = field(default_factory=dict)
+    wake_timeout_seconds: float = 60.0
+    stream_timeout_seconds: float = 60.0
+    stop_chiaki_after_session: bool = False    # padrão: mantém a conexão para o próximo jogador
+    require_game_script: bool = False          # True: sem roteiro de abertura do jogo a preparação falha
+    control_test_button: str = ''              # botão "inofensivo" apertado no teste de controles (vazio = teste não aprova)
     extra: dict = field(default_factory=dict)
 
     @property
@@ -51,4 +62,13 @@ def load(path: str | os.PathLike | None = None) -> AgentConfig:
         raise ConfigError('listen_port inválida.')
     if int(cfg.heartbeat_seconds) < 5:
         raise ConfigError('heartbeat_seconds deve ser >= 5.')
+    if not isinstance(cfg.consoles, dict) or not all(isinstance(v, dict) for v in cfg.consoles.values()):
+        raise ConfigError('"consoles" deve ser um objeto: {"PS4-118": {"nickname": ..., "regist_key": ...}}.')
+    for name, c in cfg.consoles.items():
+        key = str(c.get('regist_key') or '').strip().lower()
+        if key and (len(key) > 16 or any(ch not in '0123456789abcdef' for ch in key)):
+            raise ConfigError(f'consoles.{name}.regist_key inválida (texto hexadecimal, ex.: 2ebf539d).')
+        pc = str(c.get('passcode') or '')
+        if pc and not (len(pc) == 4 and pc.isdigit()):
+            raise ConfigError(f'consoles.{name}.passcode deve ter 4 dígitos.')
     return cfg

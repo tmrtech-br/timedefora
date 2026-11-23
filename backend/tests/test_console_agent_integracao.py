@@ -49,7 +49,8 @@ def test_api_fala_com_agente_real_e_heartbeat_marca_online(freeze):
         t = api.post(f"/admin/consoles/{c['id']}/tests/discover").json()
         assert t['result'] == 'failed' and 'Nenhum console respondeu' in t['message']
         t = api.post(f"/admin/consoles/{c['id']}/tests/connection").json()
-        assert t['result'] == 'not_available' and 'Parte 2' in t['message']
+        # Parte 2: o agente tenta conectar de verdade; sem chiaki-ng instalado, falha com o motivo real (nunca simula)
+        assert t['result'] == 'failed' and 'chiaki-ng não encontrado' in t['message'] and t['simulated'] is False
     finally:
         server.should_exit = True
         th.join(5)

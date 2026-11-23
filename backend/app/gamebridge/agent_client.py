@@ -21,11 +21,20 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
         if not ref.agent_endpoint.startswith('https://') and not ref.agent_endpoint.startswith('http://127.0.0.1'):
             raise AdapterError('not_configured', 'O endpoint do ConsoleAgent deve usar HTTPS.')
 
+    @staticmethod
+    def _target(ref: ConsoleRef) -> dict:
+        """Onde está o console. Segredos do console (chave de registro, senha) ficam só no agente."""
+        s = ref.settings or {}
+        route = s.get('network_route') or 'lan'
+        return {'route': route, 'host': ref.internal_host if route == 'lan' else s.get('public_host'),
+                'port': s.get('public_port'), 'platform_code': ref.platform_code,
+                'console_identifier': s.get('console_identifier')}
+
     def _call(self, ref: ConsoleRef, action: str, payload: dict | None = None) -> dict:
         self._check(ref)
         url = f"{ref.agent_endpoint.rstrip('/')}/v1/consoles/{ref.console_id}/{action}"
         try:
-            r = httpx.post(url, json={'method': self.method, **(payload or {})},
+            r = httpx.post(url, json={'method': self.method, 'target': self._target(ref), **(payload or {})},
                            headers={'Authorization': f'Bearer {ref.agent_token}'}, timeout=self.timeout)
         except httpx.HTTPError as e:
             raise AdapterError('agent_unreachable', f'ConsoleAgent inacessível: {e.__class__.__name__}')
@@ -49,11 +58,7 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
                              data=data.get('data', {}))
 
     def discover_console(self, ref):
-        route = (ref.settings or {}).get('network_route') or 'lan'
-        host = ref.internal_host if route == 'lan' else (ref.settings or {}).get('public_host')
-        return self._res(self._call(ref, 'discover', {'host': host, 'route': route, 'platform_code': ref.platform_code,
-                                                      'port': (ref.settings or {}).get('public_port'),
-                                                      'console_identifier': (ref.settings or {}).get('console_identifier')}))
+        return self._res(self._call(ref, 'discover', self._target(ref)))  # campos no topo: compatível com o agente v0.1
     def pair_console(self, ref, code): return self._res(self._call(ref, 'pair', {'code': code}))
     def connect(self, ref): return self._res(self._call(ref, 'connect', {'settings': ref.settings}))
     def start_stream(self, ref, session_id): return self._res(self._call(ref, 'stream/start', {'session_id': session_id}))

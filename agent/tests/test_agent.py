@@ -77,8 +77,9 @@ def test_descoberta_usa_rota_e_nao_finge():
     assert r['ok'] and 'PS4-118' in r['message'] and 'ligado' in r['message'] and calls[-1] == ('192.168.0.20', 'PS4')
     r = c.post('/v1/consoles/x/discover', json={'route': 'lan', 'host': None, 'platform_code': 'PS4'}, headers=H).json()
     assert r['ok'] and calls[-1] == (None, 'PS4')            # descoberta na LAN = broadcast
-    r = c.post('/v1/consoles/x/discover', json={'route': 'internet_psn', 'platform_code': 'PS4'}, headers=H)
-    assert r.status_code == 501 and r.json()['code'] == 'not_implemented'
+    # Rota PSN: não há descoberta pela internet; o agente informa o motivo real (chiaki-ng ausente neste teste)
+    r = c.post('/v1/consoles/x/discover', json={'route': 'internet_psn', 'platform_code': 'PS4', 'console_identifier': 'PS4-118'}, headers=H)
+    assert r.status_code == 200 and r.json()['ok'] is False and 'PSN' in r.json()['message']
     r = c.post('/v1/consoles/x/discover', json={'route': 'internet_port_forward', 'host': None}, headers=H).json()
     assert r['ok'] is False
 
@@ -89,10 +90,15 @@ def test_nada_encontrado_responde_falha():
     assert r['ok'] is False and 'Nenhum console respondeu' in r['message']
 
 
-@pytest.mark.parametrize('action', ['pair', 'connect', 'stream/start', 'stream/stop', 'input', 'test/video-audio', 'test/controls', 'disconnect'])
-def test_parte2_responde_nao_disponivel(action):
-    r = TestClient(create_app(cfg())).post(f'/v1/consoles/x/{action}', json={}, headers=H)
-    assert r.status_code == 501 and r.json()['code'] == 'not_implemented'
+def test_sem_chiaki_conectar_falha_com_motivo_real():
+    c = TestClient(create_app(cfg()))
+    r = c.post('/v1/consoles/x/connect', json={'target': {'route': 'lan', 'host': '192.168.0.20', 'console_identifier': 'PS4-118'}},
+               headers=H).json()
+    assert r['ok'] is False and r['simulated'] is False and 'chiaki-ng não encontrado' in r['message']
+    r = c.post('/v1/consoles/x/test/video-audio', json={}, headers=H).json()
+    assert r['ok'] is False and 'não conectado' in r['message']
+    r = c.post('/v1/consoles/x/input', json={'session_id': 's1', 'command': {'type': 'button', 'name': 'cross'}}, headers=H)
+    assert r.status_code == 403 and r.json()['code'] == 'input_revoked'
 
 
 def test_metricas_sem_valores_inventados():
