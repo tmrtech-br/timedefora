@@ -12,9 +12,9 @@ from ..core import security, timeutil
 from ..core.db import audit_event, insert, tx
 from ..core.errors import AppError, conflict, forbidden, not_found
 from ..gamebridge import AdapterError, get_adapter
-from . import notifications, scheduling
+from . import notifications, preparation, scheduling
 from .consoles import console_ref
-from .settings_store import require_enabled
+from .settings_store import get_settings, require_enabled
 
 
 def _event(conn, session_id, kind: str, details: dict | None = None) -> None:
@@ -42,11 +42,23 @@ def join(user, reservation_id, input_device: str, ip: str, ua: str) -> dict:
         raise AppError(422, 'validation_error', 'Escolha teclado e mouse ou controle.')
     n = timeutil.now()
     with tx() as conn:
+        r0 = conn.execute('select user_id, starts_at, ends_at, status from reservations where id=%s', (reservation_id,)).fetchone()
+    if r0 and str(r0['user_id']) == user.user_id and r0['status'] == 'confirmed' and r0['starts_at'] <= n < r0['ends_at']:
+        # Console precisa estar pronto (acordado, jogo aberto). Transação própria: a falha fica registrada.
+        state = preparation.ensure_now(reservation_id)
+        if state == 'pending':
+            raise AppError(409, 'console_preparing', 'Estamos preparando o console para você. Tente novamente em alguns segundos.')
+        if state == 'failed':
+            raise AppError(409, 'console_unavailable', 'O console não ficou pronto por um problema técnico. Seu tempo não foi '
+                           'consumido: a equipe foi avisada e vai remarcar ou reembolsar sua reserva.')
+    with tx() as conn:
         if input_device == 'keyboard_mouse':
             require_enabled(conn, 'keyboard_mouse_enabled', 'Jogar com teclado e mouse está desativado no momento. Use um controle.')
         r = conn.execute('select * from reservations where id=%s for update', (reservation_id,)).fetchone()
         if not r or str(r['user_id']) != user.user_id:
             raise not_found('Reserva não encontrada.')
+        if r['status'] == 'needs_resolution':
+            raise AppError(409, 'console_unavailable', r['resolution_notes'] or 'Reserva em resolução pela equipe.')
         if r['status'] not in ('confirmed', 'active'):
             raise forbidden('Reserva sem pagamento confirmado ou já encerrada.', code='reservation_not_active')
         if n < r['starts_at']:
@@ -104,6 +116,8 @@ def send_input(session_id, token: str, command: dict) -> dict:
     security.rate_limit(f'input:{session_id}', 1200, 60)  # ~20 comandos/s
     with tx() as conn:
         t = _token_session(conn, session_id, token)
+        if str((command or {}).get('name', '')).lower() == 'share' and not get_settings(conn).get('share_button_enabled', False):
+            raise AppError(400, 'blocked_command', 'O botão Share está bloqueado nesta plataforma.')
         ref = console_ref(conn, t['console_id'])
     try:
         res = get_adapter(ref.method).send_input(ref, str(session_id), command)

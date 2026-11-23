@@ -19,6 +19,7 @@ const TOGGLES: { key: string; title: string; desc: string; invert?: boolean }[] 
   { key: 'keyboard_mouse_enabled', title: 'Jogar com teclado e mouse', desc: 'Desligado: só é possível jogar com controle.' },
   { key: 'public_streams_enabled', title: 'Transmissões ao vivo (Assistir ao vivo)', desc: 'Mostra/oculta os links para Twitch/Kick nas páginas dos jogos e na home.' },
   { key: 'support_tickets_enabled', title: 'Abertura de chamados no suporte', desc: 'Desligado: novos chamados bloqueados; respostas em chamados abertos continuam.' },
+  { key: 'share_button_enabled', title: 'Botão Share do controle', desc: 'Desligado (recomendado): o cliente não abre o menu de compartilhar/transmitir nem publica capturas pela conta do console.' },
 ];
 
 const NUMBERS: { key: string; title: string; unit: string; min: number; max: number }[] = [

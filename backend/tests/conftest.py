@@ -66,7 +66,7 @@ def clean(database):
         seed.base(conn)
     from app.gamebridge.registry import _ADAPTERS
     sim = _ADAPTERS['simulated']
-    sim._streams.clear(); sim._revoked.clear(); sim.inputs.clear(); sim.fail_health.clear()
+    sim._streams.clear(); sim._revoked.clear(); sim.inputs.clear(); sim.fail_health.clear(); sim.fail_prepare.clear()
     yield
     timeutil.set_now(None)
 

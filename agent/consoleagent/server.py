@@ -29,6 +29,7 @@ PART2 = {
     'test/video-audio': 'Teste de imagem e áudio',
     'test/controls': 'Teste de controles',
     'disconnect': 'Desconexão',
+    'console/prepare': 'Preparação do console (acordar e abrir o jogo)',
 }
 
 

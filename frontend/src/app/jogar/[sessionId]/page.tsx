@@ -8,6 +8,7 @@ import { Alert, ErrorBox, Skeleton } from '@/components/ui';
 import { csrfToken, post } from '@/lib/api';
 import { useApi, useServerClock } from '@/lib/hooks';
 import { duration } from '@/lib/format';
+import { useFeatures } from '@/lib/features';
 import type { InputCommand, StreamMetrics } from '@/lib/gamebridge';
 
 type State = { id: string; status: string; game: string; console: string; contract_ends_at: string; server_time: string; remaining_seconds: number;
@@ -25,6 +26,7 @@ function Player() {
   const [sent, setSent] = useState(0);
   const screen = useRef<HTMLDivElement>(null);
   const prev = useRef<boolean[]>([]);
+  const shareOn = useFeatures()?.share_button_enabled === true;   // Share bloqueado por padrão (Parâmetros)
   useEffect(() => { try { setToken(sessionStorage.getItem(`lp_input_${sessionId}`)); } catch { setToken(null); } }, [sessionId]);
   const send = useCallback(async (command: InputCommand) => {
     if (!token) return;
@@ -45,14 +47,14 @@ function Player() {
     const loop = () => {
       const pad = (navigator.getGamepads?.() || []).find(Boolean);
       if (pad) pad.buttons.forEach((b, i) => {
-        if (i < GAMEPAD_BUTTONS.length && b.pressed !== prev.current[i]) send({ type: 'button', name: GAMEPAD_BUTTONS[i], pressed: b.pressed });
+        if (i < GAMEPAD_BUTTONS.length && b.pressed !== prev.current[i] && (GAMEPAD_BUTTONS[i] !== 'share' || shareOn)) send({ type: 'button', name: GAMEPAD_BUTTONS[i], pressed: b.pressed });
         prev.current[i] = b.pressed;
       });
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); cancelAnimationFrame(raf); };
-  }, [token, send]);
+  }, [token, send, shareOn]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!s) return <Skeleton h={420} />;
   const left = Math.max(0, (new Date(s.contract_ends_at).getTime() - now()) / 1000);

@@ -74,6 +74,10 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
     def test_video_audio(self, ref): return self._res(self._call(ref, 'test/video-audio'))
     def test_controls(self, ref): return self._res(self._call(ref, 'test/controls'))
 
+    def prepare_console(self, ref, game):
+        return self._res(self._call(ref, 'console/prepare', {'game': {k: game.get(k) for k in ('id', 'slug', 'title')},
+                                                            'settings': ref.settings}))
+
 
 class ChiakiWebRemotePlayAdapter(AgentDelegatingAdapter):
     """EXPERIMENTAL. Requer ConsoleAgent com Chiaki-NG(-Web) instalado em processo isolado,

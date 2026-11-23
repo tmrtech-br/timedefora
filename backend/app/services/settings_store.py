@@ -27,12 +27,13 @@ DEFAULTS = {
     'keyboard_mouse_enabled': True,           # jogar com teclado e mouse (controle sempre permitido)
     'public_streams_enabled': True,           # botão/links "Assistir ao vivo"
     'support_tickets_enabled': True,          # abertura de novos chamados (mensagens em chamados abertos continuam)
+    'share_button_enabled': False,            # botão Share do controle (compartilhar/transmitir pela conta do console)
 }
 
 # Parâmetros expostos ao público (para a interface esconder o que estiver desligado).
 PUBLIC_FLAGS = ('sales_paused', 'sales_paused_reason', 'signup_enabled', 'google_login_enabled', 'queue_mode_enabled',
                 'scheduled_mode_enabled', 'coupons_enabled', 'keyboard_mouse_enabled', 'public_streams_enabled',
-                'support_tickets_enabled', 'disabled_platforms')
+                'support_tickets_enabled', 'share_button_enabled', 'disabled_platforms')
 
 
 def disabled_platforms(conn) -> list[str]:

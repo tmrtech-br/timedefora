@@ -13,7 +13,8 @@ from .email_provider import EmailSendError, send_email
 # Eventos cujo e-mail é transacional essencial (não depende de preferência opcional).
 ESSENTIAL_EMAIL = {'verify_email', 'email_change', 'password_reset', 'password_changed', 'payment_approved',
                    'payment_rejected', 'hold_expired', 'turn_soon_5', 'turn_ready', 'reservation_cancelled',
-                   'refund_completed', 'needs_resolution', 'console_failure', 'schedule_changed', 'new_login'}
+                   'refund_completed', 'needs_resolution', 'console_failure', 'schedule_changed', 'new_login',
+                   'console_not_ready', 'staff_incident'}
 OPTIONAL_EMAIL_PREF = {'queue_changed': 'email_queue_updates', 'turn_soon_15': 'email_reminders',
                        'turn_soon_10': 'email_reminders', 'turn_soon_1': 'email_reminders'}
 NO_EMAIL = {'session_ending', 'session_started', 'session_ended'}

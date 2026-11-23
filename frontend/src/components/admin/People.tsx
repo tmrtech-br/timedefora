@@ -104,7 +104,7 @@ export function Audit() {
 
 // Chaves editadas na tela Parâmetros (com rótulos e validação próprios).
 const IN_PARAMS = new Set(['sales_paused', 'sales_paused_reason', 'disabled_platforms', 'signup_enabled', 'google_login_enabled', 'queue_mode_enabled',
-  'scheduled_mode_enabled', 'coupons_enabled', 'keyboard_mouse_enabled', 'public_streams_enabled', 'support_tickets_enabled', 'hold_minutes', 'setup_minutes',
+  'scheduled_mode_enabled', 'coupons_enabled', 'keyboard_mouse_enabled', 'public_streams_enabled', 'support_tickets_enabled', 'share_button_enabled', 'hold_minutes', 'setup_minutes',
   'scheduled_lead_minutes', 'queue_lead_minutes', 'booking_horizon_days', 'max_pending_holds_per_user', 'max_future_reservations_per_user',
   'cancel_full_refund_min_minutes_before', 'no_show_tolerance_minutes', 'featured_window_days', 'agent_heartbeat_timeout_seconds']);
 
