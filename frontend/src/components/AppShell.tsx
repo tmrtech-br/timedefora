@@ -9,13 +9,17 @@ import {
 import { useAuth, isStaff } from '@/lib/auth';
 import { get } from '@/lib/api';
 import Toaster from '@/components/Toaster';
+import LocadoraDeco from '@/components/LocadoraDeco';
 
 function LogoIcon() {
-  // Ícone próprio (ingresso/fita) — identidade LocaPlay
+  // Ícone próprio (cartucho de videogame) — identidade LocaPlay
   return (
-    <svg className="logo-icon" viewBox="0 0 48 36" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" aria-hidden>
-      <path d="M8 6h32a4 4 0 0 1 4 4v4a4 4 0 0 0 0 8v4a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-4a4 4 0 0 0 0-8v-4a4 4 0 0 1 4-4Z" />
-      <circle cx="18" cy="18" r="4" /><circle cx="30" cy="18" r="4" /><path d="M14 11h20M14 25h20" strokeWidth="1.6" />
+    <svg className="logo-icon" viewBox="0 0 48 36" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" aria-hidden>
+      <path d="M14 2h20a3 3 0 0 1 3 3v22h-3v5H14v-5h-3V5a3 3 0 0 1 3-3Z" />
+      <path d="M16 6.5h16" strokeWidth="1.6" />
+      <rect x="15" y="11" width="18" height="12" rx="1.5" strokeWidth="1.8" />
+      <path d="M19.5 15v4M17.5 17h4" strokeWidth="1.6" />
+      <circle cx="27" cy="16" r=".6" fill="currentColor" /><circle cx="29.5" cy="18.5" r=".6" fill="currentColor" />
     </svg>
   );
 }
@@ -110,7 +114,7 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
           </div>
         )}
       </nav>
-      <div className="side-deco" aria-hidden />
+      <div className="side-deco" aria-hidden><LocadoraDeco /></div>
     </aside>
   );
 }

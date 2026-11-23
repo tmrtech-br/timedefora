@@ -63,8 +63,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .side-extra { margin-top: 2px; }
 .side-extra a { height: 36px; font-size: 14px; color: #bdb6d6; }
 .side-extra a svg { width: 19px; height: 19px; }
-.side-deco { position: relative; flex: 1; min-height: 120px; margin-top: -40px; background: url('/assets/sidebar-locadora.webp') center bottom / 100% auto no-repeat;
+.side-deco { position: relative; flex: 1; min-height: 120px; margin-top: -40px; overflow: hidden;
   mask-image: linear-gradient(180deg, transparent 0, #000 22%); -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 22%); pointer-events: none; }
+/* Arte em SVG (LocadoraDeco): prateleiras de cartuchos + letreiro neon, ancorada no rodapé. */
+.side-deco > svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .side-links:has(.side-extra) + .side-deco { margin-top: 8px; }
 .side-deco-label { position: absolute; bottom: 6px; left: 10px; font-size: 10px; color: rgba(255,255,255,.35); }
 
