@@ -80,14 +80,7 @@ class ChiakiLink:
             self._win, self._win_at = winutil.main_window(self.driver.pid), now
         if not self._win:
             return None
-        arr = winutil.grab_rgb(self._win.rect)
-        if arr is None:
-            img = winutil.grab(self._win.rect)
-            if img is None:
-                return None
-            import numpy as np
-            arr = np.asarray(img.convert('RGB'))
-        return arr
+        return winutil.capture_window(self._win)     # resiste a janelas por cima; cai para a captura de tela se preciso
 
     def audio_track(self):
         return None                                   # áudio = saída de som do PC (loopback)

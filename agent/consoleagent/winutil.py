@@ -95,6 +95,63 @@ def press_key(name: str, hold: float = 0.08) -> None:
     _user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
 
 
+def grab_window_rgb(w: Window):
+    """Conteúdo da PRÓPRIA janela (PrintWindow com renderização completa), mesmo coberta por outra janela.
+    Matriz numpy RGB do tamanho da área cliente, ou None (fora do Windows, janela minimizada ou falha)."""
+    if not IS_WIN or not w:
+        return None
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    gdi = ctypes.windll.gdi32
+    width, height = w.size
+    if width <= 0 or height <= 0:
+        return None
+    hdc_win = _user32.GetDC(w.hwnd)
+    hdc = gdi.CreateCompatibleDC(hdc_win)
+    bmp = gdi.CreateCompatibleBitmap(hdc_win, width, height)
+    old = gdi.SelectObject(hdc, bmp)
+    try:
+        # 1 = PW_CLIENTONLY, 2 = PW_RENDERFULLCONTENT (necessário para janelas com aceleração de vídeo)
+        if not _user32.PrintWindow(w.hwnd, hdc, 1 | 2):
+            return None
+
+        class BITMAPINFOHEADER(ctypes.Structure):
+            _fields_ = [('biSize', wintypes.DWORD), ('biWidth', ctypes.c_long), ('biHeight', ctypes.c_long),
+                        ('biPlanes', wintypes.WORD), ('biBitCount', wintypes.WORD), ('biCompression', wintypes.DWORD),
+                        ('biSizeImage', wintypes.DWORD), ('biXPelsPerMeter', ctypes.c_long), ('biYPelsPerMeter', ctypes.c_long),
+                        ('biClrUsed', wintypes.DWORD), ('biClrImportant', wintypes.DWORD)]
+        bi = BITMAPINFOHEADER()
+        bi.biSize, bi.biWidth, bi.biHeight, bi.biPlanes, bi.biBitCount = ctypes.sizeof(bi), width, -height, 1, 32
+        buf = ctypes.create_string_buffer(width * height * 4)
+        if not gdi.GetDIBits(hdc, bmp, 0, height, buf, ctypes.byref(bi), 0):
+            return None
+        arr = np.frombuffer(buf, dtype=np.uint8).reshape(height, width, 4)
+        return np.ascontiguousarray(arr[:, :, 2::-1])           # BGRA → RGB
+    finally:
+        gdi.SelectObject(hdc, old)
+        gdi.DeleteObject(bmp)
+        gdi.DeleteDC(hdc)
+        _user32.ReleaseDC(w.hwnd, hdc_win)
+
+
+def capture_window(w: Window):
+    """Imagem RGB da janela: primeiro o conteúdo da própria janela (resiste a janelas por cima); se vier preta
+    (alguns renderizadores de vídeo não respondem ao PrintWindow), usa a captura da região da tela."""
+    arr = grab_window_rgb(w)
+    if arr is not None and arr.size and float(arr.mean()) >= 2.0:
+        return arr
+    arr2 = grab_rgb(w.rect)
+    if arr2 is not None:
+        return arr2
+    img = grab(w.rect)
+    if img is None:
+        return arr
+    import numpy as np
+    return np.asarray(img.convert('RGB'))
+
+
 _tls = __import__('threading').local()
 
 

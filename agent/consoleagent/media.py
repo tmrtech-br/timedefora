@@ -37,11 +37,11 @@ def frame(pid: int | None) -> Frame:
     w = winutil.main_window(pid)
     if not w:
         return Frame(False, 'Janela do chiaki-ng não encontrada (fechada ou minimizada).')
-    img = winutil.grab(w.rect)
-    if img is None:
-        return Frame(False, 'Captura indisponível: instale o Pillow (pip install pillow).')
-    from PIL import ImageStat
-    g = img.convert('L')
+    arr = winutil.capture_window(w)          # conteúdo da própria janela (não pega janelas por cima)
+    if arr is None:
+        return Frame(False, 'Captura indisponível: instale Pillow/numpy (pip install -r requirements.txt).')
+    from PIL import Image, ImageStat
+    g = Image.fromarray(arr).convert('L')
     st = ImageStat.Stat(g)
     mean, std = round(st.mean[0], 1), round(st.stddev[0], 1)
     if _is_black(mean, std):
