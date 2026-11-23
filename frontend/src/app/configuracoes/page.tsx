@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import KeyBindingsEditor from '@/components/KeyBindings';
 import RequireAuth from '@/components/RequireAuth';
 import QrCode from '@/components/QrCode';
 import { Alert, Field, PageHeader } from '@/components/ui';
@@ -38,7 +39,7 @@ function Config() {
   const p = prefs.data;
   return (
     <div className="stack">
-      <PageHeader title="Configurações" subtitle="Notificações, segurança e privacidade." />
+      <PageHeader title="Configurações" subtitle="Notificações, controles, segurança e privacidade." />
       {msg && <Alert kind={msg.k}>{msg.t}</Alert>}
       <div className="grid2">
         <section className="card stack">
@@ -88,6 +89,7 @@ function Config() {
           ))}
         </section>
       </div>
+      <KeyBindingsEditor />
       <section className="card stack">
         <h2>Privacidade e dados (LGPD)</h2>
         <div className="row"><button className="btn" onClick={exportData}>Baixar meus dados (JSON)</button><a className="btn" href="/privacidade">Política de privacidade</a></div>

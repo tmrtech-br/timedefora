@@ -173,7 +173,7 @@ def quote(slug: str, minutes: int, mode: str = 'queue', start_at: str | None = N
         s = datetime.fromisoformat(start_at) if start_at else None
         slots = scheduling.find_slots(conn, g['id'], minutes, mode, s)
         if not slots:
-            return {'available': False, 'message': 'O pacote não cabe no período livre das janelas disponíveis.'}
+            return {'available': False, 'message': scheduling.explain_unavailable(conn, g['id'], minutes, mode, s)}
         sl = slots[0]
         plat = one(conn, 'select platform_id from consoles where id=%s', (sl.console_id,))['platform_id']
         pkg = scheduling.resolve_package(conn, g, sl.console_id, plat, minutes, sl.start)

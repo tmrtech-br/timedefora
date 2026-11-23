@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { CustomizeLink, KeyLegend } from '@/components/KeyBindings';
 import { useFeatures } from '@/lib/features';
+import { useBindings } from '@/lib/keymap';
 
 // Ordem do "standard mapping" da Gamepad API (índices 0–15).
 const NAMES = ['cross', 'circle', 'square', 'triangle', 'l1', 'r1', 'l2', 'r2', 'share', 'options', 'l3', 'r3', 'dpad_up', 'dpad_down', 'dpad_left', 'dpad_right'];
@@ -13,13 +15,6 @@ const BUTTON_PT: Record<string, { sym: string; label: string }> = {
   share: { sym: '⧉', label: 'Compartilhar' }, options: { sym: '≡', label: 'Opções' }, l3: { sym: 'L3', label: 'Clique analóg. esq.' }, r3: { sym: 'R3', label: 'Clique analóg. dir.' },
   dpad_up: { sym: '↑', label: 'Direcional cima' }, dpad_down: { sym: '↓', label: 'Direcional baixo' }, dpad_left: { sym: '←', label: 'Direcional esq.' }, dpad_right: { sym: '→', label: 'Direcional dir.' },
 };
-
-/** Mapeamento padrão teclado/mouse → controle (exibido como teclas). */
-const KEYMAP: [string[], string][] = [
-  [['W', 'A', 'S', 'D'], 'Analógico esquerdo'], [['Mouse'], 'Analógico direito'], [['Espaço'], '✕ Xis'], [['E'], '○ Círculo'],
-  [['Q'], '□ Quadrado'], [['R'], '△ Triângulo'], [['Shift'], 'L1'], [['Ctrl'], 'R1'], [['Botão esq.'], 'L2'], [['Botão dir.'], 'R2'],
-  [['↑', '↓', '←', '→'], 'Direcional'], [['Enter'], 'Opções'],
-];
 
 const SPECIAL: Record<string, string> = {
   Space: 'Espaço', Enter: 'Enter', NumpadEnter: 'Enter', Escape: 'Esc', Backspace: 'Backspace', Tab: 'Tab', CapsLock: 'Caps Lock',
@@ -47,6 +42,7 @@ export default function InputTester({ mode }: { mode: 'keyboard_mouse' | 'gamepa
   const [axes, setAxes] = useState<number[]>([]);
   const [lastKey, setLastKey] = useState('');
   const shareBlocked = useFeatures()?.share_button_enabled !== true;
+  const { bindings } = useBindings(mode === 'keyboard_mouse');
   useEffect(() => {
     if (mode !== 'gamepad') return;
     let raf = 0;
@@ -70,10 +66,8 @@ export default function InputTester({ mode }: { mode: 'keyboard_mouse' | 'gamepa
   if (mode === 'keyboard_mouse') {
     return (
       <div className="stack small">
-        <p className="muted" style={{ margin: 0 }}>Mapeamento padrão (sensibilidade do mouse ajustável durante a sessão):</p>
-        <div className="keymap">
-          {KEYMAP.map(([keys, action]) => <div key={action}><span className="row" style={{ gap: 4 }}>{keys.map((k) => <kbd key={k}>{k}</kbd>)}</span><span>{action}</span></div>)}
-        </div>
+        <div className="spread"><p className="muted" style={{ margin: 0 }}>{bindings.custom ? 'Seus controles personalizados:' : 'Controles padrão do site:'}</p><CustomizeLink /></div>
+        <KeyLegend bindings={bindings} />
         <div className="keytest">Pressione uma tecla ou clique para testar: {lastKey ? <kbd aria-live="polite">{lastKey}</kbd> : <span className="dim">—</span>}</div>
         <p className="dim" style={{ margin: 0 }}>Jogos de console foram feitos para controle; alguns movimentos podem ficar menos precisos no teclado.</p>
       </div>

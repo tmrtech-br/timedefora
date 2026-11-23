@@ -100,7 +100,8 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
       <video ref={video} autoPlay playsInline muted={muted} aria-label="Imagem do console" />
       {phase !== 'live' && (
         <div className="cv-overlay" role="status">
-          {phase === 'connecting' ? <><Loader2 className="spin" size={36} aria-hidden /><p>Conectando ao vídeo do console…</p></>
+          {phase === 'connecting' ? <><Loader2 className="spin" size={36} aria-hidden /><p className="cv-title">Sua partida já vai começar! 🎮</p>
+            <p className="small">Estamos ligando a imagem do console para você. Pegue o controle — leva só alguns segundos.</p></>
             : <><p><b>Vídeo indisponível.</b> {error}</p><button className="btn sm" onClick={() => setAttempt((x) => x + 1)}><RefreshCw size={14} aria-hidden />Tentar de novo</button></>}
         </div>)}
       {phase === 'live' && (

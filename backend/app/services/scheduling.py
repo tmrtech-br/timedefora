@@ -197,6 +197,54 @@ def find_slots(conn, game_id, minutes: int, mode: str, start_at: datetime | None
     return out
 
 
+def _hm(dt: datetime) -> str:
+    loc = timeutil.local(dt)
+    today = timeutil.local(timeutil.now()).date()
+    return loc.strftime('%H:%M') if loc.date() == today else loc.strftime('%d/%m às %H:%M')
+
+
+def explain_unavailable(conn, game_id, minutes: int, mode: str, start_at: datetime | None) -> str:
+    """Motivo claro (e sugestão) quando o pacote não cabe — em vez de uma frase genérica."""
+    st = get_settings(conn)
+    n = timeutil.now()
+    setup = int(st['setup_minutes'])
+    consoles = eligible_consoles(conn, game_id)
+    if not consoles:
+        return 'Nenhum console está oferecendo este jogo no momento.'
+    queue = find_slots(conn, game_id, minutes, 'queue')
+    first = f' Primeiro horário livre para {minutes} min: {_hm(queue[0].start)}.' if queue else ''
+    if mode != 'scheduled' or start_at is None:
+        return ('Não há período livre suficiente para este pacote nas janelas em que o jogo está disponível.'
+                + (first or ' Tente um pacote menor.'))
+    lead = int(st['scheduled_lead_minutes'])
+    if start_at < n + timedelta(minutes=lead):
+        earliest = n + timedelta(minutes=lead)
+        return (f'O horário fixo precisa ser marcado com pelo menos {lead} minutos de antecedência: escolha a partir de '
+                f'{_hm(_ceil_minute(earliest))}. Para jogar agora, use "Entrar na fila".')
+    reasons = []
+    for c in consoles:
+        windows = conn.execute("""select starts_at, ends_at from console_game_assignments where console_id=%s and game_id=%s
+                                  and status='active' and ends_at > %s order by starts_at""", (c['id'], game_id, n)).fetchall()
+        inside = [w for w in windows if w['starts_at'] <= start_at < w['ends_at']]
+        if not inside:
+            nxt = next((w for w in windows if w['starts_at'] > start_at), None)
+            reasons.append(f'o jogo só fica disponível a partir de {_hm(nxt["starts_at"])}' if nxt
+                           else 'o jogo não está disponível nesse horário')
+            continue
+        w = inside[0]
+        if start_at + timedelta(minutes=minutes) > w['ends_at']:
+            reasons.append(f'o jogo fica disponível só até {_hm(w["ends_at"])} — o pacote de {minutes} min precisa terminar até lá')
+            continue
+        if not _within_hours(_hours(conn, c['id']), start_at, start_at + timedelta(minutes=minutes)):
+            reasons.append('o horário está fora do funcionamento do console')
+            continue
+        free = earliest_in_window(conn, c['id'], start_at, w['ends_at'], minutes, setup, start_at)
+        reasons.append(f'já existe outra reserva nesse horário (com {setup} min de preparação entre jogadores)'
+                       + (f'; próximo horário livre: {_hm(free)}' if free else ''))
+    msg = reasons[0] if reasons else 'o horário não está livre'
+    return msg[0].upper() + msg[1:] + '.'
+
+
 # ------------------------------------------------------------------ preços
 def resolve_package(conn, game: dict, console_id, platform_id, minutes: int, at: datetime) -> dict | None:
     lt = timeutil.local(at).time()
@@ -275,6 +323,14 @@ def create_reservation(user, game_id, minutes: int, mode: str, start_at: datetim
     game = conn.execute('select * from games where id=%s', (game_id,)).fetchone()
     game_sellable(conn, game)
     n = timeutil.now()
+    # Reserva provisória abandonada do MESMO jogo (o jogador voltou e reservou de novo): libera o horário antigo para
+    # não empilhar holds na fila. Não toca em reservas com pagamento em andamento (Pix gerado, cartão em análise).
+    abandoned = conn.execute(
+        """select * from reservations r where r.user_id=%s and r.game_id=%s and r.status='pending_payment' and r.hold_expires_at > %s
+             and not exists (select 1 from payments p where p.reservation_id=r.id and p.status in ('pending','approved'))
+           for update""", (user.user_id, game_id, n)).fetchall()
+    for old in abandoned:
+        release_reservation(conn, old, 'cancelled', 'Substituída por uma nova reserva do mesmo jogo.', user.user_id)
     pend = conn.execute("select count(*) n from reservations where user_id=%s and status='pending_payment' and hold_expires_at > %s",
                         (user.user_id, n)).fetchone()['n']
     if pend >= int(st['max_pending_holds_per_user']):
@@ -296,9 +352,8 @@ def create_reservation(user, game_id, minutes: int, mode: str, start_at: datetim
             chosen = s
             break
     if not chosen:
-        if mode == 'scheduled':
-            raise conflict('slot_unavailable', 'Horário indisponível: o pacote não cabe na janela livre ou conflita com outra reserva.')
-        raise conflict('no_availability', 'Não há período livre suficiente para este pacote nas janelas disponíveis.')
+        raise conflict('slot_unavailable' if mode == 'scheduled' else 'no_availability',
+                       explain_unavailable(conn, game['id'], minutes, mode, start_at))
     coupon, discount = apply_coupon(conn, coupon_code, user.user_id, game['id'], minutes, pkg['price_cents'])
     try:
         with conn.transaction():
