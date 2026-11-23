@@ -34,6 +34,7 @@ const NUMBERS: { key: string; title: string; unit: string; min: number; max: num
   { key: 'no_show_tolerance_minutes', title: 'Tolerância de ausência', unit: 'min', min: 0, max: 60 },
   { key: 'featured_window_days', title: 'Período para calcular o "mais jogado"', unit: 'dias', min: 1, max: 90 },
   { key: 'agent_heartbeat_timeout_seconds', title: 'Tempo sem sinal do agente para marcar console offline', unit: 's', min: 30, max: 900 },
+  { key: 'player_video_max_kbps', title: 'Qualidade máxima do vídeo para o jogador (720p30: 4000 · 720p60: 6000 · internet fraca: 2500)', unit: 'kbps', min: 1000, max: 15000 },
 ];
 
 const FAMILY: Record<string, string> = { playstation: 'PlayStation', xbox: 'Xbox', nintendo: 'Nintendo', other: 'Outros' };

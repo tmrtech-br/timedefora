@@ -1666,6 +1666,8 @@ def put_setting(key: str, body: SettingIn, p: Principal = Depends(ADMIN)):
        isinstance(default, int) and not isinstance(default, bool) and not isinstance(body.value, int) or \
        isinstance(default, list) and not isinstance(body.value, list) or isinstance(default, str) and not isinstance(body.value, str):
         raise unprocessable('validation_error', 'Tipo de valor inválido para esta configuração.')
+    if key == 'player_video_max_kbps' and not 1000 <= body.value <= 15000:
+        raise unprocessable('validation_error', 'Qualidade do vídeo: use de 1000 a 15000 kbps.')
     with tx() as conn:
         if key == 'disabled_platforms':
             known = {r['code'] for r in conn.execute('select code from platforms').fetchall()}

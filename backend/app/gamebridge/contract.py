@@ -110,7 +110,7 @@ class ConsoleStreamingAdapter(ABC):
     def test_controls(self, ref: ConsoleRef) -> AdapterResult:
         raise AdapterError('not_implemented', 'Teste de controles não implementado para este método.')
 
-    def webrtc_offer(self, ref: ConsoleRef, session_id: str, offer: dict) -> AdapterResult:
+    def webrtc_offer(self, ref: ConsoleRef, session_id: str, offer: dict, max_kbps: int | None = None) -> AdapterResult:
         """Vídeo/áudio do console para o navegador: recebe a oferta SDP e devolve a resposta em data {'sdp','type'}."""
         raise AdapterError('not_implemented', 'Vídeo no navegador não disponível para este método de conexão.')
 

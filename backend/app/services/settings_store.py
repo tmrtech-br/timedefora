@@ -16,6 +16,7 @@ DEFAULTS = {
     'featured_window_days': 7,
     'featured_metric': 'minutes_played',      # minutes_played | sessions_sold | revenue
     'agent_heartbeat_timeout_seconds': 90,
+    'player_video_max_kbps': 4000,            # teto da taxa do vídeo console→navegador por jogador (o navegador regula abaixo)
     'support_hours_text': 'Atendimento por chamado no site. Horário de resposta: 9h às 21h (horário de Fortaleza).',
     # ---- Parâmetros liga/desliga (menu "Parâmetros" do painel). Aplicados no servidor, não só na interface.
     'disabled_platforms': [],                 # códigos de plataforma desligados (ex.: ["XBOX_SERIES"]): consoles e jogos somem da venda

@@ -21,7 +21,7 @@ from .config import AgentConfig
 from .gamepad import GamepadUnavailable
 from .links import ChiakiLink, DirectLink
 from .runtime import ConsoleRuntime, Deps, Target, target_from
-from .webrtc import WebRtcHub, WebRtcUnavailable
+from .webrtc import WebRtcHub, WebRtcUnavailable, set_bitrate
 
 log = logging.getLogger('consoleagent')
 
@@ -110,6 +110,9 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             return _result(False, 'O console está reconectando (acordando/conectando). Tente de novo em alguns segundos.', 'connecting')
         if offer.get('type') != 'offer' or not isinstance(offer.get('sdp'), str):
             return _error(400, 'invalid_offer', 'Oferta de vídeo inválida.')
+        mk = body.get('video_max_kbps')                       # parâmetro do painel (sobrepõe o config.json)
+        if isinstance(mk, (int, float)) and 500 <= mk <= 20000:
+            set_bitrate(int(mk))
         try:
             answer, msg = await hub.answer(console_id, sid, offer, r.link)
         except WebRtcUnavailable as e:

@@ -82,9 +82,10 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
 
     def revoke_input(self, ref, session_id): return self._res(self._call(ref, 'input/revoke', {'session_id': session_id}))
 
-    def webrtc_offer(self, ref, session_id, offer):
+    def webrtc_offer(self, ref, session_id, offer, max_kbps=None):
         # O agente coleta os candidatos de rede (STUN) antes de responder: pode levar alguns segundos.
-        return self._res(self._call(ref, 'stream/webrtc', {'session_id': session_id, 'offer': offer}, timeout=40.0))
+        return self._res(self._call(ref, 'stream/webrtc', {'session_id': session_id, 'offer': offer, 'video_max_kbps': max_kbps},
+                                    timeout=40.0))
     def disconnect(self, ref): return self._res(self._call(ref, 'disconnect'))
     def health_check(self, ref): return self._res(self._call(ref, 'health'))
     def test_video_audio(self, ref): return self._res(self._call(ref, 'test/video-audio'))

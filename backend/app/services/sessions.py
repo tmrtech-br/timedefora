@@ -120,17 +120,18 @@ def webrtc_offer(session_id, token: str, offer: dict) -> dict:
     with tx() as conn:
         t = _token_session(conn, session_id, token)
         ref = console_ref(conn, t['console_id'])
+        max_kbps = int(get_settings(conn).get('player_video_max_kbps') or 4000)   # Parâmetros do painel
     adapter = get_adapter(ref.method)
     try:
         try:
-            res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']})
+            res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']}, max_kbps)
         except AdapterError as e:
             if e.code != 'input_revoked':
                 raise
             # O agente perdeu a associação com a sessão (reinício, queda da conexão com o console…). O token acabou
             # de ser validado aqui — a API é a autoridade —, então reativa a sessão no agente e tenta uma vez mais.
             adapter.start_stream(ref, str(session_id))
-            res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']})
+            res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']}, max_kbps)
     except AdapterError as e:
         status = 501 if e.code == 'not_implemented' else 503
         raise AppError(status, 'video_unavailable', e.message)
