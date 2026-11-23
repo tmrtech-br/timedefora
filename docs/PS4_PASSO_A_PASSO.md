@@ -75,7 +75,9 @@ ligar o PS4 do repouso pode não funcionar (deixe *Permanecer conectado à Inter
 Teste antes no chiaki-ng: com o PC fora da rede do PS4 (ex.: celular roteando 4G), use a conexão remota do chiaki-ng
 (via PSN) ou adicione o console manualmente pelo IP público/DDNS.
 
-## Fase 1 — ConsoleAgent v0 (eu desenvolvo; você instala no PC)
+## Fase 1 — ConsoleAgent v0
+
+> **Status: Parte 1 entregue** (`agent/`, versão 0.1): heartbeat, autenticação, saúde e descoberta real na rede local/IP. Instalação: `agent/README.md`. (eu desenvolvo; você instala no PC)
 
 Programa Python (FastAPI) que roda no PC ao lado do PS4 e implementa o protocolo que a API já espera:
 

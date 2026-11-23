@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
+from ..config import settings
 from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx, update
 from ..core.deps import Principal, require_role
@@ -297,10 +298,19 @@ def agents(p: Principal = Depends(OPERATOR)):
     return jsonable(rows)
 
 
+def _check_agent_endpoint(url: str | None) -> None:
+    """HTTPS obrigatório; em desenvolvimento aceita o agente no mesmo PC (http://127.0.0.1:porta)."""
+    if not url:
+        return
+    local_dev = settings.env != 'production' and url.startswith('http://127.0.0.1')
+    if not (url.startswith('https://') or local_dev):
+        raise unprocessable('validation_error', 'O endpoint do agente deve usar HTTPS'
+                            + ('.' if settings.env == 'production' else ' (em desenvolvimento: http://127.0.0.1:porta).'))
+
+
 @router.post('/agents', status_code=201)
 def create_agent(body: AgentIn, p: Principal = Depends(ADMIN)):
-    if body.endpoint_url and not body.endpoint_url.startswith('https://'):
-        raise unprocessable('validation_error', 'O endpoint do agente deve usar HTTPS.')
+    _check_agent_endpoint(body.endpoint_url)
     inbound, outbound = security.new_token(), security.new_token()
     with tx() as conn:
         row = insert(conn, 'console_agents', {**body.model_dump(), 'credential_hash': security.sha256(inbound),
@@ -312,8 +322,7 @@ def create_agent(body: AgentIn, p: Principal = Depends(ADMIN)):
 
 @router.patch('/agents/{aid}')
 def patch_agent(aid: uuid.UUID, body: dict, p: Principal = Depends(ADMIN)):
-    if body.get('endpoint_url') and not str(body['endpoint_url']).startswith('https://'):
-        raise unprocessable('validation_error', 'O endpoint do agente deve usar HTTPS.')
+    _check_agent_endpoint(str(body['endpoint_url']) if body.get('endpoint_url') else None)
     with tx() as conn:
         row = _patch(conn, 'console_agents', aid, body, {'name', 'host_name', 'description', 'location', 'endpoint_url',
                                                          'cpu_limit_pct', 'ram_limit_mb', 'network_limit_mbps'})
@@ -679,6 +688,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
         raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
     adapter = get_adapter(ref.method)
     result, message, data, metrics = 'failed', '', {}, {}
+    reported_simulated = False
     try:
         if test_type == 'discover':
             r = adapter.discover_console(ref)
@@ -697,13 +707,19 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
         else:
             r = adapter.health_check(ref)
         result, message, data = ('passed' if r.ok else 'failed'), r.message, getattr(r, 'data', {}) or {}
+        reported_simulated = bool(getattr(r, 'simulated', False))
     except AdapterError as e:
         result = 'not_available' if e.code == 'not_implemented' else 'failed'
         message = e.message
+    # Um agente real que responda "simulado" não pode validar canais de um console real.
+    simulated = adapter.simulated or reported_simulated
+    if reported_simulated and not adapter.simulated and result == 'passed':
+        result = 'not_available'
+        message = (message + ' ' if message else '') + '(resposta SIMULADA do agente — não valida o console real)'
     n = timeutil.now()
     with tx() as conn:
         insert(conn, 'console_connection_tests', {'console_id': cid, 'test_type': test_type, 'result': result,
-                                                  'simulated': adapter.simulated, 'message': message,
+                                                  'simulated': simulated, 'message': message,
                                                   'metrics': Jsonb(metrics), 'run_by': p.user_id})
         cfg = one(conn, 'select * from console_connection_configs where console_id=%s for update', (cid,))
         col = {'video_audio': ['video_validated_at', 'audio_validated_at'], 'controls': ['control_validated_at'],
@@ -728,7 +744,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
                 and cfg['connection_status'] == 'online' and not cfg['validated_at']:
             conn.execute('update console_connection_configs set validated_at=%s, validated_by=%s where id=%s', (n, p.user_id, cfg['id']))
             conn.execute("update consoles set status='online' where id=%s and status in ('offline','unconfigured','degraded')", (cid,))
-    return {'test_type': test_type, 'result': result, 'message': message, 'simulated': adapter.simulated,
+    return {'test_type': test_type, 'result': result, 'message': message, 'simulated': simulated,
             'metrics': metrics or None}
 
 

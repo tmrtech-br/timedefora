@@ -1,0 +1,10 @@
+{
+  "api_url": "http://127.0.0.1:8000",
+  "agent_token": "COLE_AQUI_o_token_agente_para_API",
+  "api_to_agent_token": "COLE_AQUI_o_token_API_para_agente",
+  "listen_host": "127.0.0.1",
+  "listen_port": 8765,
+  "heartbeat_seconds": 30,
+  "discovery_timeout_seconds": 2.0,
+  "chiaki_path": "C:\\Program Files\\chiaki-ng\\chiaki.exe"
+}

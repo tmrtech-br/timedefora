@@ -24,7 +24,7 @@ export default function Agents() {
       <section className="card stack"><h2>Novo agente</h2><div className="grid3">
         <Field label="Nome"><input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value })} /></Field>
         <Field label="Host"><input maxLength={253} value={a.host_name} onChange={(e) => setA({ ...a, host_name: e.target.value })} /></Field>
-        <Field label="Endpoint HTTPS do agente"><input maxLength={500} value={a.endpoint_url} onChange={(e) => setA({ ...a, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
+        <Field label="Endpoint HTTPS do agente" hint="Em desenvolvimento, com o agente no mesmo PC: http://127.0.0.1:8765"><input maxLength={500} value={a.endpoint_url} onChange={(e) => setA({ ...a, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
         <Field label="Localização"><input maxLength={120} value={a.location} onChange={(e) => setA({ ...a, location: e.target.value })} /></Field>
         <label className="check"><input type="checkbox" checked={a.is_simulated} onChange={(e) => setA({ ...a, is_simulated: e.target.checked })} />Agente SIMULADO (desenvolvimento)</label></div>
         <button className="btn primary" onClick={() => run(async () => { setSecret(await post('/admin/agents', { ...a, endpoint_url: a.endpoint_url || null })); agents.reload(); }, 'Agente cadastrado.')}>Cadastrar</button>

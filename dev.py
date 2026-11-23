@@ -14,7 +14,7 @@ O que ele faz, nesta ordem (cada passo é pulado se já estiver pronto):
      gera backend/.env a partir do .env.example na primeira vez (chave aleatória, senha do admin aleatória).
   4. Aplica migrations e o seed básico; na primeira vez cria o superadministrador e os dados demo.
   5. Frontend: npm install (se faltar ou se package-lock mudar) e .env.local.
-  6. Sobe API (8000) e Next (3000) com saída prefixada. Ctrl+C encerra tudo, banco incluído, de forma limpa.
+  6. Sobe API (8000), Next (3000) e o ConsoleAgent (se agent/config.json existir) com saída prefixada. Ctrl+C encerra tudo, banco incluído, de forma limpa.
 
 Variáveis opcionais: LOCAPLAY_PGDATA (pasta do cluster), LOCAPLAY_PGPORT (padrão 5433), PG_BIN (pasta bin do PostgreSQL).
 Só usa a biblioteca padrão do Python 3.11+. Nunca aponte para o Supabase: isto é só para desenvolvimento local.
@@ -38,6 +38,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 BACKEND = ROOT / 'backend'
 FRONTEND = ROOT / 'frontend'
+AGENT = ROOT / 'agent'
 WIN = os.name == 'nt'
 
 PGDATA = Path(os.getenv('LOCAPLAY_PGDATA', str(ROOT.parent / '.pgdata-dev')))
@@ -48,7 +49,7 @@ VENV_PY = BACKEND / '.venv' / ('Scripts/python.exe' if WIN else 'bin/python')
 DB_URL = f'postgresql://postgres@localhost:{PGPORT}/locaplay'
 TEST_DB_URL = f'postgresql://postgres@localhost:{PGPORT}/locaplay_test'
 
-COLORS = {'db': '\033[36m', 'api': '\033[35m', 'web': '\033[32m', 'dev': '\033[33m'}
+COLORS = {'db': '\033[36m', 'api': '\033[35m', 'web': '\033[32m', 'agt': '\033[34m', 'dev': '\033[33m'}
 RESET = '\033[0m'
 if WIN:
     os.system('')  # habilita cores ANSI no console do Windows
@@ -378,6 +379,14 @@ def kill_tree(p: subprocess.Popen) -> None:
         p.kill()
 
 
+def agent_port() -> int:
+    try:
+        import json
+        return int(json.loads((AGENT / 'config.json').read_text(encoding='utf-8')).get('listen_port', 8765))
+    except Exception:
+        return 8765
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description='Sobe o ambiente local do LocaPlay.')
     ap.add_argument('--demo', action='store_true', help='recria os dados demonstrativos (SIMULADOS)')
@@ -422,6 +431,15 @@ def main() -> None:
                            BACKEND, env, 'api'))
         npm = shutil.which('npm')
         procs.append(spawn([npm, 'run', 'dev'], FRONTEND, os.environ.copy(), 'web'))
+        names = ['API', 'frontend']
+        if (AGENT / 'config.json').exists():
+            free_port(agent_port(), 'ConsoleAgent')
+            aenv = os.environ.copy()
+            aenv.update({'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'})
+            procs.append(spawn([str(VENV_PY), '-m', 'consoleagent'], AGENT, aenv, 'agt'))
+            names.append('ConsoleAgent')
+        else:
+            log('ConsoleAgent não iniciado: crie agent/config.json (veja agent/README.md)', 'agt')
 
         log('-' * 60)
         log('Site:  http://localhost:3000')
@@ -432,7 +450,7 @@ def main() -> None:
         log('-' * 60)
 
         while True:
-            for p, name in zip(procs, ('API', 'frontend')):
+            for p, name in zip(procs, names):
                 if p.poll() is not None:
                     die(f'{name} encerrou (código {p.returncode}). Veja as mensagens acima.')
             if pg_proc is not None and pg_proc.poll() is not None:

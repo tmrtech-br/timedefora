@@ -30,7 +30,16 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
         except httpx.HTTPError as e:
             raise AdapterError('agent_unreachable', f'ConsoleAgent inacessível: {e.__class__.__name__}')
         if r.status_code >= 400:
-            raise AdapterError('agent_error', f'ConsoleAgent respondeu {r.status_code}.')
+            try:
+                body = r.json()
+            except ValueError:
+                body = {}
+            msg = str(body.get('message') or body.get('detail') or f'ConsoleAgent respondeu {r.status_code}.')
+            if r.status_code == 501 or body.get('code') == 'not_implemented':
+                raise AdapterError('not_implemented', msg)
+            if r.status_code in (401, 403):
+                raise AdapterError('agent_error', 'ConsoleAgent recusou a credencial (token API→agente). Rotacione os tokens e atualize o agente.')
+            raise AdapterError('agent_error', msg)
         return r.json()
 
     def _res(self, data: dict) -> AdapterResult:
@@ -42,7 +51,7 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
     def discover_console(self, ref):
         route = (ref.settings or {}).get('network_route') or 'lan'
         host = ref.internal_host if route == 'lan' else (ref.settings or {}).get('public_host')
-        return self._res(self._call(ref, 'discover', {'host': host, 'route': route,
+        return self._res(self._call(ref, 'discover', {'host': host, 'route': route, 'platform_code': ref.platform_code,
                                                       'port': (ref.settings or {}).get('public_port'),
                                                       'console_identifier': (ref.settings or {}).get('console_identifier')}))
     def pair_console(self, ref, code): return self._res(self._call(ref, 'pair', {'code': code}))
