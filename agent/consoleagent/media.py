@@ -45,6 +45,21 @@ def frame(pid: int | None) -> Frame:
     return Frame(True, f'Imagem recebida ({w.size[0]}×{w.size[1]}, brilho {mean}, variação {std}).', mean, std, w.size, g)
 
 
+def frame_from_luma(luma, size: tuple[int, int]) -> Frame:
+    """Mesma regra de frame(), a partir do plano de brilho de um quadro decodificado (Remote Play direto)."""
+    import numpy as np
+    from PIL import Image
+    arr = np.asarray(luma, dtype='float32')
+    mean, std = round(float(arr.mean()), 1), round(float(arr.std()), 1)
+    img = Image.fromarray(np.clip(arr, 0, 255).astype('uint8'), 'L')
+    w, h = size
+    if mean < BLACK_MEAN and std < FLAT_STD:
+        return Frame(False, f'Imagem preta ({w}×{h}): o console ainda não está transmitindo.', mean, std, size, img)
+    if std < FLAT_STD:
+        return Frame(False, f'Imagem uniforme ({w}×{h}, brilho {mean}): sem conteúdo do console.', mean, std, size, img)
+    return Frame(True, f'Imagem recebida do console ({w}×{h}, brilho {mean}, variação {std}).', mean, std, size, img)
+
+
 def motion(a: Frame, b: Frame) -> float | None:
     """Diferença média entre duas capturas (0 = imagem parada)."""
     if a.image is None or b.image is None or a.image.size != b.image.size:

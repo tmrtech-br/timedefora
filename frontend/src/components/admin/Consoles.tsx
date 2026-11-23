@@ -100,6 +100,11 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
             <Field label="Identificação do console" required={cfg.network_route === 'internet_psn'} hint={cfg.network_route === 'internet_psn' ? 'Nome/ID do console registrado na conta PSN do agente' : undefined}>
               <input maxLength={120} value={String(cfg.console_identifier)} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
           </>}
+          {m === 'remote_play_direct' && <>
+            <Field label="IP do console na rede local" required hint="Fixe esse IP no roteador (reserva DHCP) para não mudar."><input maxLength={253} value={String(cfg.internal_host)} onChange={(e) => set('internal_host', e.target.value)} placeholder="192.168.0.20" /></Field>
+            <Field label="Identificação do console" required hint='Mesmo nome usado em "consoles" no config.json do agente (ex.: PS4-118).'>
+              <input maxLength={120} value={String(cfg.console_identifier)} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
+          </>}
           {m === 'hdmi_capture' && <>
             <Field label="Capturadora / entrada HDMI"><select value={String(cfg.capture_device_id)} onChange={(e) => set('capture_device_id', e.target.value)}><option value="">Selecione</option>
               {caps?.filter((d) => d.agent_id === cfg.agent_id).map((d) => <option key={d.id} value={d.id} disabled={!!d.used_by_console && d.used_by_console !== c.id}>{d.manufacturer} {d.model} · {d.device_identifier} · {d.input_port}{d.used_by_console && d.used_by_console !== c.id ? ' (em uso)' : ''}</option>)}</select></Field>
@@ -124,6 +129,8 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
         <div className="row">Vídeo {flag(c.connection.video_validated_at)} Áudio {flag(c.connection.audio_validated_at)} Controle {flag(c.connection.control_validated_at)} Heartbeat {flag(c.connection.heartbeat_validated_at)}
           Conexão <StatusPill status={c.connection.connection_status} /></div>
         {m === 'remote_play_chiaki' && <Field label="Código de pareamento exibido no console (assistente do admin)"><input value={pairCode} onChange={(e) => setPairCode(e.target.value)} maxLength={12} /></Field>}
+        {m === 'remote_play_direct' && <Field label="PIN de registro (8 dígitos)" hint="No console: Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo. Digite aqui e clique em Pareamento (vale por ~5 min).">
+          <input inputMode="numeric" value={pairCode} onChange={(e) => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 8))} maxLength={8} placeholder="12345678" /></Field>}
         <div className="row">{TESTS.map(([t, l]) => <button key={t} className="btn sm" disabled={busy} onClick={() => run(async () => {
           const r = await post<{ result: string; message: string; simulated: boolean }>(`/admin/consoles/${c.id}/tests/${t}`, t === 'pair' ? { code: pairCode || null } : {});
           onChange(); return r;

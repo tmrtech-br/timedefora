@@ -1,16 +1,24 @@
 """Registro de adaptadores por método de conexão escolhido no painel administrativo."""
-from .agent_client import ChiakiWebRemotePlayAdapter, HdmiCaptureAdapter, NativeRemotePlayAdapter
+from .agent_client import ChiakiWebRemotePlayAdapter, DirectRemotePlayAdapter, HdmiCaptureAdapter, NativeRemotePlayAdapter
 from .contract import AdapterError, ConsoleStreamingAdapter
 from .simulated import SimulatedAdapter
 
 _ADAPTERS: dict[str, ConsoleStreamingAdapter] = {
     'simulated': SimulatedAdapter(),
     'remote_play_chiaki': ChiakiWebRemotePlayAdapter(),
+    'remote_play_direct': DirectRemotePlayAdapter(),
     'hdmi_capture': HdmiCaptureAdapter(),
     'native_remote_play': NativeRemotePlayAdapter(),
 }
 
 METHODS = [
+    {'method': 'remote_play_direct', 'label': 'Remote Play direto — vários consoles por PC (experimental)', 'status': 'experimental',
+     'platforms': ['PS4', 'PS5'], 'needs': ['agent', 'internal_host', 'pairing'],
+     'guide': 'O ConsoleAgent conecta direto no console pelo protocolo Remote Play, sem chiaki-ng: sem janelas nem monitores, '
+              'cada console com o seu próprio controle (vários consoles no mesmo PC). Somente REDE LOCAL: o PC do agente fica '
+              'no mesmo lugar dos consoles (cabo de rede recomendado; fixe o IP de cada console no roteador). '
+              'Registro único por console: login PSN no agente + PIN de Configurações → Configurações da Conexão de Uso Remoto. '
+              'Biblioteca pyremoteplay incorporada (GPL-3.0): requer análise da licença e dos termos da PlayStation.'},
     {'method': 'remote_play_chiaki', 'label': 'Remote Play — Chiaki (experimental)', 'status': 'experimental',
      'platforms': ['PS4', 'PS5'], 'needs': ['agent', 'internal_host', 'pairing'],
      'guide': 'Protocolo Remote Play via ConsoleAgent + chiaki-ng. Habilite o Uso Remoto no console e escolha a rota: '

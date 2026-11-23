@@ -28,7 +28,10 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
         route = s.get('network_route') or 'lan'
         return {'route': route, 'host': ref.internal_host if route == 'lan' else s.get('public_host'),
                 'port': s.get('public_port'), 'platform_code': ref.platform_code,
-                'console_identifier': s.get('console_identifier')}
+                'console_identifier': s.get('console_identifier'),
+                # qualidade pedida ao console (usada pelo Remote Play direto)
+                'resolution': s.get('resolution'), 'fps': s.get('fps'), 'codec': s.get('codec'),
+                'bitrate_kbps': s.get('bitrate_kbps')}
 
     def _call(self, ref: ConsoleRef, action: str, payload: dict | None = None, timeout: float | None = None) -> dict:
         self._check(ref)
@@ -97,6 +100,21 @@ class ChiakiWebRemotePlayAdapter(AgentDelegatingAdapter):
     def _check(self, ref):
         if ref.platform_code not in ('PS4', 'PS5'):
             raise AdapterError('unsupported_platform', 'Remote Play via Chiaki só é aplicável a PS4/PS5.')
+        super()._check(ref)
+
+
+class DirectRemotePlayAdapter(AgentDelegatingAdapter):
+    """EXPERIMENTAL. O ConsoleAgent fala o protocolo Remote Play direto com o console (biblioteca pyremoteplay
+    incorporada, GPL-3.0): sem chiaki-ng, sem janelas, um controle próprio por console — vários consoles por PC.
+    Só rede local. Não validado com hardware."""
+    method = 'remote_play_direct'
+    label = 'Remote Play direto (experimental)'
+
+    def _check(self, ref):
+        if ref.platform_code not in ('PS4', 'PS5'):
+            raise AdapterError('unsupported_platform', 'Remote Play só é aplicável a PS4/PS5.')
+        if ((ref.settings or {}).get('network_route') or 'lan') != 'lan':
+            raise AdapterError('not_configured', 'O Remote Play direto funciona só na rede local do agente.')
         super()._check(ref)
 
 

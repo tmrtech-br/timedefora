@@ -20,7 +20,7 @@ if sys.platform != 'win32':
 from fastapi.testclient import TestClient  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from consoleagent import media  # noqa: E402
+from consoleagent.links import ChiakiLink  # noqa: E402
 from consoleagent.config import AgentConfig  # noqa: E402
 from consoleagent.runtime import Deps  # noqa: E402
 from consoleagent.server import create_app  # noqa: E402
@@ -67,9 +67,10 @@ def window():
 
 
 def test_video_da_janela_chega_ao_cliente_webrtc(window):
-    chiaki = WindowChiaki(window)
-    deps = Deps(chiaki=chiaki, make_pad=lambda: type('P', (), {'reset': lambda s: None, 'apply': lambda s, c: None})(),
-                frame=media.frame, audio=lambda pid, s=1.5: (None, ''), sleep=lambda s: None)
+    link = ChiakiLink('janela-de-teste', make_pad=lambda: type('P', (), {'reset': lambda s: None, 'apply': lambda s, c: None})(),
+                      audio_fn=lambda pid, s=1.5: (None, ''))
+    link.driver = WindowChiaki(window)        # caminho de produção do ChiakiLink, com a janela real no lugar do chiaki-ng
+    deps = Deps(link=link, sleep=lambda s: None)
     cfg = AgentConfig(api_url='http://x', agent_token='a', api_to_agent_token=TOKEN, ice_servers=[], stream_audio=False, video_max_width=640)
     with TestClient(create_app(cfg, deps=deps)) as client:     # mantém o laço do servidor vivo (como o uvicorn)
         _run(client)

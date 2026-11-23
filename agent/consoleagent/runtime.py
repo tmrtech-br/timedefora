@@ -2,7 +2,8 @@
 
 Operações demoradas (acordar e conectar levam de 20 a 60 s) rodam em segundo plano; cada chamada da API
 (limite de 5 s) recebe o andamento. A API repete a chamada até o prazo de tolerância.
-Nenhum resultado é simulado: sucesso só com imagem real capturada da janela do chiaki-ng.
+Nenhum resultado é simulado: sucesso só com imagem real do console (captura da janela ou quadro decodificado).
+A conversa com o console fica num "link" (links.py): chiaki-ng ou Remote Play direto.
 """
 from __future__ import annotations
 
@@ -12,10 +13,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from . import discovery, media
-from .chiaki import ChiakiDriver, ChiakiError, run_key_steps
+from . import discovery
+from .chiaki import ChiakiError
 from .config import AgentConfig
-from .gamepad import GamepadUnavailable, VirtualPad
+from .gamepad import GamepadUnavailable
+from .links import LinkError
 
 log = logging.getLogger('consoleagent.runtime')
 DIRECT_ROUTES = ('lan', 'internet_port_forward')
@@ -34,6 +36,11 @@ class Target:
     profile: str = ''
     psn_gui_steps: list = field(default_factory=list)
     games: dict = field(default_factory=dict)
+    psn_user: str = ''              # Remote Play direto: conta PSN usada (vazio = a registrada no console)
+    mac: str = ''
+    resolution: str = '720p'
+    fps: int = 30
+    codec: str = 'h264'
 
     @property
     def direct(self) -> bool:
@@ -41,7 +48,7 @@ class Target:
 
 
 def target_from(cfg: AgentConfig, console_id: str, body: dict) -> Target:
-    """Junta o que a API envia (rota/endereço) com o que só o agente guarda (chave de registro, senha, roteiros)."""
+    """Junta o que a API envia (rota/endereço/qualidade) com o que só o agente guarda (chave, senha, roteiros)."""
     t = body.get('target') or {}
     settings = body.get('settings') or {}
     route = t.get('route') or settings.get('network_route') or body.get('route') or 'lan'
@@ -50,21 +57,24 @@ def target_from(cfg: AgentConfig, console_id: str, body: dict) -> Target:
     host = entry.get('host') or t.get('host') or body.get('host')
     if not host and route == 'internet_port_forward':
         host = settings.get('public_host')
+    try:
+        fps = int(t.get('fps') or settings.get('fps') or 30)
+    except (TypeError, ValueError):
+        fps = 30
     return Target(console_id=console_id, route=route, host=(host or '').strip() or None,
                   platform=(t.get('platform_code') or body.get('platform_code') or entry.get('platform') or 'PS4'),
                   identifier=ident, nickname=(entry.get('nickname') or ident).strip(),
                   regist_key=str(entry.get('regist_key') or ''), passcode=str(entry.get('passcode') or ''),
                   profile=str(entry.get('profile') or ''), psn_gui_steps=list(entry.get('psn_gui_steps') or []),
-                  games=dict(entry.get('games') or {}))
+                  games=dict(entry.get('games') or {}), psn_user=str(entry.get('psn_user') or ''),
+                  mac=str(entry.get('mac') or ''), resolution=str(t.get('resolution') or settings.get('resolution') or '720p'),
+                  fps=fps, codec=str(t.get('codec') or settings.get('codec') or 'h264'))
 
 
 @dataclass
 class Deps:
     """Dependências trocáveis (os testes usam dublês; nada de hardware)."""
-    chiaki: ChiakiDriver
-    make_pad: Callable[[], object] = VirtualPad
-    frame: Callable = media.frame
-    audio: Callable = media.audio_peak
+    link: object
     discover: Callable = discovery.discover
     wake: Callable = discovery.wakeup
     sleep: Callable = time.sleep
@@ -93,15 +103,27 @@ class ConsoleRuntime:
         self.ready_game: str | None = None       # jogo aberto pela última preparação bem-sucedida
         self._lock = threading.RLock()
 
+    @property
+    def link(self):
+        return self.d.link
+
     # ------------------------------------------------------------ estado
     @property
     def streaming(self) -> bool:
-        return self.d.chiaki.running
+        return self.link.running
 
     def ensure_pad(self):
         if self.pad is None:
-            self.pad = self.d.make_pad()
+            self.pad = self.link.new_pad()
         return self.pad
+
+    def _drop_pad(self):
+        if self.pad is not None:
+            try:
+                self.pad.close()
+            except Exception:
+                pass
+            self.pad = None
 
     # ------------------------------------------------------------ jobs
     def start_job(self, t: Target, kind: str, game: dict | None = None, wait: float = 3.0) -> Job:
@@ -128,7 +150,7 @@ class ConsoleRuntime:
             if j.kind == 'prepare':
                 j.message += ' ' + self._open_game(t, j, game or {})
             j.state, j.step = 'ok', 'pronto'
-        except (Fail, ChiakiError, GamepadUnavailable, ValueError, OSError) as e:
+        except (Fail, ChiakiError, LinkError, GamepadUnavailable, ValueError, OSError) as e:
             j.state, j.message = 'failed', f'{j.step}: {e}'
             log.warning('preparação falhou (%s): %s', t.identifier or t.console_id, j.message)
         except Exception as e:  # nunca derrubar o agente
@@ -136,24 +158,28 @@ class ConsoleRuntime:
             log.exception('erro inesperado na preparação')
 
     def _bringup(self, t: Target, j: Job) -> str:
-        ch, cfg = self.d.chiaki, self.cfg
-        j.step = 'verificando o chiaki-ng'
-        if not ch.available:
-            raise Fail(f'chiaki-ng não encontrado em {ch.path}.')
-        if not t.nickname:
+        link, cfg = self.link, self.cfg
+        j.step = 'verificando a conexão do agente'
+        if not link.available:
+            raise Fail(link.unavailable_reason or 'Forma de conexão indisponível neste agente.')
+        if link.kind == 'chiaki' and not t.nickname:
             raise Fail('Identificação do console não informada (cadastro do console no painel).')
         if self.streaming:
             j.step = 'conferindo a imagem'
-            f = self.d.frame(ch.pid)
+            f = link.frame()
             if f.ok:
                 self.ensure_pad()
                 return f'Console já conectado. {f.message}'
-            ch.stop()                                              # processo aberto sem imagem: reinicia
-        reg = ch.registered(t.nickname)
-        if reg is False:
-            raise Fail(f'"{t.nickname}" não está registrado no chiaki-ng deste PC. Registre o console no chiaki-ng '
-                       '(mesmo apelido do cadastro) e tente de novo.')
-        notes = [] if reg else ['(não foi possível listar os consoles do chiaki-ng)']
+            self._drop_pad()
+            link.stop()                                            # conectado sem imagem: reinicia
+        notes: list[str] = []
+        if link.kind == 'chiaki':                                  # no modo direto o registro é conferido ao conectar
+            reg = link.registered(t)
+            if reg is False:
+                raise Fail(f'"{t.nickname}" não está registrado no chiaki-ng deste PC. Registre o console no chiaki-ng '
+                           '(mesmo apelido do cadastro) e tente de novo.')
+            if reg is None:
+                notes.append('(não foi possível listar os consoles do chiaki-ng)')
 
         if t.direct:
             if not t.host:
@@ -162,22 +188,23 @@ class ConsoleRuntime:
         else:
             notes.append('Rota PSN: o console deve estar ligado ou em repouso com o Remote Play ativado.')
 
-        j.step = 'criando o controle virtual'
-        self.ensure_pad()
-
-        j.step = 'abrindo o chiaki-ng'
-        if t.direct:
-            ch.start_direct(t.nickname, t.host, t.passcode, t.profile)
-        else:
-            ch.start_psn_gui(t.psn_gui_steps, t.profile, sleep=self.d.sleep)
+        self._drop_pad()
+        if link.kind == 'chiaki':
+            j.step = 'criando o controle virtual'
+            self.ensure_pad()                                      # o chiaki-ng precisa ver o controle ao abrir
+        j.step = 'conectando ao console'
+        link.start(t, self.d.sleep)
+        if link.kind != 'chiaki':
+            j.step = 'criando o controle'
+            self.ensure_pad()                                      # direto: o controle pertence à sessão
 
         j.step = 'aguardando a imagem do console'
         deadline = time.monotonic() + float(cfg.stream_timeout_seconds)
         last = None
         while time.monotonic() < deadline:
-            if not ch.running:
-                raise Fail('O chiaki-ng fechou antes de transmitir. ' + (ch.log_tail() or 'Veja agent/logs.'))
-            last = self.d.frame(ch.pid)
+            if not link.running:
+                raise Fail('A conexão com o console caiu antes de transmitir. ' + (link.log_tail() or 'Veja agent/logs.'))
+            last = link.frame()
             if last.ok:
                 return ' '.join(x for x in [*notes, f'Conectado. {last.message}'] if x)
             self.d.sleep(2)
@@ -189,12 +216,13 @@ class ConsoleRuntime:
         state = found[0].state if found else None
         if state == 'ligado':
             return 'Console ligado.'
-        if not t.regist_key:
+        key = self.link.regist_key(t)
+        if not key:
             if state == 'em repouso':
-                raise Fail('Console em repouso e sem "regist_key" no config.json do agente para acordá-lo.')
+                raise Fail('Console em repouso e sem chave de registro para acordá-lo (pareie o console ou preencha "regist_key").')
             raise Fail(f'Console não respondeu em {t.host} (desligado, fora da rede ou porta bloqueada).')
         j.step = 'acordando o console'
-        self.d.wake(t.host, t.regist_key, t.platform)
+        self.d.wake(t.host, key, t.platform)
         deadline = time.monotonic() + float(self.cfg.wake_timeout_seconds)
         while time.monotonic() < deadline:
             self.d.sleep(3)
@@ -202,7 +230,7 @@ class ConsoleRuntime:
             if found and found[0].state == 'ligado':
                 self.d.sleep(5)                                  # o Remote Play sobe alguns segundos depois
                 return 'Console acordado.'
-        raise Fail('O console não ligou após o comando de acordar (confira "Ativar ligar o PS4 pela rede" e a chave de registro).')
+        raise Fail('O console não ligou após o comando de acordar (confira "Ativar ligar o console pela rede" e a chave de registro).')
 
     def _open_game(self, t: Target, j: Job, game: dict) -> str:
         slug, title = game.get('slug'), game.get('title') or game.get('slug') or 'jogo'
@@ -216,7 +244,7 @@ class ConsoleRuntime:
         pad = self.ensure_pad()
         run_pad_steps(pad, steps, self.d.sleep)
         self.d.sleep(2)
-        f = self.d.frame(self.d.chiaki.pid)
+        f = self.link.frame()
         if not f.ok:
             raise Fail(f'Após o roteiro de "{title}" a imagem sumiu: {f.message}')
         self.ready_game = slug
@@ -226,7 +254,7 @@ class ConsoleRuntime:
     def start_session(self, session_id: str) -> tuple[bool, str]:
         if not self.streaming:
             return False, 'Console não está conectado (a preparação não terminou).'
-        f = self.d.frame(self.d.chiaki.pid)
+        f = self.link.frame()
         if not f.ok:
             return False, f.message
         pad = self.ensure_pad()
@@ -244,17 +272,16 @@ class ConsoleRuntime:
             return                                                   # pedido de outra sessão: não afeta a atual
         self.session_id = None
         if self.pad is not None:
-            self.pad.reset()
+            try:
+                self.pad.reset()
+            except Exception as e:
+                log.warning('falha ao soltar os controles: %s', e)
 
     def disconnect(self) -> None:
         self.revoke()
-        self.d.chiaki.stop()
+        self._drop_pad()
+        self.link.stop()
         self.ready_game, self.job = None, None
-        if self.pad is not None:
-            try:
-                self.pad.close()
-            finally:
-                self.pad = None
 
 
 def run_pad_steps(pad, steps: list, sleep=time.sleep) -> None:

@@ -24,7 +24,10 @@ PS4 = b'HTTP/1.1 {code}\nhost-id:AABBCCDDEEFF\nhost-type:PS4\nhost-name:PS4-118\
 
 
 class FakeChiaki:
+    """Link no modo chiaki-ng (mesma interface de consoleagent.links), sem processo real."""
+    kind = 'chiaki'
     path = 'C:/fake/chiaki.exe'
+    unavailable_reason = ''
 
     def __init__(self, registered=('PS4-118',), frames_until_video=2):
         self.hosts = list(registered)
@@ -32,9 +35,13 @@ class FakeChiaki:
         self._running = False
         self.started = []
         self.frames_until_video = frames_until_video
+        self.world = None
 
-    def registered(self, nick):
-        return nick.lower() in {h.lower() for h in self.hosts}
+    def registered(self, t):
+        return t.nickname.lower() in {h.lower() for h in self.hosts}
+
+    def regist_key(self, t):
+        return t.regist_key
 
     @property
     def running(self):
@@ -44,19 +51,37 @@ class FakeChiaki:
     def pid(self):
         return 4242 if self._running else None
 
-    def start_direct(self, nickname, host, passcode='', profile=''):
-        self.started.append(('direct', nickname, host, passcode))
-        self._running = True
-
-    def start_psn_gui(self, steps, profile='', sleep=None):
+    def start(self, t, sleep=None):
         from consoleagent.chiaki import ChiakiError
-        if not steps:
-            raise ChiakiError('Rota PSN: configure "psn_gui_steps" no config.json do agente.')
-        self.started.append(('psn', tuple(steps)))
+        if t.direct:
+            self.started.append(('direct', t.nickname, t.host, t.passcode))
+        else:
+            if not t.psn_gui_steps:
+                raise ChiakiError('Rota PSN: configure "psn_gui_steps" no config.json do agente.')
+            self.started.append(('psn', tuple(t.psn_gui_steps)))
         self._running = True
 
     def stop(self):
         self._running = False
+
+    def frame(self):
+        return self.world.frame(self.pid)
+
+    def audio_peak(self, seconds=1.5):
+        return self.world.audio(self.pid, seconds)
+
+    def new_pad(self):
+        return self.world.pad
+
+    def video_frame(self):
+        return None
+
+    def audio_track(self):
+        return None
+
+    def pair(self, t, pin):
+        from consoleagent.links import ChiakiLink
+        return ChiakiLink.pair(self, t, pin)
 
     def log_tail(self, lines=8):
         return ''
@@ -115,8 +140,8 @@ class World:
         return self.audio_peak, f'pico {self.audio_peak}'
 
     def deps(self):
-        return Deps(chiaki=self.chiaki, make_pad=lambda: self.pad, frame=self.frame, audio=self.audio,
-                    discover=self.discover, wake=self.wake, sleep=lambda s: None)
+        self.chiaki.world = self
+        return Deps(link=self.chiaki, discover=self.discover, wake=self.wake, sleep=lambda s: None)
 
 
 def make(world, **kw):

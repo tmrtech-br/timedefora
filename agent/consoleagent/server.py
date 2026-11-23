@@ -17,9 +17,9 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from . import VERSION, discovery
-from .chiaki import ChiakiDriver
 from .config import AgentConfig
 from .gamepad import GamepadUnavailable
+from .links import ChiakiLink, DirectLink
 from .runtime import ConsoleRuntime, Deps, Target, target_from
 from .webrtc import WebRtcHub, WebRtcUnavailable
 
@@ -41,19 +41,30 @@ def _has(module: str) -> bool:
         return False
 
 
+DIRECT_METHOD = 'remote_play_direct'
+
+
 def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, deps: Deps | None = None) -> FastAPI:
+    """deps: dublês para testes (todos os consoles usam o mesmo link). Sem deps, cada console ganha o seu link:
+    Remote Play direto (método remote_play_direct) ou chiaki-ng (demais)."""
     app = FastAPI(title='LocaPlay ConsoleAgent', version=VERSION, docs_url=None, redoc_url=None)
     expected = f'Bearer {cfg.api_to_agent_token}'.encode()
-    base = deps or Deps(chiaki=ChiakiDriver(cfg.chiaki_path), discover=discover_fn)
     runtimes: dict[str, ConsoleRuntime] = {}
+    kinds: dict[str, str] = {}
     hub = WebRtcHub(cfg.ice_servers, int(cfg.video_max_width), bool(cfg.stream_audio))
     app.state.webrtc = hub
+    discover = deps.discover if deps else discover_fn
 
-    def rt(console_id: str) -> ConsoleRuntime:
-        if console_id not in runtimes:
-            # Um chiaki-ng por console; as demais dependências são compartilhadas.
-            d = base if not runtimes else Deps(**{**base.__dict__, 'chiaki': ChiakiDriver(cfg.chiaki_path)})
-            runtimes[console_id] = ConsoleRuntime(cfg, d)
+    def rt(console_id: str, method: str | None = None) -> ConsoleRuntime:
+        kind = 'direct' if method == DIRECT_METHOD else 'chiaki' if method else kinds.get(console_id, 'chiaki')
+        r = runtimes.get(console_id)
+        if r is not None and (deps is not None or kinds.get(console_id) == kind or not method):
+            return r
+        if r is not None:                                     # método do console mudou no painel: troca o link
+            r.disconnect()
+        link = DirectLink() if kind == 'direct' else ChiakiLink(cfg.chiaki_path)
+        runtimes[console_id] = ConsoleRuntime(cfg, deps or Deps(link=link, discover=discover_fn))
+        kinds[console_id] = kind
         return runtimes[console_id]
 
     app.state.runtimes = runtimes
@@ -97,7 +108,7 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
         if offer.get('type') != 'offer' or not isinstance(offer.get('sdp'), str):
             return _error(400, 'invalid_offer', 'Oferta de vídeo inválida.')
         try:
-            answer, msg = await hub.answer(console_id, sid, offer, lambda: r.d.chiaki.pid)
+            answer, msg = await hub.answer(console_id, sid, offer, r.link)
         except WebRtcUnavailable as e:
             return _result(False, str(e), 'degraded')
         except Exception as e:  # nunca derrubar o agente por falha de negociação
@@ -107,18 +118,19 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
 
     def handle(console_id: str, action: str, body: dict):
         t = target_from(cfg, console_id, body)
-        r = rt(console_id)
+        r = rt(console_id, body.get('method'))
         sid = str(body.get('session_id') or '')
 
         if action == 'health':
             return _health(cfg, r)
         if action == 'discover':
-            return _discover(cfg, body, t, r, base.discover)
+            return _discover(cfg, body, t, r, discover)
         if action == 'metrics':
             fps = hub.fps(console_id)            # quadros reais enviados ao navegador (medidos), senão ausente
             return {'metrics': {'fps': fps} if fps is not None else {}}
         if action == 'pair':
-            return _pair(t, r)
+            ok, msg = r.link.pair(t, str(body.get('code') or ''))
+            return _result(ok, msg, 'idle' if ok else 'unavailable')
         if action in ('connect', 'console/prepare'):
             return _job(r.start_job(t, 'prepare' if action == 'console/prepare' else 'connect', body.get('game')))
         if action == 'stream/start':
@@ -150,7 +162,7 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             return _result(True, 'Sessão encerrada no console.', 'idle' if r.streaming else 'stopped')
         if action == 'disconnect':
             r.disconnect()
-            return _result(True, 'chiaki-ng encerrado e controle virtual removido.', 'stopped')
+            return _result(True, 'Conexão com o console encerrada e controle removido.', 'stopped')
         if action == 'test/video-audio':
             return _test_video_audio(r)
         if action == 'test/controls':
@@ -162,17 +174,24 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
 
 # ---------------------------------------------------------------- ações
 def _health(cfg: AgentConfig, r: ConsoleRuntime) -> dict:
-    ch = r.d.chiaki
+    link = r.link
+    direct = DirectLink()
+    direct_ok = direct.available
+    chiaki_ok = ChiakiLink(cfg.chiaki_path).available
     parts = [f'ConsoleAgent {VERSION} online',
-             'chiaki-ng encontrado' if ch.available else f'chiaki-ng NÃO encontrado em {cfg.chiaki_path}',
-             'controle virtual: ' + ('pacote vgamepad instalado' if _has('vgamepad') else 'vgamepad NÃO instalado'),
-             'captura de imagem: ' + ('ok' if _has('PIL') else 'Pillow NÃO instalado'),
-             'medição de áudio: ' + ('ok' if _has('pycaw') else 'pycaw NÃO instalado')]
+             f'modo deste console: {"Remote Play direto" if link.kind == "direct" else "chiaki-ng"}',
+             'Remote Play direto: ' + ('disponível' if direct_ok else direct.unavailable_reason),
+             'chiaki-ng encontrado' if chiaki_ok else f'chiaki-ng NÃO encontrado em {cfg.chiaki_path}',
+             'vídeo no navegador: ' + ('ok' if _has('aiortc') else 'aiortc NÃO instalado')]
+    if link.kind == 'chiaki':
+        parts += ['controle virtual: ' + ('vgamepad instalado' if _has('vgamepad') else 'vgamepad NÃO instalado'),
+                  'medição de áudio: ' + ('ok' if _has('pycaw') else 'pycaw NÃO instalado')]
     if not cfg.consoles:
         parts.append('nenhum console em "consoles" no config.json')
     return _result(True, '. '.join(parts) + '.', 'streaming' if r.streaming else None,
-                   {'agent_version': VERSION, 'chiaki_found': ch.available, 'vgamepad': _has('vgamepad'),
-                    'pillow': _has('PIL'), 'pycaw': _has('pycaw'), 'consoles_configured': sorted(cfg.consoles)})
+                   {'agent_version': VERSION, 'mode': link.kind, 'direct_available': direct_ok, 'chiaki_found': chiaki_ok,
+                    'vgamepad': _has('vgamepad'), 'aiortc': _has('aiortc'), 'pycaw': _has('pycaw'),
+                    'consoles_configured': sorted(cfg.consoles)})
 
 
 def _job(j) -> dict:
@@ -184,30 +203,17 @@ def _job(j) -> dict:
     return _result(False, f'Em andamento ({secs}s): {j.step}…', 'connecting', {'step': j.step, 'running': True})
 
 
-def _pair(t: Target, r: ConsoleRuntime) -> dict:
-    """O registro (PIN do console) é feito na interface do chiaki-ng; aqui só conferimos se já existe."""
-    reg = r.d.chiaki.registered(t.nickname) if t.nickname else None
-    if reg:
-        return _result(True, f'"{t.nickname}" está registrado no chiaki-ng deste PC.', 'idle')
-    how = ('No PC do agente: abra o chiaki-ng → adicione/registre o console com o PIN de Configurações → '
-           'Configurações da Conexão de Uso Remoto → Adicionar Dispositivo. Use como apelido a identificação do painel.')
-    if reg is None:
-        return _result(False, 'Não foi possível consultar os consoles do chiaki-ng. ' + how, 'unavailable')
-    return _result(False, f'"{t.nickname}" ainda não está registrado no chiaki-ng. ' + how, 'unavailable')
-
-
 def _test_video_audio(r: ConsoleRuntime) -> dict:
     if not r.streaming:
         return _result(False, 'Console não conectado: use "Conectar" (ou aguarde a preparação) antes do teste.', 'stopped')
-    pid = r.d.chiaki.pid
-    a = r.d.frame(pid)
+    a = r.link.frame()
     time.sleep(0.6)
-    b = r.d.frame(pid)
+    b = r.link.frame()
     mv = None
     if a.ok and b.ok:
         from .media import motion
         mv = motion(a, b)
-    peak, amsg = r.d.audio(pid, 1.5)
+    peak, amsg = r.link.audio_peak(1.5)
     video_ok = a.ok and b.ok
     audio_ok = peak is not None and peak > 0.001
     msg = 'Imagem: ' + (b.message if b.ok else a.message if not a.ok else b.message)
@@ -233,14 +239,13 @@ def _test_controls(cfg: AgentConfig, r: ConsoleRuntime) -> dict:
     btn = (cfg.control_test_button or '').strip().lower()
     if not btn:
         # Sem apertar nada não há como provar que o console recebe os comandos: não aprova.
-        return _result(False, 'Controle virtual DS4 ativo e chiaki-ng conectado, mas a resposta do console não foi medida. '
+        return _result(False, 'Controle ativo e console conectado, mas a resposta do console não foi medida. '
                        'Defina "control_test_button" no config.json (botão inofensivo na tela atual, ex.: "dpad_right" '
                        'no menu inicial) e teste de novo.', 'streaming')
-    pid = r.d.chiaki.pid
-    before = r.d.frame(pid)
+    before = r.link.frame()
     pad.press(btn, 0.15)
     time.sleep(0.9)
-    after = r.d.frame(pid)
+    after = r.link.frame()
     from .media import motion
     mv = motion(before, after)
     if mv is None:
@@ -255,7 +260,7 @@ def _discover(cfg: AgentConfig, body: dict, t: Target, r: ConsoleRuntime, discov
     route = t.route
     platform = t.platform
     if route == 'internet_psn':
-        reg = r.d.chiaki.registered(t.nickname) if t.nickname else None
+        reg = r.link.registered(t)
         base = ('Rota PSN: o console não responde à descoberta pela internet (limitação do Remote Play). ')
         if reg:
             return _result(True, base + f'"{t.nickname}" está registrado no chiaki-ng; a conexão será feita pela PSN.', 'idle')

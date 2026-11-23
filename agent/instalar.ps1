@@ -23,9 +23,14 @@ else {
 & $py -c "import vgamepad; p = vgamepad.VDS4Gamepad(); p.reset(); p.update(); print('OK: controle virtual DS4 criado com sucesso')" 2>$null
 if ($LASTEXITCODE -ne 0) { $pendente += 'Controle virtual não pôde ser criado (ViGEmBus ausente ou PC não reiniciado)' }
 
-Write-Host "`n== 3/5 chiaki-ng ==" -ForegroundColor Cyan
+Write-Host "`n== 3/5 Formas de conexão ==" -ForegroundColor Cyan
+Push-Location $here
+$psnOut = & $py -c "from consoleagent.links import DirectLink, load_profiles; d = DirectLink(); print('Remote Play direto (vários consoles por PC):', 'OK' if d.available else d.unavailable_reason); p = load_profiles() if d.available else None; print('  conta PSN vinculada:', ', '.join(p.usernames) if p and p.usernames else 'NENHUMA')"
+Pop-Location
+$psnOut | ForEach-Object { Write-Host $_ }
+$temPsn = -not ($psnOut -match 'NENHUMA')
 $chiaki = 'C:\Program Files\chiaki-ng\chiaki.exe'
-if (Test-Path $chiaki) { Write-Host "OK: $chiaki" } else { $pendente += 'Instalar o chiaki-ng (https://github.com/streetpea/chiaki-ng/releases)'; Write-Host 'chiaki-ng não encontrado' -ForegroundColor Yellow }
+if (Test-Path $chiaki) { Write-Host "chiaki-ng (opcional, console em outra rede): OK" } else { Write-Host 'chiaki-ng (opcional, só para console em outra rede): não instalado' -ForegroundColor DarkGray }
 
 Write-Host "`n== 4/5 config.json ==" -ForegroundColor Cyan
 $cfg = Join-Path $here 'config.json'
@@ -35,12 +40,7 @@ if (-not (Test-Path $cfg)) {
 }
 $c = Get-Content $cfg -Raw | ConvertFrom-Json
 if ("$($c.agent_token)" -like 'COLE_*' -or "$($c.api_to_agent_token)" -like 'COLE_*') { $pendente += 'Colar os tokens do painel em config.json (Agentes e dispositivos → Rotacionar tokens)' }
-if (-not $c.consoles) { $pendente += 'Preencher "consoles" em config.json (apelido no chiaki-ng, regist_key)' }
-else {
-  foreach ($p in $c.consoles.PSObject.Properties) {
-    if (-not $p.Value.regist_key) { $pendente += "consoles.$($p.Name): preencher regist_key (necessária para acordar o console nas rotas diretas)" }
-  }
-}
+if (-not $temPsn -and -not $c.consoles) { $pendente +='Remote Play direto: rodar "python -m consoleagent --psn-login" e parear cada console (painel → Testes → Pareamento com o PIN). Modo chiaki-ng: preencher "consoles" em config.json' }
 
 Write-Host "`n== 5/5 Consoles registrados no chiaki-ng ==" -ForegroundColor Cyan
 Push-Location $here

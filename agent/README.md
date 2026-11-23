@@ -25,7 +25,35 @@ Programa que roda no **PC ao lado do console** (ou num PC com acesso a ele) e fa
 Regras de honestidade: o agente **nunca simula**. "Pronto" só com imagem real capturada; o teste de imagem/áudio só
 aprova com imagem **e** som medidos; o teste de controles só aprova se a tela mudar depois de apertar um botão.
 
-## As 3 formas de ligar o agente ao console
+## Remote Play DIRETO — vários consoles no mesmo PC (recomendado para a locadora)
+
+Método **"Remote Play direto"** no painel. O agente fala o protocolo Remote Play com cada console, sem chiaki-ng:
+
+```
+                 ┌─ sessão PS4 nº1 ─► imagem/som ─► WebRTC ─► jogador 1
+PC (agente) ─────┼─ sessão PS4 nº2 ─► imagem/som ─► WebRTC ─► jogador 2
+                 └─ sessão PS5 nº3 ─► …
+comando do jogador 2 ─► API ─► agente ─► sessão nº2 ─► só o console nº2
+```
+- **Sem janelas, sem monitor, sem controle virtual do Windows**: cada console tem o seu controle dentro da sessão.
+- **Só rede local**: PC e consoles no mesmo roteador (cabo recomendado; fixe o IP de cada console no roteador).
+- Biblioteca **pyremoteplay** incorporada em `agent/pyremoteplay` (GPL-3.0, cópia modificada — ver `NOTICE.md`).
+
+Primeira configuração (uma vez por PC e uma vez por console):
+1. **Conta PSN** (uma vez por PC; a mesma conta logada nos consoles):
+   `..\backend\.venv\Scripts\python -m consoleagent --psn-login` → abra o link, faça login, cole o endereço final.
+2. **Registrar cada console** com o PIN (console LIGADO: Configurações → Configurações da Conexão de Uso Remoto →
+   Adicionar Dispositivo): pelo painel (**Testes → Pareamento**, com o PIN no campo) ou no terminal:
+   `python -m consoleagent --pair PS4-118 --host 192.168.0.20 --pin 12345678`.
+3. **Testar**: `python -m consoleagent --check PS4-118 --host 192.168.0.20` (modo direto é o padrão) e os testes do painel.
+
+O registro (chave e ID da conta, não a senha) fica em `agent/data/remoteplay_profiles.json` — segredo, fora do git.
+A chave de registro salva também serve para **acordar** o console: não precisa preencher `regist_key` neste modo.
+
+Status: compatibilidade atualizada e testada **sem console** (decodificação de vídeo/áudio, protocolo, criptografia,
+controle, WebRTC). **Falta validar com PS4/PS5 reais.** PS5 com firmware recente tem erro conhecido de versão (a corrigir).
+
+## As 3 rotas do modo chiaki-ng (console em outra rede, testes)
 
 A rota é escolhida no painel (**Consoles e conexão → rota de rede**):
 
@@ -76,8 +104,11 @@ confere ViGEmBus, controle virtual, chiaki-ng e `config.json`, e lista **o que a
 cd E:\LocadoraOnline\locaplay\agent
 ..\backend\.venv\Scripts\python -m consoleagent --list                                   # consoles registrados no chiaki-ng
 ..\backend\.venv\Scripts\python -m consoleagent --discover 192.168.0.20                   # procura o console
-..\backend\.venv\Scripts\python -m consoleagent --check PS4-118 --route lan --host 192.168.0.20
-..\backend\.venv\Scripts\python -m consoleagent --check PS4-118 --route internet_psn      # calibra psn_gui_steps
+..\backend\.venv\Scripts\python -m consoleagent --psn-login                              # Remote Play direto: conta PSN (1×)
+..\backend\.venv\Scripts\python -m consoleagent --pair PS4-118 --host 192.168.0.20 --pin 12345678
+..\backend\.venv\Scripts\python -m consoleagent --check PS4-118 --host 192.168.0.20                  # modo direto
+..\backend\.venv\Scripts\python -m consoleagent --check PS4-118 --mode chiaki --route lan --host 192.168.0.20
+..\backend\.venv\Scripts\python -m consoleagent --check PS4-118 --mode chiaki --route internet_psn   # calibra psn_gui_steps
 ```
 O `--check` faz o mesmo que o painel (acordar, conectar, imagem, áudio, controles) mostrando cada etapa.
 Logs do chiaki-ng: `agent\logs\` (sem senhas).
@@ -92,16 +123,17 @@ Painel → Consoles e conexão → (console) → Testes: **Verificar heartbeat �
 ## Vídeo no navegador (WebRTC)
 - Navegador → API (`/sessions/{id}/webrtc`, só com o token de controle da sessão) → agente → resposta. O vídeo vai **direto**
   do agente para o navegador; os comandos continuam passando pela API (que valida cada um).
-- A janela do chiaki-ng precisa ficar **visível** (nem minimizada nem coberta) — é ela que é capturada. Não use o PC do agente para outras coisas.
-- Áudio = toda a saída de som do PC (deixe só o chiaki-ng com som). `stream_audio: false` desliga.
+- **Remote Play direto:** a imagem e o som vêm da própria sessão de cada console (sem captura de tela, sem misturar sons).
+- **chiaki-ng:** a janela precisa ficar **visível** (nem minimizada nem coberta) e o áudio é toda a saída de som do PC.
+  `stream_audio: false` desliga o áudio.
 - Rede: `ice_servers` (agente) e `WEBRTC_ICE_SERVERS` (API) iguais. Para jogadores em 4G/NAT restritivo, configure um **TURN**.
 - Banda de subida do local do agente: ~3–6 Mbit/s por jogador em 720p.
 
 ## Vários consoles no mesmo PC
-O agente já gerencia **vários consoles** (um chiaki-ng, um controle virtual e uma conexão de vídeo por console; entradas em
-`consoles` no `config.json`). Limites a validar antes de colocar mais de um em produção:
-1. **Controles:** cada chiaki-ng pode enxergar **todos** os controles virtuais do PC — comandos de um jogador poderiam ir para os dois
-   consoles. Validar com 2 consoles; se acontecer, a saída é um PC (ou máquina virtual/usuário do Windows) por console.
+Use o **Remote Play direto** (acima). No modo chiaki-ng isso NÃO funciona: confirmado no código do chiaki-ng que cada
+instância lê e soma **todos** os controles do PC — comandos de um jogador iriam para todos os consoles.
+Limites que continuam valendo no modo direto:
+1. **Processador:** cada console = decodificar o vídeo do console + codificar o vídeo do navegador. Estimativa: 4–6 consoles em 720p.
 2. **Telas:** as janelas do chiaki-ng não podem se sobrepor (a captura é da região da tela). Ex.: 2 janelas de 1280×720 lado a lado num monitor/dummy HDMI 2560×1440.
 3. **Hardware:** cada console = decodificar o Remote Play + codificar o vídeo do navegador. Estimativa: 2–3 consoles em 720p num PC com CPU de 6+ núcleos.
 4. **Rede:** subida somada de todos os jogadores (ver acima). **PSN:** no PS4, a conexão via PSN só funciona com o console principal

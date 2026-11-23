@@ -578,7 +578,7 @@ HOST_RE = re.compile(r'^(?:\d{1,3}\.){3}\d{1,3}$|^[A-Za-z0-9.-]{1,120}$')
 
 @router.put('/consoles/{cid}/connection')
 def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(ADMIN)):
-    if body.method not in ('unconfigured', 'remote_play_chiaki', 'native_remote_play', 'hdmi_capture', 'simulated'):
+    if body.method not in ('unconfigured', 'remote_play_chiaki', 'remote_play_direct', 'native_remote_play', 'hdmi_capture', 'simulated'):
         raise unprocessable('validation_error', 'Método de conexão inválido.')
     errors = {}
     with tx() as conn:
@@ -589,12 +589,19 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
         info = method_info(body.method)
         if body.method != 'unconfigured' and info['platforms'] and c['platform_code'] not in info['platforms']:
             errors['method'] = f"{info['label']} não é aplicável a {c['platform_code']}."
-        if body.method in ('remote_play_chiaki', 'hdmi_capture', 'native_remote_play') and not body.agent_id:
+        if body.method in ('remote_play_chiaki', 'remote_play_direct', 'hdmi_capture', 'native_remote_play') and not body.agent_id:
             errors['agent_id'] = 'Selecione o agente local.'
         if body.network_route not in ('lan', 'internet_psn', 'internet_port_forward'):
             errors['network_route'] = 'Rota de rede inválida.'
+        elif body.method == 'remote_play_direct' and body.network_route != 'lan':
+            errors['network_route'] = 'O Remote Play direto funciona só na rede local: o PC do agente fica no mesmo lugar do console.'
         elif body.method != 'remote_play_chiaki' and body.network_route != 'lan':
             errors['network_route'] = 'Acesso pela internet só se aplica ao Remote Play.'
+        if body.method == 'remote_play_direct':
+            if not (body.internal_host and HOST_RE.match(body.internal_host)):
+                errors['internal_host'] = 'Informe o IP do console na rede local (fixe o IP no roteador).'
+            if not (body.console_identifier or '').strip():
+                errors['console_identifier'] = 'Informe a identificação do console (a mesma usada no config.json do agente, ex.: PS4-118).'
         if body.method == 'remote_play_chiaki':
             if body.network_route == 'lan':
                 if not (body.internal_host and HOST_RE.match(body.internal_host)) and body.discovery_mode == 'manual':

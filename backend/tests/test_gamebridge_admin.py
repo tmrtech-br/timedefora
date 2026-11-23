@@ -229,6 +229,26 @@ def test_rota_de_rede_remote_play_pela_internet(freeze):
     assert r.status_code == 422 and 'network_route' in r.json()['fields']
 
 
+def test_remote_play_direto_so_rede_local_com_ip_e_identificacao(freeze):
+    """Remote Play direto (vários consoles por PC): exige agente, IP local e identificação; não aceita internet."""
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    c = _new_console(api, 'PS4-31', 'PS4')
+    sw = _new_console(api, 'SW-31', 'SWITCH')
+    ag = api.post('/admin/agents', json={'name': 'pc-loja', 'host_name': 'pcl'}).json()
+    url = f"/admin/consoles/{c['id']}/connection"
+    base = {'method': 'remote_play_direct', 'agent_id': ag['id']}
+    r = api.put(url, json=base)
+    assert r.status_code == 422 and {'internal_host', 'console_identifier'} <= set(r.json()['fields'])
+    r = api.put(url, json={**base, 'internal_host': '192.168.0.31', 'console_identifier': 'PS4-31', 'network_route': 'internet_psn'})
+    assert r.status_code == 422 and 'rede local' in r.json()['fields']['network_route']
+    r = api.put(url, json={**base, 'internal_host': '192.168.0.31', 'console_identifier': 'PS4-31'})
+    assert r.status_code == 200, r.text
+    assert r.json()['connection']['method'] == 'remote_play_direct'                 # aceito pelo banco (migração 011)
+    r = api.put(f"/admin/consoles/{sw['id']}/connection", json={**base, 'internal_host': '192.168.0.32', 'console_identifier': 'SW-31'})
+    assert r.status_code == 422 and 'method' in r.json()['fields']                  # não aplicável a Switch
+
+
 def test_excluir_console_bloqueia_com_reserva_e_libera_codigo(world, freeze):
     freeze(at(2, 8, 0))
     api, _ = admin_api()

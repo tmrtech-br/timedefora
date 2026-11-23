@@ -38,50 +38,41 @@ def _require():
                                 f'(pip install -r requirements.txt). Detalhe: {e}') from e
 
 
-def make_video_track(get_pid: Callable[[], int | None], max_width: int = 1280):
+def make_video_track(get_frame: Callable[[], object], max_width: int = 1280):
+    """get_frame(): quadro atual do link — av.VideoFrame (Remote Play direto, já decodificado) ou matriz RGB
+    (captura da janela do chiaki-ng) — ou None enquanto não há imagem (envia tela preta)."""
     import av
     import numpy as np
     from aiortc import VideoStreamTrack
 
-    class WindowVideoTrack(VideoStreamTrack):
-        """Quadros reais da janela do chiaki-ng; tela preta enquanto a janela não existe."""
-
+    class ConsoleVideoTrack(VideoStreamTrack):
         def __init__(self):
             super().__init__()
             self._black = None
-            self._win, self._win_at = None, 0.0
             self.sent = deque(maxlen=90)            # instantes dos últimos quadros com imagem real (fps medido)
 
-        def _window(self):
-            now = time.monotonic()
-            if now - self._win_at > 1.0:            # posição da janela: 1×/s basta (procurar a cada quadro custa caro)
-                self._win, self._win_at = winutil.main_window(get_pid()), now
-            return self._win
-
         def _grab(self):
-            w = self._window()
-            arr = None
-            if w:
-                arr = winutil.grab_rgb(w.rect)      # rápido (mss); senão, Pillow
-                if arr is None:
-                    img = winutil.grab(w.rect)
-                    arr = np.asarray(img.convert('RGB')) if img is not None else None
-            if arr is None:
+            src = get_frame()
+            if src is None:
                 if self._black is None:
-                    self._black = np.zeros((720, 1280, 3), dtype=np.uint8)
+                    self._black = av.VideoFrame.from_ndarray(np.zeros((720, 1280, 3), dtype=np.uint8), format='rgb24')
                 return self._black, False
+            if isinstance(src, av.VideoFrame):      # quadro decodificado do console: sem conversão extra
+                if src.width > max_width:
+                    src = src.reformat(width=max_width, height=round(src.height * max_width / src.width) // 2 * 2)
+                return src, True
+            arr = src
             if arr.shape[1] > max_width:            # reduz por amostragem (barato) até caber na largura máxima
                 step = -(-arr.shape[1] // max_width)
                 arr = arr[::step, ::step]
             arr = np.ascontiguousarray(arr[: arr.shape[0] // 2 * 2, : arr.shape[1] // 2 * 2])   # yuv420 exige dimensões pares
-            return arr, True
+            return av.VideoFrame.from_ndarray(arr, format='rgb24'), True
 
         async def recv(self):
             pts, time_base = await self.next_timestamp()
-            arr, real = await asyncio.get_running_loop().run_in_executor(None, self._grab)
+            frame, real = await asyncio.get_running_loop().run_in_executor(None, self._grab)
             if real:
                 self.sent.append(time.monotonic())
-            frame = av.VideoFrame.from_ndarray(arr, format='rgb24')
             frame.pts, frame.time_base = pts, time_base
             return frame
 
@@ -90,7 +81,7 @@ def make_video_track(get_pid: Callable[[], int | None], max_width: int = 1280):
             recent = [t for t in self.sent if now - t <= 3]
             return round(len(recent) / 3, 1) if len(recent) > 1 else None
 
-    return WindowVideoTrack()
+    return ConsoleVideoTrack()
 
 
 def make_audio_track():
@@ -160,7 +151,8 @@ class WebRtcHub:
         self.max_width, self.audio = max_width, audio
         self.peers: dict[str, dict] = {}
 
-    async def answer(self, console_id: str, session_id: str, offer: dict, get_pid: Callable[[], int | None]) -> tuple[dict, str]:
+    async def answer(self, console_id: str, session_id: str, offer: dict, link) -> tuple[dict, str]:
+        """link: video_frame() para a imagem e audio_track() (áudio do próprio console) ou None (saída de som do PC)."""
         _require()
         from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
 
@@ -177,11 +169,11 @@ class WebRtcHub:
                 await self.close(console_id)
 
         await pc.setRemoteDescription(RTCSessionDescription(sdp=offer['sdp'], type=offer['type']))
-        entry['video'] = make_video_track(get_pid, self.max_width)
+        entry['video'] = make_video_track(link.video_frame, self.max_width)
         pc.addTrack(entry['video'])
         note = 'vídeo'
         if self.audio:
-            a = make_audio_track()
+            a = link.audio_track() or make_audio_track()
             if a is not None:
                 entry['audio'] = a
                 pc.addTrack(a)
