@@ -1,10 +1,12 @@
 'use client';
 import { useState } from 'react';
-import { Alert, Field, PageHeader } from '@/components/ui';
+import { Alert, Field, PageHeader, StatusPill } from '@/components/ui';
 import { del, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
 import { DataTable, useAction } from './common';
+
+const AGENT_STATUS: Record<string, string> = { online: 'online', offline: 'offline', degraded: 'instável', unknown: 'aguardando primeiro sinal' };
 
 export default function Agents() {
   const agents = useApi<Record<string, unknown>[]>('/admin/agents', 15000);
@@ -28,7 +30,7 @@ export default function Agents() {
         <Field label="Localização"><input maxLength={120} value={a.location} onChange={(e) => setA({ ...a, location: e.target.value })} /></Field>
         <label className="check"><input type="checkbox" checked={a.is_simulated} onChange={(e) => setA({ ...a, is_simulated: e.target.checked })} />Agente SIMULADO (desenvolvimento)</label></div>
         <button className="btn primary" onClick={() => run(async () => { setSecret(await post('/admin/agents', { ...a, endpoint_url: a.endpoint_url || null })); agents.reload(); }, 'Agente cadastrado.')}>Cadastrar</button>
-        <DataTable rows={agents.data} cols={[['Nome', (r) => String(r.name)], ['Host', (r) => String(r.host_name)], ['Status', (r) => String(r.status)], ['Simulado', (r) => (r.is_simulated ? 'sim' : 'não')],
+        <DataTable rows={agents.data} cols={[['Nome', (r) => String(r.name)], ['Host', (r) => String(r.host_name)], ['Status', (r) => <StatusPill status={String(r.status)} map={AGENT_STATUS} tone={({ online: 'green', offline: 'red', degraded: 'amber', unknown: '' } as Record<string, string>)[String(r.status)]} />], ['Simulado', (r) => (r.is_simulated ? 'sim' : 'não')],
           ['Último heartbeat', (r) => dateTime(r.last_heartbeat_at as string)], ['', (r) => <button className="btn sm" onClick={() => run(async () => setSecret(await post(`/admin/agents/${r.id}/rotate-credentials`)), 'Credenciais rotacionadas.')}>Rotacionar tokens</button>]]} />
       </section>
       <section className="card stack"><h2>Capturadoras HDMI</h2>
