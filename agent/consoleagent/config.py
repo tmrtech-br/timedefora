@@ -38,6 +38,7 @@ class AgentConfig:
     # ---- Vídeo no navegador (WebRTC). Use os MESMOS servidores STUN/TURN configurados na API (WEBRTC_ICE_SERVERS).
     ice_servers: list = field(default_factory=lambda: [{'urls': 'stun:stun.l.google.com:19302'}])
     video_max_width: int = 1280                # largura máxima enviada (menos = menos banda e CPU)
+    video_max_kbps: int = 6000                 # teto da taxa de vídeo ao navegador (o navegador regula abaixo disso)
     stream_audio: bool = True                  # áudio da saída de som do PC (biblioteca soundcard)
     extra: dict = field(default_factory=dict)
 

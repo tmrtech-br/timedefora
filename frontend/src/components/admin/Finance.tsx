@@ -4,7 +4,7 @@ import { Alert, PageHeader, StatusPill } from '@/components/ui';
 import { post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime, money, PAYMENT_STATUS } from '@/lib/format';
-import { DataTable, useAction } from './common';
+import { DataTable, useAction, useAsk } from './common';
 
 type R = Record<string, unknown>;
 type Sum = { revenue_by_game: R[]; revenue_by_console: R[]; gross_cents: number; refunds_cents: number; net_cents: number; chargebacks: number; minutes_played: number; sessions: number; no_shows: number };
@@ -20,6 +20,7 @@ export default function Finance() {
   const refunds = useApi<R[]>('/admin/refunds');
   const hooks = useApi<R[]>('/admin/webhooks');
   const { run, msg } = useAction();
+  const [ask, askDialog] = useAsk();
   return (
     <div className="stack">
       <PageHeader title="Financeiro e relatórios" />
@@ -35,11 +36,20 @@ export default function Finance() {
       </section>
       <section className="card"><h2>Pagamentos</h2><DataTable rows={pays.data} cols={[['Data', (r) => dateTime(String(r.created_at))], ['Reserva', (r) => String(r.reservation_code)], ['Usuário', (r) => String(r.username)],
         ['Provedor', (r) => String(r.provider)], ['Valor', (r) => money(Number(r.amount_cents))], ['Status', (r) => <StatusPill status={String(r.status)} map={PAYMENT_STATUS} />],
-        ['', (r) => <div className="row">{r.status === 'approved' && <button className="btn sm" onClick={() => { const v = prompt('Valor do reembolso em R$:', String(Number(r.amount_cents) / 100)); const reason = v && prompt('Motivo:'); if (v && reason) run(async () => { await post(`/admin/payments/${r.id}/refund`, { amount_cents: Math.round(Number(v.replace(',', '.')) * 100), reason }); pays.reload(); refunds.reload(); }, 'Reembolso processado.'); }}>Reembolsar</button>}
+        ['', (r) => <div className="row">{r.status === 'approved' && <button className="btn sm" onClick={async () => {
+          const max = Number(r.amount_cents) / 100;
+          const v = await ask({ title: `Reembolsar ${String(r.reservation_code)}?`, label: 'Valor do reembolso (R$)', inputMode: 'decimal', minLength: 1,
+            defaultValue: max.toFixed(2).replace('.', ','), confirm: 'Continuar', message: `Pago: ${money(Number(r.amount_cents))}. Para reembolso parcial, informe um valor menor.`,
+            validate: (x) => { const n = Number(x.replace(',', '.')); return !Number.isFinite(n) || n <= 0 ? 'Informe um valor maior que zero.' : n > max ? `O máximo é ${money(Number(r.amount_cents))}.` : null; } });
+          if (v === null) return;
+          const reason = await ask({ title: 'Motivo do reembolso', label: 'Motivo (registrado na auditoria)', danger: true, confirm: `Reembolsar R$ ${v}` });
+          if (reason) run(async () => { await post(`/admin/payments/${r.id}/refund`, { amount_cents: Math.round(Number(v.replace(',', '.')) * 100), reason }); pays.reload(); refunds.reload(); }, 'Reembolso processado.');
+        }}>Reembolsar</button>}
           {r.provider === 'mercadopago' && <button className="btn sm" onClick={() => run(async () => { await post(`/admin/payments/${r.id}/reconcile`); pays.reload(); }, 'Conciliado.')}>Conciliar</button>}</div>]]} /></section>
       <section className="card"><h2>Reembolsos</h2><DataTable rows={refunds.data} cols={[['Data', (r) => dateTime(String(r.created_at))], ['Reserva', (r) => String(r.reservation_code)], ['Valor', (r) => money(Number(r.amount_cents))], ['Motivo', (r) => String(r.reason)], ['Status', (r) => String(r.status)]]} /></section>
       <section className="card"><h2>Webhooks recebidos</h2><DataTable rows={hooks.data} cols={[['Recebido', (r) => dateTime(String(r.received_at))], ['Provedor', (r) => String(r.provider)], ['Recurso', (r) => String(r.resource_id)],
         ['Assinatura', (r) => (r.signature_valid ? 'válida' : 'inválida')], ['Processamento', (r) => String(r.processing_status)], ['Erro', (r) => String(r.error || '')]]} /></section>
+      {askDialog}
     </div>
   );
 }

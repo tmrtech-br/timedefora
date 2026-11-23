@@ -543,3 +543,9 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .kb-key { min-width: 110px; justify-content: center; font-family: 'Poppins', system-ui, sans-serif; font-weight: 600; }
 .kb-key.changed { border-color: rgba(177, 60, 255, .7); color: #e9c9ff; }
 .kb-key.listening { border-color: var(--cyan); color: var(--cyan); animation: pulse-urgent 1s ease-in-out infinite; }
+
+.mouse-hint kbd { min-width: 0; height: 18px; padding: 0 5px; font-size: 11px; border-bottom-width: 2px; }
+.mouse-hint.locked { top: 10px; bottom: auto; background: rgba(120, 45, 205, .78); opacity: .9; }
+/* listas com no máximo ~10 linhas visíveis (o resto rola, cabeçalho fixo) */
+.table-wrap.max10 { max-height: 560px; overflow-y: auto; }
+.table-wrap.max10 thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); }

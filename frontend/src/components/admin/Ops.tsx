@@ -4,7 +4,7 @@ import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { CANCEL_REQUEST_STATUS, dateTime, minutesLabel, money, QUEUE_STATUS, RESERVATION_STATUS, time } from '@/lib/format';
-import { DataTable, fromLocalInput, need, useAction } from './common';
+import { DataTable, fromLocalInput, need, useAction, useAsk } from './common';
 
 type R = Record<string, unknown>;
 const INPUT_LABEL: Record<string, string> = { gamepad: 'Controle', keyboard_mouse: 'Teclado e mouse' };
@@ -35,6 +35,7 @@ export function Reservations() {
   const list = useApi<R[]>(`/admin/reservations?status=${status}&q=${encodeURIComponent(q)}`, 15000);
   const crs = useApi<R[]>('/admin/cancellation-requests');
   const { run, msg } = useAction();
+  const [ask, askDialog] = useAsk();
   const [resched, setResched] = useState<{ id: string; start: string; reason: string } | null>(null);
   return (
     <div className="stack">
@@ -45,7 +46,11 @@ export function Reservations() {
       <section className="card"><DataTable rows={list.data} cols={[['Código', (r) => String(r.code)], ['Jogador', (r) => String(r.username)], ['Jogo / console', (r) => `${r.game_title} · ${r.console_name}`],
         ['Período', (r) => `${dateTime(String(r.starts_at))}–${time(String(r.ends_at))}`], ['Total', (r) => money(Number(r.total_cents))], ['Status', (r) => <StatusPill status={String(r.status)} map={RESERVATION_STATUS} />],
         ['Ações', (r) => ['pending_payment', 'confirmed', 'active', 'needs_resolution'].includes(String(r.status)) ? <div className="row">
-          <button className="btn sm danger" onClick={() => { const reason = prompt('Justificativa (o pagamento será reembolsado):'); if (reason) run(async () => { await post(`/admin/reservations/${r.id}/cancel`, { reason, refund: true }); list.reload(); }, 'Cancelada e reembolsada.'); }}>Cancelar</button>
+          <button className="btn sm danger" onClick={async () => {
+            const reason = await ask({ title: `Cancelar a reserva ${r.code}?`, label: 'Justificativa', danger: true, confirm: 'Cancelar e reembolsar',
+              message: <>O pagamento de <b>{String(r.username)}</b> será <b>reembolsado</b> e o horário liberado. A justificativa fica na auditoria.</> });
+            if (reason) run(async () => { await post(`/admin/reservations/${r.id}/cancel`, { reason, refund: true }); list.reload(); }, 'Cancelada e reembolsada.');
+          }}>Cancelar</button>
           {['confirmed', 'needs_resolution'].includes(String(r.status)) && <button className="btn sm" onClick={() => setResched({ id: String(r.id), start: '', reason: '' })}>Remarcar</button>}</div> : null]]} /></section>
       {resched && <section className="card row"><input className="btn" type="datetime-local" value={resched.start} onChange={(e) => setResched({ ...resched, start: e.target.value })} />
         <input className="btn" placeholder="Justificativa" value={resched.reason} onChange={(e) => setResched({ ...resched, reason: e.target.value })} />
@@ -53,8 +58,16 @@ export function Reservations() {
       <section className="card"><h2>Solicitações de cancelamento</h2>
         <DataTable rows={crs.data} empty="Nenhuma solicitação." cols={[['Reserva', (r) => String(r.code)], ['Jogador', (r) => String(r.username)], ['Início', (r) => dateTime(String(r.starts_at))],
           ['Motivo', (r) => String(r.reason)], ['Status', (r) => <StatusPill status={String(r.status)} map={CANCEL_REQUEST_STATUS} tone={({ requested: 'amber', approved: 'green', denied: 'red' } as Record<string, string>)[String(r.status)]} />], ['', (r) => r.status === 'requested' ? <div className="row">
-            <button className="btn sm primary" onClick={() => { const notes = prompt('Observação (aprovação com reembolso integral):'); if (notes) run(async () => { await post(`/admin/cancellation-requests/${r.id}/decide`, { approve: true, notes }); crs.reload(); list.reload(); }, 'Aprovada.'); }}>Aprovar</button>
-            <button className="btn sm danger" onClick={() => { const notes = prompt('Motivo da negativa:'); if (notes) run(async () => { await post(`/admin/cancellation-requests/${r.id}/decide`, { approve: false, notes }); crs.reload(); }, 'Negada.'); }}>Negar</button></div> : String(r.decision_notes || '')]]} /></section>
+            <button className="btn sm primary" onClick={async () => {
+              const notes = await ask({ title: `Aprovar o cancelamento de ${r.code}?`, label: 'Observação para o cliente', confirm: 'Aprovar e reembolsar',
+                message: 'A reserva é cancelada com reembolso integral e o cliente é avisado.' });
+              if (notes) run(async () => { await post(`/admin/cancellation-requests/${r.id}/decide`, { approve: true, notes }); crs.reload(); list.reload(); }, 'Aprovada.');
+            }}>Aprovar</button>
+            <button className="btn sm danger" onClick={async () => {
+              const notes = await ask({ title: `Negar o cancelamento de ${r.code}?`, label: 'Motivo da negativa (o cliente verá)', danger: true, confirm: 'Negar' });
+              if (notes) run(async () => { await post(`/admin/cancellation-requests/${r.id}/decide`, { approve: false, notes }); crs.reload(); }, 'Negada.');
+            }}>Negar</button></div> : String(r.decision_notes || '')]]} /></section>
+      {askDialog}
     </div>
   );
 }
@@ -65,6 +78,7 @@ export function Sessions() {
   const all = useApi<R[]>('/admin/incidents?open_only=false');
   const resolved = all.data ? all.data.filter((r) => r.resolved_at) : null;
   const { run, msg, busy } = useAction();
+  const [ask, askDialog] = useAsk();
   const [i, setI] = useState({ description: '', kind: 'other' });
   const [res, setRes] = useState<{ id: string; label: string; compensation: string; notes: string } | null>(null);
   return (
@@ -74,8 +88,17 @@ export function Sessions() {
       <section className="card"><DataTable rows={s.data} empty="Nenhuma sessão ativa." cols={[['Jogador', (r) => String(r.username)], ['Jogo / console', (r) => `${r.title} · ${r.console_name}`],
         ['Término', (r) => time(String(r.contract_ends_at))], ['Entrada', (r) => INPUT_LABEL[String(r.input_device)] || '—'], ['Método', (r) => String(r.adapter_method)],
         ['', (r) => <div className="row">
-          <button className="btn sm danger" onClick={() => { const reason = prompt('Justificativa do encerramento:'); if (reason) run(async () => { await post(`/admin/sessions/${r.id}/terminate`, { reason, compensation: 'none' }); s.reload(); }, 'Sessão encerrada.'); }}>Encerrar</button>
-          <button className="btn sm" onClick={() => { const reason = prompt('Falha operacional — descreva (será registrada compensação por reembolso):'); if (reason) run(async () => { await post(`/admin/sessions/${r.id}/terminate`, { reason, compensation: 'refund' }); s.reload(); inc.reload(); }, 'Encerrada por falha; incidente aberto.'); }}>Falha → compensar</button></div>]]} /></section>
+          <button className="btn sm danger" onClick={async () => {
+            const reason = await ask({ title: `Encerrar a sessão de ${String(r.username)}?`, label: 'Justificativa do encerramento', danger: true, confirm: 'Encerrar sessão', minLength: 5,
+              message: 'O controle é revogado na hora, sem compensação. Use "Falha → compensar" se o problema foi da plataforma.' });
+            if (reason) run(async () => { await post(`/admin/sessions/${r.id}/terminate`, { reason, compensation: 'none' }); s.reload(); }, 'Sessão encerrada.');
+          }}>Encerrar</button>
+          <button className="btn sm" onClick={async () => {
+            const reason = await ask({ title: 'Encerrar por falha operacional?', label: 'Descreva a falha', confirm: 'Encerrar e compensar', minLength: 5,
+              message: 'A sessão é encerrada, um incidente é aberto e fica registrada compensação por reembolso ao cliente.' });
+            if (reason) run(async () => { await post(`/admin/sessions/${r.id}/terminate`, { reason, compensation: 'refund' }); s.reload(); inc.reload(); }, 'Encerrada por falha; incidente aberto.');
+          }}>Falha → compensar</button></div>]]} /></section>
+      {askDialog}
       <section className="card stack"><h2>Incidentes</h2>
         <div className="row"><select className="btn" value={i.kind} onChange={(e) => setI({ ...i, kind: e.target.value })}><option value="console_failure">Falha de console</option><option value="stream_failure">Falha de stream</option><option value="agent_offline">Agente offline</option><option value="platform_delay">Atraso da plataforma</option><option value="other">Outro</option></select>
           <input className="btn" style={{ flex: 1 }} placeholder="Descrição" value={i.description} onChange={(e) => setI({ ...i, description: e.target.value })} />

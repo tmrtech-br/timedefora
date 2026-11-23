@@ -21,7 +21,7 @@ function Sessoes() {
       <ErrorBox error={res.error} onRetry={res.reload} />
       <h2>Reservas</h2>
       {!res.data ? <Skeleton h={160} /> : !res.data.length ? <Empty>Nenhuma reserva ainda. <Link className="link-purple" href="/jogos">Ver catálogo</Link></Empty> : (
-        <div className="table-wrap card"><table className="table"><thead><tr><th>Reserva</th><th>Jogo</th><th>Período</th><th>Valor</th><th>Status</th><th /></tr></thead>
+        <div className="table-wrap card max10"><table className="table"><thead><tr><th>Reserva</th><th>Jogo</th><th>Período</th><th>Valor</th><th>Status</th><th /></tr></thead>
           <tbody>{res.data.map((r) => (
             <tr key={r.id}><td>{r.code}</td><td>{r.game.title}<div className="small dim">{r.console_name}</div></td>
               <td>{dateTime(r.starts_at)} – {time(r.ends_at)}<div className="small dim">{r.mode === 'queue' ? 'início estimado' : 'horário fixo'}</div></td>
@@ -38,7 +38,7 @@ function Sessoes() {
       )}
       <h2 style={{ marginTop: 24 }}>Histórico de sessões</h2>
       {!hist.data ? <Skeleton h={100} /> : !hist.data.length ? <Empty>Nenhuma sessão jogada.</Empty> : (
-        <div className="table-wrap card"><table className="table"><thead><tr><th>Jogo</th><th>Contratado</th><th>Primeira conexão</th><th>Tempo usado</th><th>Encerramento</th></tr></thead>
+        <div className="table-wrap card max10"><table className="table"><thead><tr><th>Jogo</th><th>Contratado</th><th>Primeira conexão</th><th>Tempo usado</th><th>Encerramento</th></tr></thead>
           <tbody>{hist.data.map((h) => (
             <tr key={h.id}><td>{h.title}<div className="small dim">{h.code}</div></td><td>{dateTime(h.contract_starts_at)} – {time(h.contract_ends_at)}</td>
               <td>{dateTime(h.first_connected_at)}</td><td>{duration(h.seconds_used)}</td><td>{h.end_reason ? END[h.end_reason] || h.end_reason : SESSION_STATUS[h.status] || h.status}</td></tr>

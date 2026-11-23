@@ -39,8 +39,10 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
         try:
             r = httpx.post(url, json={'method': self.method, 'target': self._target(ref), **(payload or {})},
                            headers={'Authorization': f'Bearer {ref.agent_token}'}, timeout=timeout or self.timeout)
-        except httpx.HTTPError as e:
-            raise AdapterError('agent_unreachable', f'ConsoleAgent inacessível: {e.__class__.__name__}')
+        except httpx.TimeoutException:
+            raise AdapterError('agent_unreachable', 'O console demorou para responder (pode estar reconectando). Tente de novo em alguns segundos.')
+        except httpx.HTTPError:
+            raise AdapterError('agent_unreachable', 'Não foi possível falar com o computador que controla o console. A equipe foi avisada; tente de novo em instantes.')
         if r.status_code >= 400:
             try:
                 body = r.json()

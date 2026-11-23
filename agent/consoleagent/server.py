@@ -51,7 +51,7 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
     expected = f'Bearer {cfg.api_to_agent_token}'.encode()
     runtimes: dict[str, ConsoleRuntime] = {}
     kinds: dict[str, str] = {}
-    hub = WebRtcHub(cfg.ice_servers, int(cfg.video_max_width), bool(cfg.stream_audio))
+    hub = WebRtcHub(cfg.ice_servers, int(cfg.video_max_width), bool(cfg.stream_audio), int(cfg.video_max_kbps))
     app.state.webrtc = hub
     discover = deps.discover if deps else discover_fn
 

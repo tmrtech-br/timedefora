@@ -143,13 +143,28 @@ def make_audio_track():
     return LoopbackAudioTrack()
 
 
+def set_bitrate(max_kbps: int) -> None:
+    """A biblioteca limita o vídeo a 1,5 Mbps (VP8) / 3 Mbps (H.264) — pouco para 720p de jogo. Ajusta teto e partida;
+    o navegador continua regulando dentro desse intervalo conforme a rede do jogador (controle de congestionamento)."""
+    try:
+        from aiortc.codecs import h264, vpx
+    except ImportError:
+        return
+    top = max(1000, int(max_kbps)) * 1000
+    for mod in (vpx, h264):
+        mod.MAX_BITRATE = top
+        mod.DEFAULT_BITRATE = min(top, 2_500_000)
+        mod.MIN_BITRATE = min(mod.MIN_BITRATE, top)
+
+
 class WebRtcHub:
     """Conexões WebRTC ativas: console_id → (session_id, conexão, faixas)."""
 
-    def __init__(self, ice_servers: list | None = None, max_width: int = 1280, audio: bool = True):
+    def __init__(self, ice_servers: list | None = None, max_width: int = 1280, audio: bool = True, max_kbps: int = 6000):
         self.ice = ice_servers or DEFAULT_ICE
         self.max_width, self.audio = max_width, audio
         self.peers: dict[str, dict] = {}
+        set_bitrate(max_kbps)
 
     async def answer(self, console_id: str, session_id: str, offer: dict, link) -> tuple[dict, str]:
         """link: video_frame() para a imagem e audio_track() (áudio do próprio console) ou None (saída de som do PC)."""

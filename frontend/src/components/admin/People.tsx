@@ -7,7 +7,8 @@ import { patch, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
-import { DataTable, useAction } from './common';
+import { DataTable, useAction, useAsk } from './common';
+const DR_STATUS_PT = { in_progress: 'Em andamento', completed: 'Concluir', rejected: 'Recusar' } as const;
 
 type R = Record<string, unknown>;
 
@@ -16,6 +17,7 @@ export function Users() {
   const { me } = useAuth();
   const list = useApi<R[]>(`/admin/users?q=${encodeURIComponent(q)}`);
   const { run, msg } = useAction();
+  const [ask, askDialog] = useAsk();
   const sup = me?.roles.includes('superadmin');
   return (
     <div className="stack">
@@ -25,9 +27,15 @@ export function Users() {
       <section className="card"><DataTable rows={list.data} cols={[['Usuário', (r) => String(r.username)], ['Nome', (r) => String(r.full_name)], ['E-mail', (r) => String(r.email)],
         ['Papéis', (r) => (r.roles as string[]).join(', ')], ['Status', (r) => String(r.status)], ['Último acesso', (r) => dateTime(r.last_login_at as string)],
         ['Ações', (r) => <div className="row">
-          <button className="btn sm" onClick={() => { const reason = prompt(r.status === 'suspended' ? 'Motivo da reativação:' : 'Motivo da suspensão:'); if (reason) run(async () => { await post(`/admin/users/${r.id}/suspension`, { suspend: r.status !== 'suspended', reason }); list.reload(); }, 'Atualizado.'); }}>{r.status === 'suspended' ? 'Reativar' : 'Suspender'}</button>
+          <button className="btn sm" onClick={async () => {
+            const susp = r.status !== 'suspended';
+            const reason = await ask({ title: `${susp ? 'Suspender' : 'Reativar'} ${String(r.username)}?`, label: susp ? 'Motivo da suspensão' : 'Motivo da reativação',
+              danger: susp, confirm: susp ? 'Suspender' : 'Reativar', message: susp ? 'A pessoa perde o acesso e as sessões abertas são encerradas.' : undefined });
+            if (reason) run(async () => { await post(`/admin/users/${r.id}/suspension`, { suspend: susp, reason }); list.reload(); }, 'Atualizado.');
+          }}>{r.status === 'suspended' ? 'Reativar' : 'Suspender'}</button>
           {sup && <select className="btn sm" value="" onChange={(e) => { const [g, role] = e.target.value.split(':'); if (role) run(async () => { await post(`/admin/users/${r.id}/roles`, { role, grant: g === '+' }); list.reload(); }, 'Papéis atualizados.'); }}>
             <option value="">Papéis…</option>{['operator', 'admin', 'superadmin'].map((x) => <option key={x} value={`${(r.roles as string[]).includes(x) ? '-' : '+'}:${x}`}>{(r.roles as string[]).includes(x) ? 'Remover' : 'Conceder'} {x}</option>)}</select>}</div>]]} /></section>
+      {askDialog}
     </div>
   );
 }
@@ -76,13 +84,18 @@ export function Support() {
 export function Lgpd() {
   const list = useApi<R[]>('/admin/data-requests');
   const { run, msg } = useAction();
+  const [ask, askDialog] = useAsk();
   return (
     <div className="stack">
       <PageHeader title="Solicitações LGPD" subtitle="Exclusão anonimiza dados pessoais e preserva registros financeiros obrigatórios." />
       {msg}
       <section className="card"><DataTable rows={list.data} cols={[['Usuário', (r) => String(r.username)], ['Tipo', (r) => String(r.request_type)], ['Detalhes', (r) => String(r.details)],
         ['Status', (r) => String(r.status)], ['Criada', (r) => dateTime(String(r.created_at))],
-        ['', (r) => ['open', 'in_progress'].includes(String(r.status)) ? <div className="row">{['in_progress', 'completed', 'rejected'].map((s) => <button key={s} className="btn sm" onClick={() => { const resolution = prompt('Registro da resolução:'); if (resolution) run(async () => { await post(`/admin/data-requests/${r.id}/resolve`, { status: s, resolution }); list.reload(); }, 'Atualizado.'); }}>{s}</button>)}</div> : String(r.resolution || '')]]} /></section>
+        ['', (r) => ['open', 'in_progress'].includes(String(r.status)) ? <div className="row">{(['in_progress', 'completed', 'rejected'] as const).map((s) => <button key={s} className="btn sm" onClick={async () => {
+          const resolution = await ask({ title: `Solicitação LGPD: ${DR_STATUS_PT[s]}`, label: 'Registro da resolução', confirm: DR_STATUS_PT[s], danger: s === 'rejected' });
+          if (resolution) run(async () => { await post(`/admin/data-requests/${r.id}/resolve`, { status: s, resolution }); list.reload(); }, 'Atualizado.');
+        }}>{DR_STATUS_PT[s]}</button>)}</div> : String(r.resolution || '')]]} /></section>
+      {askDialog}
     </div>
   );
 }
@@ -155,6 +168,7 @@ export function Settings() {
   const [vals, setVals] = useState<Record<string, string>>({});
   const [p, setP] = useState({ kind: 'cancellation', version: '', title: '', body: '' });
   const { run, msg } = useAction();
+  const [ask, askDialog] = useAsk();
   const parse = (k: string, raw: string) => { const d = s.data!.defaults[k]; return typeof d === 'boolean' ? raw === 'true' : typeof d === 'number' ? Number(raw) : Array.isArray(d) ? raw.split(',').map((x) => Number(x.trim())) : raw; };
   return (
     <div className="stack">
@@ -164,7 +178,12 @@ export function Settings() {
       <section className="card"><DataTable rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
         ['O que é', (r) => <span className="small muted" style={{ display: 'block', maxWidth: 380 }}>{SETTING_HELP[String(r.k)] || 'Ajuste avançado do sistema.'}</span>],
         ['Valor', (r) => <input className="btn sm" style={{ width: 260, maxWidth: '100%' }} value={vals[String(r.k)] ?? (Array.isArray(r.v) ? (r.v as number[]).join(',') : String(r.v))} onChange={(e) => setVals({ ...vals, [String(r.k)]: e.target.value })} />],
-        ['', (r) => <button className="btn sm" disabled={vals[String(r.k)] === undefined} onClick={() => { const reason = prompt('Motivo da alteração:') || ''; run(async () => { await put(`/admin/settings/${r.k}`, { value: parse(String(r.k), vals[String(r.k)]), reason }); s.reload(); }, 'Configuração salva.'); }}>Salvar</button>]]} /></section>
+        ['', (r) => <button className="btn sm" disabled={vals[String(r.k)] === undefined} onClick={async () => {
+          const reason = await ask({ title: `Alterar "${String(r.k)}"?`, label: 'Motivo da alteração', minLength: 1, confirm: 'Salvar',
+            message: <>Novo valor: <code>{vals[String(r.k)]}</code>. A alteração vale na hora e fica na auditoria.</> });
+          if (reason !== null) run(async () => { await put(`/admin/settings/${r.k}`, { value: parse(String(r.k), vals[String(r.k)]), reason }); s.reload(); }, 'Configuração salva.');
+        }}>Salvar</button>]]} /></section>
+      {askDialog}
       <section className="card stack"><h2>Políticas (termos, privacidade, cancelamento)</h2>
         <div className="grid3"><Field label="Tipo"><select value={p.kind} onChange={(e) => setP({ ...p, kind: e.target.value })}><option value="terms">Termos</option><option value="privacy">Privacidade</option><option value="cancellation">Cancelamento</option></select></Field>
           <Field label="Versão"><input maxLength={20} value={p.version} onChange={(e) => setP({ ...p, version: e.target.value })} /></Field><Field label="Título"><input maxLength={200} value={p.title} onChange={(e) => setP({ ...p, title: e.target.value })} /></Field></div>

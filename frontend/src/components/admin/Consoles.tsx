@@ -5,7 +5,7 @@ import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, get, patch, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
-import { DataTable, useAction } from './common';
+import { DataTable, useAction, useConfirm } from './common';
 import { toast } from '@/components/Toaster';
 
 type Method = { method: string; label: string; status: string; applicable: boolean; operational: boolean; guide: string; needs: string[] };
@@ -41,6 +41,7 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
   const [statusReason, setStatusReason] = useState('');
   const [hours, setHours] = useState(c.hours || []);
   const { run, msg, busy } = useAction();
+  const [sure, sureDialog] = useConfirm();
   useEffect(() => {
     const x = c.connection;
     setCfg({ method: x.method, agent_id: x.agent_id || '', internal_host: x.internal_host || '', console_identifier: x.console_identifier || '', discovery_mode: x.discovery_mode,
@@ -61,6 +62,7 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
   return (
     <div className="stack">
       {msg}
+      {sureDialog}
       <section className="card">
         <div className="spread"><h2 style={{ margin: 0 }}>{c.name} <span className="small muted">{c.code} · {c.platform_code}</span></h2>
           <div className="row"><StatusPill status={c.status} />{c.is_published ? <span className="pill green">publicado</span> : <span className="pill amber">não publicado</span>}</div></div>
@@ -142,8 +144,11 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
         </div>
         <div className="spread"><h3 style={{ margin: 0 }}>Histórico de testes</h3>
           <button className="btn sm" disabled={busy || !c.tests?.length} title="Apaga só o histórico exibido; as validações continuam valendo"
-            onClick={() => { if (confirm('Limpar o histórico de testes deste console? As validações (vídeo, áudio, controle, heartbeat) continuam valendo.'))
-              run(async () => { await del(`/admin/consoles/${c.id}/tests`); onChange(); }, 'Histórico de testes limpo.'); }}>
+            onClick={async () => {
+              if (await sure({ title: 'Limpar o histórico de testes?', confirm: 'Limpar histórico',
+                message: 'Apaga só a lista de testes exibida. As validações (vídeo, áudio, controle, heartbeat) continuam valendo e a exclusão fica na auditoria.' }))
+                run(async () => { await del(`/admin/consoles/${c.id}/tests`); onChange(); }, 'Histórico de testes limpo.');
+            }}>
             <Eraser size={14} aria-hidden />Limpar testes</button></div>
         <DataTable rows={c.tests as unknown as Record<string, unknown>[]} empty="Nenhum teste executado." cols={[['Teste', (r) => String(r.test_type)], ['Resultado', (r) => <StatusPill status={String(r.result)} />],
           ['Simulado', (r) => (r.simulated ? 'sim' : 'não')], ['Mensagem', (r) => String(r.message)], ['Quando', (r) => dateTime(String(r.run_at))]]} />
@@ -157,7 +162,11 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
           <Field label="Justificativa"><input maxLength={500} value={statusReason} onChange={(e) => setStatusReason(e.target.value)} /></Field>
           <div className="row">
             <button className="btn" disabled={busy || statusReason.length < 3} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'maintenance', reason: statusReason }); onChange(); }, 'Em manutenção.')}>Manutenção</button>
-            <button className="btn danger" disabled={busy || statusReason.length < 3} onClick={() => confirm('Cancelar e reembolsar as reservas afetadas?') && run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'maintenance', reason: statusReason, resolution: 'cancel_and_refund' }); onChange(); }, 'Em manutenção; reservas afetadas canceladas e reembolsadas.')}>Manutenção + reembolsar afetados</button>
+            <button className="btn danger" disabled={busy || statusReason.length < 3} onClick={async () => {
+              if (await sure({ title: 'Manutenção com reembolso?', danger: true, confirm: 'Cancelar e reembolsar',
+                message: 'O console entra em manutenção e todas as reservas afetadas são canceladas e reembolsadas. Os clientes são avisados.' }))
+                run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'maintenance', reason: statusReason, resolution: 'cancel_and_refund' }); onChange(); }, 'Em manutenção; reservas afetadas canceladas e reembolsadas.');
+            }}>Manutenção + reembolsar afetados</button>
             <button className="btn" disabled={busy || statusReason.length < 3} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'online', reason: statusReason }); onChange(); }, 'Retornou à operação.')}>Retornar à operação</button>
           </div>
         </section>

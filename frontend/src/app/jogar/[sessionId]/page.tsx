@@ -130,7 +130,11 @@ function Player() {
     const mouseUp = (e: MouseEvent) => { const a = codeToAction[`Mouse${e.button}`]; if (a && (document.pointerLockElement || onScreen(e))) press(a, false); };
     const mouseMove = (e: MouseEvent) => { if (document.pointerLockElement === screen.current) { mouse.dx += e.movementX; mouse.dy += e.movementY; } };
     const noMenu = (e: MouseEvent) => { if (onScreen(e)) e.preventDefault(); };
-    const lockChange = () => setLocked(document.pointerLockElement === screen.current);
+    const lockChange = () => {
+      const on = document.pointerLockElement === screen.current;
+      setLocked(on);
+      if (on) toast('ok', 'Mouse preso no jogo. Aperte Esc para liberar o cursor.');
+    };
     // Perder o foco da aba solta tudo (senão o personagem continuaria andando sozinho).
     const blur = () => { held.clear(); applyKeySticks(); };
     window.addEventListener('keydown', keyDown); window.addEventListener('keyup', keyUp);
@@ -215,7 +219,9 @@ function Player() {
                 : <div className="sim-screen"><Gamepad2 size={64} aria-hidden /><h2>{s.simulated ? 'Stream simulado' : 'Sua partida está quase pronta…'}</h2>
                   {s.simulated && <p>Entrada: {inputStatus}</p>}
                   {!token && <p>Esta aba não tem o acesso ao controle. <button className="btn sm" onClick={() => router.push('/sessoes')}>Reconectar pela sala de espera</button></p>}</div>}
-              {bindings.mouse_look && token && !locked && vstats && <span className="mouse-hint">Clique na imagem para usar o mouse como câmera · Esc solta</span>}
+              {bindings.mouse_look && token && vstats && (locked
+                ? <span className="mouse-hint locked" role="status">🖱️ Mouse preso no jogo — aperte <kbd>Esc</kbd> para liberar</span>
+                : <span className="mouse-hint">Clique na imagem para usar o mouse como câmera · <kbd>Esc</kbd> libera</span>)}
             </div>
             {s.reservation_id && <SupportPanel open={side === 'support'} onClose={() => { setSide(null); screen.current?.focus(); }} reservationId={s.reservation_id}
               game={s.game} consoleName={s.console} onStaffReply={setUnread} />}
