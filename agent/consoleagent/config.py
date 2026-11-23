@@ -35,6 +35,10 @@ class AgentConfig:
     stop_chiaki_after_session: bool = False    # padrão: mantém a conexão para o próximo jogador
     require_game_script: bool = False          # True: sem roteiro de abertura do jogo a preparação falha
     control_test_button: str = ''              # botão "inofensivo" apertado no teste de controles (vazio = teste não aprova)
+    # ---- Vídeo no navegador (WebRTC). Use os MESMOS servidores STUN/TURN configurados na API (WEBRTC_ICE_SERVERS).
+    ice_servers: list = field(default_factory=lambda: [{'urls': 'stun:stun.l.google.com:19302'}])
+    video_max_width: int = 1280                # largura máxima enviada (menos = menos banda e CPU)
+    stream_audio: bool = True                  # áudio da saída de som do PC (biblioteca soundcard)
     extra: dict = field(default_factory=dict)
 
     @property

@@ -2,6 +2,7 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Gamepad2, Headphones, Maximize, Power, Unplug } from 'lucide-react';
+import ConsoleVideo, { type VideoStats } from '@/components/ConsoleVideo';
 import RequireAuth from '@/components/RequireAuth';
 import { GAMEPAD_BUTTONS } from '@/components/InputTester';
 import { Alert, ErrorBox, Skeleton } from '@/components/ui';
@@ -18,6 +19,9 @@ const KEYMAP: Record<string, string> = { Space: 'cross', KeyE: 'circle', KeyQ: '
   ArrowUp: 'dpad_up', ArrowDown: 'dpad_down', ArrowLeft: 'dpad_left', ArrowRight: 'dpad_right', Enter: 'options' };
 // Botões do controle (índices do "standard mapping") que nunca são enviados ao console.
 const BLOCKED_PAD: Record<number, string> = { 16: 'PS', 17: 'Touchpad' };
+// "standard mapping": axes[0..3] = analógico esquerdo X/Y, direito X/Y (Y negativo = para cima, igual ao DS4).
+const AXES = ['left_x', 'left_y', 'right_x', 'right_y'] as const;
+const DEADZONE = 0.12;
 
 function Player() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -29,6 +33,8 @@ function Player() {
   const [sent, setSent] = useState(0);
   const screen = useRef<HTMLDivElement>(null);
   const prev = useRef<boolean[]>([]);
+  const axes = useRef<Record<string, { v: number; t: number }>>({});
+  const [vstats, setVstats] = useState<VideoStats | null>(null);
   const shareOn = useFeatures()?.share_button_enabled === true;   // Share bloqueado por padrão (Parâmetros)
   const lastBlock = useRef<Record<string, number>>({});
   /** Avisa (no máximo a cada 4 s por botão) que o botão está bloqueado por segurança. */
@@ -61,6 +67,16 @@ function Player() {
     let raf = 0;
     const loop = () => {
       const pad = (navigator.getGamepads?.() || []).find(Boolean);
+      if (pad) {
+        // Analógicos: zona morta, valor arredondado e no máximo ~15 envios/s por eixo (só quando muda).
+        const t = performance.now();
+        AXES.forEach((name, i) => {
+          const raw = pad.axes[i] ?? 0;
+          const v = Math.abs(raw) < DEADZONE ? 0 : Math.round(raw * 50) / 50;
+          const a = axes.current[name] || { v: 0, t: 0 };
+          if (v !== a.v && (t - a.t > 66 || v === 0)) { axes.current[name] = { v, t }; send({ type: 'axis', name, value: v }); }
+        });
+      }
       if (pad) pad.buttons.forEach((b, i) => {
         const changed = b.pressed !== prev.current[i];
         if (changed && b.pressed && BLOCKED_PAD[i]) warnBlocked(BLOCKED_PAD[i]);
@@ -86,10 +102,13 @@ function Player() {
       {warn && !ended && <Alert kind="info">{warn}</Alert>}
       {ended && <Alert kind="ok">Sessão encerrada. O controle do console foi revogado pelo servidor.</Alert>}
       <div className="player" ref={screen} tabIndex={0} aria-label="Tela do jogo">
-        <div className="sim-screen"><Gamepad2 size={64} aria-hidden /><h2>{s.simulated ? 'Stream simulado' : 'Conectando ao stream…'}</h2>
-          <p>Entrada: {inputStatus} · comandos enviados: {sent}</p>
-          {!token && !ended && <p>Token de controle ausente nesta aba. <button className="btn sm" onClick={() => router.push(`/sessoes`)}>Reconectar pela sala de espera</button></p>}</div>
+        {!s.simulated && token && !ended
+          ? <ConsoleVideo sessionId={sessionId} token={token} onStats={setVstats} />
+          : <div className="sim-screen"><Gamepad2 size={64} aria-hidden /><h2>{s.simulated ? 'Stream simulado' : ended ? 'Sessão encerrada' : 'Conectando ao stream…'}</h2>
+            <p>Entrada: {inputStatus} · comandos enviados: {sent}</p>
+            {!token && !ended && <p>Token de controle ausente nesta aba. <button className="btn sm" onClick={() => router.push(`/sessoes`)}>Reconectar pela sala de espera</button></p>}</div>}
       </div>
+      {!s.simulated && token && !ended && <p className="small dim" style={{ margin: 0 }}>Entrada: {inputStatus} · comandos enviados: {sent}</p>}
       <div className="row">
         <button className="btn" onClick={() => screen.current?.requestFullscreen?.()}><Maximize size={16} />Tela cheia</button>
         <button className="btn" onClick={async () => { await post(`/sessions/${sessionId}/disconnect`); setToken(null); router.push('/sessoes'); }} disabled={ended}><Unplug size={16} />Sair (posso voltar)</button>
@@ -97,8 +116,10 @@ function Player() {
         <a className="btn" href="/suporte"><Headphones size={16} />Suporte</a>
       </div>
       <section className="card small"><h3>Métricas</h3>
-        <p>FPS: {s.metrics?.fps ?? 'não disponível'} · RTT: {s.metrics?.rtt_ms ?? 'não disponível'} · Jitter: {s.metrics?.jitter_ms ?? 'não disponível'} · Bitrate: {s.metrics?.bitrate_kbps ?? 'não disponível'}</p>
-        <p className="dim">Valores só aparecem quando medidos de verdade pelo agente do console.</p></section>
+        {(() => { const m = { ...(s.metrics || {}), ...Object.fromEntries(Object.entries(vstats || {}).filter(([, v]) => v !== null)) } as Partial<VideoStats>;
+          const v = (x: number | null | undefined, unit: string) => (x === null || x === undefined ? 'não disponível' : `${x}${unit}`);
+          return <p>FPS: {v(m.fps, '')} · Atraso (RTT): {v(m.rtt_ms, ' ms')} · Jitter: {v(m.jitter_ms, ' ms')} · Taxa: {v(m.bitrate_kbps, ' kbps')} · Perda: {v(m.packet_loss_pct, '%')}</p>; })()}
+        <p className="dim">Valores medidos de verdade (pelo seu navegador na conexão de vídeo e pelo agente do console); sem medição aparece “não disponível”.</p></section>
     </div>
   );
 }

@@ -112,8 +112,28 @@ def _token_session(conn, session_id, token: str) -> dict:
     return t
 
 
+def webrtc_offer(session_id, token: str, offer: dict) -> dict:
+    """Vídeo do console no navegador: só quem tem o token de controle válido da sessão recebe a transmissão."""
+    if not isinstance(offer, dict) or offer.get('type') != 'offer' or not isinstance(offer.get('sdp'), str) or len(offer['sdp']) > 20000:
+        raise AppError(400, 'invalid_offer', 'Oferta de vídeo inválida.')
+    security.rate_limit(f'webrtc:{session_id}', 20, 60)
+    with tx() as conn:
+        t = _token_session(conn, session_id, token)
+        ref = console_ref(conn, t['console_id'])
+    adapter = get_adapter(ref.method)
+    try:
+        res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']})
+    except AdapterError as e:
+        status = 501 if e.code == 'not_implemented' else 503
+        raise AppError(status, 'video_unavailable', e.message)
+    answer = (res.data or {}).get('answer') or {}
+    if not res.ok or answer.get('type') != 'answer' or not answer.get('sdp'):
+        raise AppError(503, 'video_unavailable', res.message or 'O agente do console não conseguiu iniciar o vídeo.')
+    return {'answer': {'type': 'answer', 'sdp': answer['sdp']}, 'message': res.message}
+
+
 def send_input(session_id, token: str, command: dict) -> dict:
-    security.rate_limit(f'input:{session_id}', 1200, 60)  # ~20 comandos/s
+    security.rate_limit(f'input:{session_id}', 3600, 60)  # ~60 comandos/s (botões + analógicos)
     with tx() as conn:
         t = _token_session(conn, session_id, token)
         if str((command or {}).get('name', '')).lower() == 'share' and not get_settings(conn).get('share_button_enabled', False):
@@ -179,6 +199,11 @@ def disconnect(user, session_id) -> None:
         conn.execute("update session_input_tokens set revoked_at=%s, revoke_reason='disconnected' where session_id=%s and revoked_at is null",
                      (timeutil.now(), session_id))
         _event(conn, session_id, 'disconnected')
+        ref = console_ref(conn, s['console_id'])
+    try:
+        get_adapter(ref.method).revoke_input(ref, str(session_id))   # agente corta controle e vídeo desta sessão
+    except AdapterError:
+        pass  # token já revogado no banco: o servidor continua sendo a autoridade
 
 
 def session_state(user, session_id) -> dict:

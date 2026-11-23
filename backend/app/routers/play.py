@@ -220,6 +220,23 @@ def session_input(sid: uuid.UUID, body: InputIn, x_input_token: str = Header(def
     return sessions.send_input(sid, x_input_token, body.command)
 
 
+@router.get('/sessions/{sid}/webrtc-config')
+def session_webrtc_config(sid: uuid.UUID, x_input_token: str = Header(default='')):
+    """Servidores STUN/TURN para o navegador do jogador (exige o token de controle da sessão)."""
+    with tx() as conn:
+        sessions._token_session(conn, sid, x_input_token)
+    return {'ice_servers': settings.webrtc_ice_servers}
+
+
+class WebRtcOfferIn(BaseModel):
+    offer: dict
+
+
+@router.post('/sessions/{sid}/webrtc')
+def session_webrtc(sid: uuid.UUID, body: WebRtcOfferIn, x_input_token: str = Header(default='')):
+    return sessions.webrtc_offer(sid, x_input_token, body.offer)
+
+
 @router.get('/sessions/{sid}')
 def session_state(sid: uuid.UUID, p: Principal = Depends(current_user)):
     return sessions.session_state(p, sid)

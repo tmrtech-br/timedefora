@@ -19,7 +19,8 @@ Programa que roda no **PC ao lado do console** (ou num PC com acesso a ele) e fa
 | **Controle virtual DS4** para o jogador (botão PS e touchpad bloqueados) | ✅ implementado · ⏳ validar |
 | **Preparação** antes da sessão: acordar + conectar + roteiro para abrir o jogo | ✅ implementado · ⏳ validar |
 | **Testes do painel**: imagem (captura real da janela), áudio (pico real) e controles (a tela precisa reagir) | ✅ implementado · ⏳ validar |
-| Vídeo do console no navegador do jogador (WebRTC) | ⏳ próxima etapa |
+| **Vídeo e áudio no navegador do jogador (WebRTC)**: captura da janela do chiaki-ng (até 30 qps) + som do PC | ✅ testado com janela real e Edge real (VP8, 30 qps) · ⏳ validar com o PS4 |
+| Analógicos do controle do jogador (zona morta, ~15 envios/s por eixo) | ✅ implementado |
 
 Regras de honestidade: o agente **nunca simula**. "Pronto" só com imagem real capturada; o teste de imagem/áudio só
 aprova com imagem **e** som medidos; o teste de controles só aprova se a tela mudar depois de apertar um botão.
@@ -35,6 +36,9 @@ A rota é escolhida no painel (**Consoles e conexão → rota de rede**):
 | `internet_psn` | PC em outra casa, **sem mexer no roteador** | abre o chiaki-ng gráfico e aperta as teclas de `psn_gui_steps` para escolher o console em *Remote Connection via PSN*. Exige PS4 como **console principal** da conta PSN e o chiaki-ng logado na PSN. Frágil: se a tela do chiaki-ng mudar, recalibre. |
 
 ## Instalação (Windows)
+
+**Atalho:** na pasta `agent`, rode `powershell -ExecutionPolicy Bypass -File .\instalar.ps1`. Ele instala as dependências,
+confere ViGEmBus, controle virtual, chiaki-ng e `config.json`, e lista **o que ainda falta**. Pode rodar quantas vezes quiser.
 
 1. **chiaki-ng** instalado (padrão `C:\Program Files\chiaki-ng\chiaki.exe`) e o console **registrado nele**
    (no console: Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo → PIN no chiaki-ng).
@@ -85,10 +89,29 @@ Na raiz do projeto, `python dev.py` (sobe o agente quando `agent/config.json` ex
 Painel → Consoles e conexão → (console) → Testes: **Verificar heartbeat → Descobrir → Pareamento (confere o registro)
 → Conexão → Imagem e áudio → Controles**. "Conexão" leva até 1 min: se aparecer "em andamento", clique de novo.
 
+## Vídeo no navegador (WebRTC)
+- Navegador → API (`/sessions/{id}/webrtc`, só com o token de controle da sessão) → agente → resposta. O vídeo vai **direto**
+  do agente para o navegador; os comandos continuam passando pela API (que valida cada um).
+- A janela do chiaki-ng precisa ficar **visível** (nem minimizada nem coberta) — é ela que é capturada. Não use o PC do agente para outras coisas.
+- Áudio = toda a saída de som do PC (deixe só o chiaki-ng com som). `stream_audio: false` desliga.
+- Rede: `ice_servers` (agente) e `WEBRTC_ICE_SERVERS` (API) iguais. Para jogadores em 4G/NAT restritivo, configure um **TURN**.
+- Banda de subida do local do agente: ~3–6 Mbit/s por jogador em 720p.
+
+## Vários consoles no mesmo PC
+O agente já gerencia **vários consoles** (um chiaki-ng, um controle virtual e uma conexão de vídeo por console; entradas em
+`consoles` no `config.json`). Limites a validar antes de colocar mais de um em produção:
+1. **Controles:** cada chiaki-ng pode enxergar **todos** os controles virtuais do PC — comandos de um jogador poderiam ir para os dois
+   consoles. Validar com 2 consoles; se acontecer, a saída é um PC (ou máquina virtual/usuário do Windows) por console.
+2. **Telas:** as janelas do chiaki-ng não podem se sobrepor (a captura é da região da tela). Ex.: 2 janelas de 1280×720 lado a lado num monitor/dummy HDMI 2560×1440.
+3. **Hardware:** cada console = decodificar o Remote Play + codificar o vídeo do navegador. Estimativa: 2–3 consoles em 720p num PC com CPU de 6+ núcleos.
+4. **Rede:** subida somada de todos os jogadores (ver acima). **PSN:** no PS4, a conexão via PSN só funciona com o console principal
+   da conta — vários PS4 pela PSN exigem contas/perfis diferentes no chiaki-ng (`profile`).
+Recomendação: validar com 1 PS4; depois testar o 2º console no mesmo PC antes de vender os dois.
+
 ## Produção
 - Endpoint do agente em **HTTPS** (proxy reverso/túnel); a API recusa `http://` fora de desenvolvimento.
 - `config.json` contém segredos: nunca versione nem compartilhe (está no `.gitignore`).
-- Um chiaki-ng por console; o PC precisa ficar com sessão do Windows aberta (a janela do chiaki-ng é capturada).
+- O PC precisa ficar com a sessão do Windows aberta e sem descanso de tela/suspensão (a janela do chiaki-ng é capturada).
 
 ## Testes
 ```powershell

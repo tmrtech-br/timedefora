@@ -30,12 +30,12 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
                 'port': s.get('public_port'), 'platform_code': ref.platform_code,
                 'console_identifier': s.get('console_identifier')}
 
-    def _call(self, ref: ConsoleRef, action: str, payload: dict | None = None) -> dict:
+    def _call(self, ref: ConsoleRef, action: str, payload: dict | None = None, timeout: float | None = None) -> dict:
         self._check(ref)
         url = f"{ref.agent_endpoint.rstrip('/')}/v1/consoles/{ref.console_id}/{action}"
         try:
             r = httpx.post(url, json={'method': self.method, 'target': self._target(ref), **(payload or {})},
-                           headers={'Authorization': f'Bearer {ref.agent_token}'}, timeout=self.timeout)
+                           headers={'Authorization': f'Bearer {ref.agent_token}'}, timeout=timeout or self.timeout)
         except httpx.HTTPError as e:
             raise AdapterError('agent_unreachable', f'ConsoleAgent inacessível: {e.__class__.__name__}')
         if r.status_code >= 400:
@@ -74,6 +74,10 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
         return self._res(self._call(ref, 'input', {'session_id': session_id, 'command': validate_command(command)}))
 
     def revoke_input(self, ref, session_id): return self._res(self._call(ref, 'input/revoke', {'session_id': session_id}))
+
+    def webrtc_offer(self, ref, session_id, offer):
+        # O agente coleta os candidatos de rede (STUN) antes de responder: pode levar alguns segundos.
+        return self._res(self._call(ref, 'stream/webrtc', {'session_id': session_id, 'offer': offer}, timeout=20.0))
     def disconnect(self, ref): return self._res(self._call(ref, 'disconnect'))
     def health_check(self, ref): return self._res(self._call(ref, 'health'))
     def test_video_audio(self, ref): return self._res(self._call(ref, 'test/video-audio'))

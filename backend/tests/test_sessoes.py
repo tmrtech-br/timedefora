@@ -49,6 +49,25 @@ def test_join_token_input_e_expiracao_com_navegador_aberto(world, freeze):
     assert api.get(f"/reservations/{r['id']}").json()['status'] == 'completed'
 
 
+def test_video_webrtc_exige_token_e_nao_finge_no_simulador(world, freeze):
+    api, r = confirmed(world, freeze)
+    freeze(at(2, 9, 0))
+    j = api.post(f"/reservations/{r['id']}/join", json={'input_device': 'gamepad'}).json()
+    sid, tok = j['session_id'], j['input_token']
+    offer = {'offer': {'type': 'offer', 'sdp': 'v=0\r\n'}}
+    assert Api().get(f'/sessions/{sid}/webrtc-config').status_code == 403                       # sem token
+    cfg = Api().get(f'/sessions/{sid}/webrtc-config', headers={'X-Input-Token': tok}).json()
+    assert cfg['ice_servers'] and 'urls' in cfg['ice_servers'][0]
+    assert Api().post(f'/sessions/{sid}/webrtc', json=offer, headers={'X-Input-Token': 'errado'}).status_code == 403
+    assert Api().post(f'/sessions/{sid}/webrtc', json={'offer': {'type': 'answer', 'sdp': 'x'}},
+                      headers={'X-Input-Token': tok}).status_code == 400                           # oferta inválida
+    res = Api().post(f'/sessions/{sid}/webrtc', json=offer, headers={'X-Input-Token': tok})
+    assert res.status_code == 501 and res.json()['code'] == 'video_unavailable'                    # simulador: sem vídeo real
+    # Analógico aceito pelo servidor
+    assert Api().post(f'/sessions/{sid}/input', json={'command': {'type': 'axis', 'name': 'left_x', 'value': 0.5}},
+                      headers={'X-Input-Token': tok}).status_code == 200
+
+
 def test_reconexao_revoga_token_anterior_e_atraso_nao_estende(world, freeze):
     api, r = confirmed(world, freeze)
     freeze(at(2, 9, 10))                                                      # entrou atrasado

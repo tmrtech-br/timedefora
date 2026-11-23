@@ -95,6 +95,23 @@ def press_key(name: str, hold: float = 0.08) -> None:
     _user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
 
 
+_tls = __import__('threading').local()
+
+
+def grab_rgb(rect: tuple[int, int, int, int]):
+    """Captura rápida (biblioteca mss, ~16 ms) como matriz numpy RGB; None se mss/numpy não estiverem instalados."""
+    try:
+        import mss
+        import numpy as np
+    except ImportError:
+        return None
+    sct = getattr(_tls, 'sct', None)
+    if sct is None:                                   # mss não pode ser compartilhado entre threads
+        sct = _tls.sct = (getattr(mss, 'MSS', None) or mss.mss)()
+    shot = sct.grab({'left': rect[0], 'top': rect[1], 'width': rect[2] - rect[0], 'height': rect[3] - rect[1]})
+    return np.asarray(shot)[:, :, 2::-1]              # BGRA → RGB
+
+
 def grab(rect: tuple[int, int, int, int]):
     """Captura a região da tela (PIL.Image) ou None se o Pillow não estiver instalado."""
     try:

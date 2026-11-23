@@ -7,6 +7,7 @@ import '@fontsource/poppins/latin-700-italic.css';
 import '@fontsource/poppins/latin-800-italic.css';
 import './globals.css';
 import AppShell from '@/components/AppShell';
+import ChunkRecovery from '@/components/ChunkRecovery';
 import { AuthProvider } from '@/lib/auth';
 
 export const metadata: Metadata = {
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="pt-BR">
       <body>
+        <ChunkRecovery />
         <AuthProvider>
           <AppShell>{children}</AppShell>
         </AuthProvider>

@@ -21,6 +21,7 @@ from .chiaki import ChiakiDriver
 from .config import AgentConfig
 from .gamepad import GamepadUnavailable
 from .runtime import ConsoleRuntime, Deps, Target, target_from
+from .webrtc import WebRtcHub, WebRtcUnavailable
 
 log = logging.getLogger('consoleagent')
 
@@ -45,6 +46,8 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
     expected = f'Bearer {cfg.api_to_agent_token}'.encode()
     base = deps or Deps(chiaki=ChiakiDriver(cfg.chiaki_path), discover=discover_fn)
     runtimes: dict[str, ConsoleRuntime] = {}
+    hub = WebRtcHub(cfg.ice_servers, int(cfg.video_max_width), bool(cfg.stream_audio))
+    app.state.webrtc = hub
 
     def rt(console_id: str) -> ConsoleRuntime:
         if console_id not in runtimes:
@@ -74,8 +77,33 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             body = {}
         if action != 'input':                    # comandos do jogador são muitos: não poluir o log
             log.info('comando %s para console %s', action, console_id)
+        sid = str(body.get('session_id') or '')
+        if action == 'stream/webrtc':
+            return await _webrtc(console_id, sid, body.get('offer') or {})
         # As ações podem esperar (capturas de tela, preparação): fora do laço assíncrono do servidor.
-        return await run_in_threadpool(handle, console_id, action, body)
+        res = await run_in_threadpool(handle, console_id, action, body)
+        if action in ('input/revoke', 'stream/stop'):
+            await hub.close(console_id, sid or None)          # vídeo acompanha o controle
+        elif action == 'disconnect':
+            await hub.close(console_id)
+        return res
+
+    async def _webrtc(console_id: str, sid: str, offer: dict):
+        r = rt(console_id)
+        if not sid or sid != r.session_id:
+            return _error(403, 'input_revoked', 'Vídeo só para a sessão ativa neste console.')
+        if not r.streaming:
+            return _result(False, 'O console não está transmitindo (preparação não concluída).', 'stopped')
+        if offer.get('type') != 'offer' or not isinstance(offer.get('sdp'), str):
+            return _error(400, 'invalid_offer', 'Oferta de vídeo inválida.')
+        try:
+            answer, msg = await hub.answer(console_id, sid, offer, lambda: r.d.chiaki.pid)
+        except WebRtcUnavailable as e:
+            return _result(False, str(e), 'degraded')
+        except Exception as e:  # nunca derrubar o agente por falha de negociação
+            log.exception('falha ao negociar WebRTC')
+            return _result(False, f'Falha ao iniciar o vídeo: {e.__class__.__name__}: {e}', 'error')
+        return _result(True, msg, 'streaming', {'answer': answer})
 
     def handle(console_id: str, action: str, body: dict):
         t = target_from(cfg, console_id, body)
@@ -87,7 +115,8 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
         if action == 'discover':
             return _discover(cfg, body, t, r, base.discover)
         if action == 'metrics':
-            return {'metrics': {}}               # nenhuma medição contínua ainda: o painel mostra "não disponível"
+            fps = hub.fps(console_id)            # quadros reais enviados ao navegador (medidos), senão ausente
+            return {'metrics': {'fps': fps} if fps is not None else {}}
         if action == 'pair':
             return _pair(t, r)
         if action in ('connect', 'console/prepare'):
