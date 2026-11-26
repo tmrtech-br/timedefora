@@ -267,3 +267,25 @@ def test_refusal_messages_are_actionable():
     busy = RPErrorHandler()(0x80108B13)
     assert 'reinicie o PS4' in _explain_refusal(busy)
     assert 'outra sessão' in _explain_refusal(RPErrorHandler()(0x80108B10))
+
+
+@pytest.mark.asyncio
+async def test_webrtc_offers_for_same_console_are_serialized():
+    """Duas ofertas simultâneas: a segunda espera a primeira em vez de cancelá-la no meio."""
+    from consoleagent.webrtc import WebRtcHub
+
+    hub = WebRtcHub()
+    running, order = 0, []
+
+    async def fake_answer(console_id, session_id, offer, link, on_input=None):
+        nonlocal running
+        running += 1
+        assert running == 1, 'negociações simultâneas no mesmo console'
+        order.append(offer['n'])
+        await asyncio.sleep(0.05)
+        running -= 1
+        return {'type': 'answer', 'sdp': str(offer['n'])}, 'ok'
+
+    hub._answer = fake_answer
+    results = await asyncio.gather(*(hub.answer('c1', 's1', {'n': n}, None) for n in range(3)))
+    assert order == [0, 1, 2] and [r[0]['sdp'] for r in results] == ['0', '1', '2']

@@ -166,9 +166,21 @@ class WebRtcHub:
         self.max_width, self.audio = max_width, audio
         self.experimental_h264_passthrough = experimental_h264_passthrough
         self.peers: dict[str, dict] = {}
+        self._negotiating: dict[str, asyncio.Lock] = {}
         set_bitrate(max_kbps)
 
     async def answer(self, console_id: str, session_id: str, offer: dict, link, on_input=None) -> tuple[dict, str]:
+        """Uma negociação por console de cada vez.
+
+        Antes, a oferta nova fechava a anterior no meio da negociação: a anterior morria com CancelledError (503 no
+        navegador), o navegador reenviava, e se negociar levasse mais que o intervalo de reenvio nenhuma terminava.
+        Agora a nova espera a anterior concluir (cada passo tem limite) e só então a substitui.
+        """
+        lock = self._negotiating.setdefault(console_id, asyncio.Lock())
+        async with lock:
+            return await self._answer(console_id, session_id, offer, link, on_input)
+
+    async def _answer(self, console_id: str, session_id: str, offer: dict, link, on_input=None) -> tuple[dict, str]:
         """link: video_frame() para a imagem e audio_track() (áudio do próprio console) ou None (saída de som do PC)."""
         _require()
         from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
@@ -201,6 +213,12 @@ class WebRtcHub:
             """Cada passo com limite: um passo travado vira erro com nome, nunca um agente mudo."""
             try:
                 return await asyncio.wait_for(coro, limit)
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise                                    # o navegador desistiu da requisição: repassa o cancelamento
+                # A conexão foi fechada por fora (fim da sessão, falha) no meio da negociação: erro tratado, não 503.
+                raise RuntimeError(f'a conexão de vídeo foi encerrada durante "{name}"; tente de novo') from None
             except asyncio.TimeoutError:
                 log.error('WebRTC console %s: tempo esgotado em "%s"', console_id[:8], name)
                 if self.peers.get(console_id) is entry:
