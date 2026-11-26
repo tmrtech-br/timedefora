@@ -34,7 +34,7 @@ export function Users() {
             if (reason) run(async () => { await post(`/admin/users/${r.id}/suspension`, { suspend: susp, reason }); list.reload(); }, 'Atualizado.');
           }}>{r.status === 'suspended' ? 'Reativar' : 'Suspender'}</button>
           {sup && <select className="btn sm" value="" onChange={(e) => { const [g, role] = e.target.value.split(':'); if (role) run(async () => { await post(`/admin/users/${r.id}/roles`, { role, grant: g === '+' }); list.reload(); }, 'Papéis atualizados.'); }}>
-            <option value="">Papéis…</option>{['operator', 'admin', 'superadmin'].map((x) => <option key={x} value={`${(r.roles as string[]).includes(x) ? '-' : '+'}:${x}`}>{(r.roles as string[]).includes(x) ? 'Remover' : 'Conceder'} {x}</option>)}</select>}</div>]]} /></section>
+            <option value="">Papéis…</option>{['operator', 'admin', 'superadmin', 'owner'].map((x) => <option key={x} value={`${(r.roles as string[]).includes(x) ? '-' : '+'}:${x}`}>{(r.roles as string[]).includes(x) ? 'Remover' : 'Conceder'} {x}</option>)}</select>}</div>]]} /></section>
       {askDialog}
     </div>
   );

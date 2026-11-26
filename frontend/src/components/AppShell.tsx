@@ -110,6 +110,7 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
             {link({ href: '/favoritos', label: 'Favoritos', icon: Heart })}
             {link({ href: '/notificacoes', label: 'Notificações', icon: Bell })}
             {isStaff(me) && link({ href: '/admin', label: 'Painel administrativo', icon: ShieldHalf })}
+            {me.roles.includes('owner') && link({ href: '/proprietario', label: 'Portal do proprietário', icon: Monitor })}
             <a href="#sair" onClick={async (e) => { e.preventDefault(); await logout(); onNavigate(); router.push('/'); }}><LogOut aria-hidden />Sair</a>
           </div>
         )}

@@ -188,6 +188,13 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
         {savedMethod === 'remote_play_chiaki' && <Field label="Código de pareamento exibido no console (assistente do admin)"><input value={pairCode} onChange={(e) => setPairCode(e.target.value)} maxLength={12} /></Field>}
         {lanPairing && <Field label="PIN de registro (8 dígitos)" hint="No console: Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo. Digite o PIN e clique em Parear.">
           <input inputMode="numeric" value={pairCode} onChange={(e) => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 8))} maxLength={8} placeholder="12345678" /></Field>}
+        <button className="btn" disabled={busy || savedMethod === 'unconfigured'} onClick={() => run(async () => {
+          const batch = await post<{ results: { test_type: string; result: string }[] }>(
+            `/admin/consoles/${c.id}/diagnostics/run-all`, { code: pairCode || null });
+          onChange();
+          const failed = batch.results.filter((test) => test.result === 'failed').length;
+          toast(failed ? 'error' : 'ok', failed ? `Diagnóstico concluído com ${failed} falha(s).` : 'Diagnóstico concluído. Consulte o histórico de testes.');
+        })}>Executar todos os testes</button>
         <div className="row">{TESTS.map(([t, l]) => <button key={t} className="btn sm" disabled={busy || (t === 'pair' && nativePsnRoute)} onClick={() => run(async () => {
           type R = { result: string; message: string; simulated: boolean; in_progress?: boolean };
           const call = () => post<R>(`/admin/consoles/${c.id}/tests/${t}`, t === 'pair' ? { code: pairCode || null } : {});
@@ -213,7 +220,16 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
                 run(async () => { await del(`/admin/consoles/${c.id}/tests`); onChange(); }, 'Histórico de testes limpo.');
             }}>
             <Eraser size={14} aria-hidden />Limpar testes</button></div>
-        <DataTable rows={c.tests as unknown as Record<string, unknown>[]} empty="Nenhum teste executado." cols={[['Teste', (r) => String(r.test_type)], ['Resultado', (r) => <StatusPill status={String(r.result)} />],
+        <DataTable rows={c.tests as unknown as Record<string, unknown>[]} empty="Nenhum teste executado." cols={[['Teste', (r) => (
+          <details>
+            <summary>{TESTS.find(([type]) => type === r.test_type)?.[1] ?? String(r.test_type)}</summary>
+            <dl>
+              <dt>Resultado</dt><dd>{RESULT_PT[String(r.result)] ?? String(r.result)}</dd>
+              <dt>Duração</dt><dd>{typeof r.duration_ms === 'number' ? `${r.duration_ms} ms` : 'Indisponível'}</dd>
+              <dt>Registro do adaptador</dt><dd>{String(r.message)}</dd>
+            </dl>
+          </details>
+        )], ['Resultado', (r) => <StatusPill status={String(r.result)} />],
           ['Simulado', (r) => (r.simulated ? 'sim' : 'não')], ['Mensagem', (r) => String(r.message)], ['Quando', (r) => dateTime(String(r.run_at))]]} />
         <p className="small muted">Telemetria: {c.last_health ? `${c.last_health.status} · FPS ${c.last_health.fps ?? 'não disponível'} · RTT ${c.last_health.rtt_ms ?? 'não disponível'} · bitrate ${c.last_health.bitrate_kbps ?? 'não disponível'} · ${dateTime(String(c.last_health.checked_at))}${c.last_health.simulated ? ' (simulado)' : ''}` : 'sem amostras'}</p>
         <p className="small muted">Jogo vinculado agora: {c.current_assignment ? `${c.current_assignment.title} até ${dateTime(c.current_assignment.ends_at)}` : 'nenhum'} · Sessão ativa: {c.active_session ? 'sim' : 'não'} · Pareamento: {c.pairing?.status || '—'}</p>

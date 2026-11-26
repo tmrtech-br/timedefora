@@ -450,7 +450,7 @@ def _console_view(conn, c: dict) -> dict:
     if cfg:
         info = method_info(cfg['method'])
         out['connection']['method_label'] = info['label'] if info else cfg['method']
-    out['tests'] = jsonable(all_(conn, 'select test_type, result, simulated, message, run_at from console_connection_tests where console_id=%s order by run_at desc limit 20', (c['id'],)))
+    out['tests'] = jsonable(all_(conn, 'select id, test_type, result, simulated, message, run_at, duration_ms from console_connection_tests where console_id=%s order by run_at desc limit 20', (c['id'],)))
     out['last_health'] = jsonable(one(conn, 'select * from console_health_samples where console_id=%s order by checked_at desc limit 1', (c['id'],)))
     out['current_assignment'] = jsonable(one(conn, '''select a.id, g.title, a.starts_at, a.ends_at from console_game_assignments a join games g on g.id=a.game_id
                                                       where a.console_id=%s and a.status='active' and a.starts_at <= %s and a.ends_at > %s''',
@@ -720,6 +720,30 @@ class PairIn(BaseModel):
     code: str | None = Field(default=None, max_length=12)
 
 
+@router.post('/consoles/{cid}/diagnostics/run-all')
+def run_all_tests(cid: uuid.UUID, body: PairIn | None = None, p: Principal = Depends(ADMIN)):
+    with tx() as conn:
+        config = one(conn, '''
+            select cfg.method, cfg.network_route from consoles c
+            join console_connection_configs cfg on cfg.console_id=c.id
+            where c.id=%s and c.deleted_at is null
+        ''', (cid,))
+        if not config:
+            raise not_found()
+        if config['method'] == 'unconfigured':
+            raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
+    results = []
+    for test in TEST_TYPES:
+        if test == 'pair' and config['method'] != 'simulated' and (
+            not body or not body.code or config['network_route'] == 'internet_psn'
+        ):
+            results.append({'test_type': test, 'result': 'not_available',
+                            'message': 'Pareamento manual exige um código e uma rota compatível.'})
+            continue
+        results.append(run_test(cid, test, body, p))
+    return {'results': results}
+
+
 @router.delete('/consoles/{cid}/tests')
 def clear_tests(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
     """Limpa o HISTÓRICO de testes exibido no painel. As validações (vídeo/áudio/controle/heartbeat) não mudam.
@@ -745,6 +769,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
     if ref.method == 'unconfigured':
         raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
     adapter = get_adapter(ref.method)
+    started = time_mod.monotonic()
     result, message, data, metrics = 'failed', '', {}, {}
     reported_simulated = in_progress = False
     try:
@@ -789,6 +814,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
         result = 'not_available'
         message = (message + ' ' if message else '') + '(resposta SIMULADA do agente — não valida o console real)'
     n = timeutil.now()
+    duration_ms = round((time_mod.monotonic() - started) * 1000)
     with tx() as conn:
         # O painel repete o teste enquanto a conexão está em andamento: a linha "em andamento" anterior é substituída
         # (o histórico mostra o andamento atual ou o resultado final, não uma pilha de "em andamento").
@@ -797,7 +823,8 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
                      "and result='not_available' and message like 'Em andamento%%'", (cid, test_type))
         insert(conn, 'console_connection_tests', {'console_id': cid, 'test_type': test_type, 'result': result,
                                                   'simulated': simulated, 'message': message,
-                                                  'metrics': Jsonb(metrics), 'run_by': p.user_id})
+                                                  'metrics': Jsonb(metrics), 'run_by': p.user_id,
+                                                  'duration_ms': duration_ms})
         cfg = one(conn, 'select * from console_connection_configs where console_id=%s for update', (cid,))
         col = {'video_audio': ['video_validated_at', 'audio_validated_at'], 'controls': ['control_validated_at'],
                'heartbeat': ['heartbeat_validated_at'], 'connection': []}.get(test_type)
@@ -822,6 +849,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
             conn.execute('update console_connection_configs set validated_at=%s, validated_by=%s where id=%s', (n, p.user_id, cfg['id']))
             conn.execute("update consoles set status='online' where id=%s and status in ('offline','unconfigured','degraded')", (cid,))
     return {'test_type': test_type, 'result': result, 'message': message, 'simulated': simulated,
+            'duration_ms': duration_ms,
             'metrics': metrics or None, 'in_progress': in_progress}
 
 
@@ -1506,11 +1534,19 @@ class RoleIn(BaseModel):
 
 @router.post('/users/{uid}/roles')
 def set_role(uid: uuid.UUID, body: RoleIn, p: Principal = Depends(SUPER)):
-    if body.role not in ('client', 'operator', 'admin', 'superadmin'):
+    if body.role not in ('client', 'operator', 'admin', 'superadmin', 'owner'):
         raise unprocessable('validation_error', 'Papel inválido.')
     with tx() as conn:
+        if not one(conn, 'select id from users where id=%s and deleted_at is null for update', (uid,)):
+            raise not_found()
         role = one(conn, 'select id from roles where code=%s', (body.role,))
         if body.grant:
+            existing = {row['code'] for row in all_(conn, '''
+                select r.code from role_assignments a join roles r on r.id=a.role_id
+                where a.user_id=%s and a.revoked_at is null''', (uid,))}
+            staff = {'operator', 'admin', 'superadmin'}
+            if (body.role == 'owner' and existing & staff) or (body.role in staff and 'owner' in existing):
+                raise conflict('incompatible_roles', 'O papel de proprietário não pode ser acumulado com um papel de equipe.')
             conn.execute('insert into role_assignments(user_id, role_id, granted_by) values (%s,%s,%s) on conflict do nothing', (uid, role['id'], p.user_id))
         else:
             if str(uid) == p.user_id and body.role == 'superadmin':
@@ -1736,7 +1772,7 @@ class PolicyIn(BaseModel):
 
 @router.post('/policies', status_code=201)
 def publish_policy(body: PolicyIn, p: Principal = Depends(SUPER)):
-    if body.kind not in ('terms', 'privacy', 'cancellation'):
+    if body.kind not in ('terms', 'privacy', 'cancellation', 'owner_terms'):
         raise unprocessable('validation_error', 'Tipo inválido.')
     with tx() as conn:
         conn.execute('update policy_documents set is_current=false where kind=%s', (body.kind,))
