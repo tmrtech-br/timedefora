@@ -9,7 +9,6 @@ import {
 import { useAuth, isStaff } from '@/lib/auth';
 import { get } from '@/lib/api';
 import Toaster from '@/components/Toaster';
-import LocadoraDeco from '@/components/LocadoraDeco';
 
 function LogoIcon() {
   // Ícone próprio (cartucho de videogame) — identidade LocaPlay
@@ -51,7 +50,7 @@ export function Header({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
   const { me } = useAuth();
   return (
     <header className="topbar">
-      <button className="icon-btn mobile-toggle" onClick={onMenu} aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'} aria-expanded={menuOpen}>
+      <button className="icon-btn mobile-toggle" onClick={onMenu} aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'} aria-expanded={menuOpen} aria-controls="player-sidebar">
         {menuOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
       <Link href="/" className="logo" aria-label="LocaPlay — página inicial">
@@ -91,14 +90,14 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
   const router = useRouter();
   const { me, logout } = useAuth();
   const link = (i: { href: string; label: string; icon: typeof Home; also?: string[] }) => (
-    <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''}>
+    <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''} aria-current={isActive(path, i.href) ? 'page' : undefined}>
       <i.icon aria-hidden />{i.label}
     </Link>
   );
   return (
-    <aside className={`sidebar ${open ? 'open' : ''}`} aria-label="Menu do jogador">
+    <aside id="player-sidebar" className={`sidebar ${open ? 'open' : ''}`} aria-label="Menu do jogador">
       <nav className="side-links">
-        <div className="mobile-only">{TOP.filter((t) => t.href !== '/jogos').map(link)}<div className="side-divider" /></div>
+        <div className="mobile-only">{TOP.filter((t) => t.href !== '/jogos').map(link)}{!me && link({ href: '/cadastrar', label: 'Cadastrar', icon: UserRoundPlus })}<div className="side-divider" /></div>
         {SIDE_MAIN.map(link)}
         <div className="side-divider" />
         {SIDE_ACCOUNT.map(link)}
@@ -115,7 +114,6 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
           </div>
         )}
       </nav>
-      <div className="side-deco" aria-hidden><LocadoraDeco /></div>
     </aside>
   );
 }
@@ -153,6 +151,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const path = usePathname();
   useEffect(() => setOpen(false), [path]);
+  useEffect(() => {
+    if (!open) return;
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        document.querySelector<HTMLButtonElement>('.mobile-toggle')?.focus();
+      }
+    }
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [open]);
   return (
     <>
       <a href="#conteudo" className="skip-link">Pular para o conteúdo</a>
@@ -160,7 +169,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div className="shell">
         <Sidebar open={open} onNavigate={() => setOpen(false)} />
         <div className="main">
-          <main id="conteudo" className={path === '/' ? 'content' : 'content pad'}>{children}</main>
+          <main id="conteudo" tabIndex={-1} className={path === '/' ? 'content' : 'content pad'}>{children}</main>
           <Toaster />
           <Footer />
         </div>

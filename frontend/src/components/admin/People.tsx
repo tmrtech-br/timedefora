@@ -147,7 +147,7 @@ export function Lgpd() {
     <div className="stack">
       <PageHeader title="Solicitações LGPD" subtitle="Exclusão anonimiza dados pessoais e preserva registros financeiros obrigatórios." />
       {msg}
-      <section className="card"><h2>Solicita??es LGPD</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Usuário', (r) => String(r.username)], ['Tipo', (r) => String(r.request_type)], ['Detalhes', (r) => String(r.details)],
+      <section className="card"><h2>Solicitações LGPD</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Usuário', (r) => String(r.username)], ['Tipo', (r) => String(r.request_type)], ['Detalhes', (r) => String(r.details)],
         ['Status', (r) => String(r.status)], ['Criada', (r) => dateTime(String(r.created_at))],
         ['', (r) => ['open', 'in_progress'].includes(String(r.status)) ? <div className="row">{(['in_progress', 'completed', 'rejected'] as const).map((s) => <button key={s} className="btn sm" onClick={async () => {
           const resolution = await ask({ title: `Solicitação LGPD: ${DR_STATUS_PT[s]}`, label: 'Registro da resolução', confirm: DR_STATUS_PT[s], danger: s === 'rejected' });
@@ -234,7 +234,7 @@ export function Settings() {
       <PageHeader title="Configurações operacionais" subtitle="Alterações auditadas. Itens críticos exigem superadministrador." />
       {msg}
       <Alert kind="info"><span>Liga/desliga de funções, plataformas e regras de agenda ficam em <a className="link-purple" href="/admin/parametros">Parâmetros</a>. Aqui ficam os ajustes avançados.</span></Alert>
-      <section className="card"><h2>Configura??es</h2><DataTable rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
+      <section className="card"><h2>Configurações</h2><DataTable rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
         ['O que é', (r) => <span className="small muted" style={{ display: 'block', maxWidth: 380 }}>{SETTING_HELP[String(r.k)] || 'Ajuste avançado do sistema.'}</span>],
         ['Valor', (r) => <input className="btn sm" style={{ width: 260, maxWidth: '100%' }} value={vals[String(r.k)] ?? (Array.isArray(r.v) ? (r.v as number[]).join(',') : String(r.v))} onChange={(e) => setVals({ ...vals, [String(r.k)]: e.target.value })} />],
         ['', (r) => <button className="btn sm" disabled={vals[String(r.k)] === undefined} onClick={async () => {

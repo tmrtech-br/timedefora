@@ -5,7 +5,7 @@ test('admin gerencia contas PSN com respostas simuladas do backend', async ({ pa
   const user = { id: 'user', full_name: 'Pessoa Auditora', username: 'audit', roles: ['admin'],
     mfa_enabled: true, mfa_verified: true };
   const agent = { id: 'agent', name: 'Windows', is_simulated: false };
-  const account = { id: 'psn', label: 'Conta de teste', agent_name: agent.name, status: 'pending' };
+  const account = { id: 'psn', label: 'Conta de teste', agent_name: agent.name, agent_id: agent.id, status: 'pending' };
   let exists = false;
   let chiakiImportEnabled = false;
   const payloads: unknown[] = [];
@@ -45,26 +45,33 @@ test('admin gerencia contas PSN com respostas simuladas do backend', async ({ pa
 
   await page.goto('/admin/contas-psn');
   await expect(page.getByRole('heading', { name: 'Contas PSN', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Novo cadastro' }).click();
   await page.getByPlaceholder('teste01').fill(account.label);
-  await page.getByRole('combobox').selectOption(agent.id);
+  await page.getByLabel('Agente Windows').selectOption(agent.id);
   await page.getByRole('button', { name: 'Cadastrar conta' }).click();
   await expect(page.getByText(account.label, { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Importar Chiaki' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Vincular', exact: true }).click();
+  const actions = page.getByRole('combobox', { name: 'Selecionar ação' });
+  async function execute(action: string) {
+    await actions.selectOption(action);
+    await page.getByRole('button', { name: 'Executar' }).click();
+  }
+  await expect(actions.locator('option[value="chiaki"]')).toHaveCount(0);
+  await execute('link');
   const redirect = 'https://example.test/redirect?code=ficticio';
   await page.locator('textarea').fill(redirect);
   await page.getByRole('button', { name: 'Concluir vínculo' }).click();
-  await page.getByRole('button', { name: 'Consultar PS5' }).click();
+  await execute('ps5');
   await expect(page.getByText('Nenhum PS5 retornado pela Sony.')).toBeVisible();
-  await page.getByRole('button', { name: 'Buscar PS4 na rede local' }).click();
+  await execute('ps4-lan');
   await expect(page.getByRole('heading', { name: 'PS4 na rede de Windows' })).toBeVisible();
   await expect(page.getByText('192.0.2.4')).toBeVisible();
-  await page.getByRole('button', { name: 'Testar', exact: true }).click();
+  await execute('test');
   await expect(page.locator('#conteudo').getByText('Token expirado para teste.')).toBeVisible();
   chiakiImportEnabled = true;
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Importar Chiaki' })).toBeVisible();
+  await expect(actions.locator('option[value="chiaki"]')).toHaveCount(1);
   await page.getByRole('button', { name: 'Excluir', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox').fill('Conta criada para teste');
   await page.getByRole('dialog').getByRole('button', { name: 'Excluir', exact: true }).click();
   await expect(page.locator('#conteudo').getByText('Conta excluída do agente e do banco.')).toBeVisible();
   expect(payloads).toEqual([{ label: account.label, agent_id: agent.id }, { redirect_url: redirect }]);
