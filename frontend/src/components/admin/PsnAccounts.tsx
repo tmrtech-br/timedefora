@@ -1,9 +1,9 @@
 'use client';
-import { useState } from 'react';
-import { Alert, Field, PageHeader, StatusPill } from '@/components/ui';
+import { useEffect, useState } from 'react';
+import { Alert, Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
-import { DataTable, NewRecord, useAction, useConfirm, useDelete } from './common';
+import { DataTable, DropdownActions, NewRecord, useAction, useConfirm, useDelete } from './common';
 import { dateTime } from '@/lib/format';
 
 type Account = Record<string, unknown> & { id: string; agent_id: string; agent_name: string; label: string; status: string; online_id: string | null;
@@ -21,6 +21,7 @@ export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?:
   const agents = useApi<Agent[]>('/admin/agents');
   const [newLabel, setNewLabel] = useState('');
   const [agentId, setAgentId] = useState('');
+  const [platform, setPlatform] = useState('all');
   const [redirect, setRedirect] = useState('');
   const [login, setLogin] = useState<LoginLink | null>(null);
   const [diagnostic, setDiagnostic] = useState<(Ps4Diagnostic & { label: string }) | null>(null);
@@ -32,6 +33,9 @@ export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?:
   const [confirm, confirmation] = useConfirm();
   const deletion = useDelete();
   const refresh = () => { accounts.reload(); onAccountsChanged?.(); setLogin(null); setRedirect(''); setDevices(null); setDiagnostic(null); };
+  useEffect(() => {
+    if (accounts.error) console.error('Falha ao carregar contas PSN administrativas', { status: accounts.error.status, code: accounts.error.code });
+  }, [accounts.error]);
 
   return (
     <div className="stack">
@@ -41,6 +45,9 @@ export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?:
         Vincular uma conta NÃO significa que vídeo, áudio, controle ou conexão ao console foram validados.</span></Alert>
       <NewRecord title="Nova conta PSN">{(close) => <>
         <div className="grid3">
+          <Field label="Tipo de console"><select value={platform} onChange={(event) => setPlatform(event.target.value)}>
+            <option value="all">Todos os PlayStation</option><option value="PS4">PS4</option><option value="PS5">PS5</option>
+          </select></Field>
           <Field label="Rótulo interno"><input maxLength={80} placeholder="teste01" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} /></Field>
           <Field label="Agente Windows"><select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
             <option value="">Selecione um agente</option>
@@ -54,47 +61,51 @@ export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?:
       </>}</NewRecord>
       <section className="card stack">
         <h2>Contas vinculadas ao agente</h2>
-        <DataTable<Account> rows={accounts.data} cols={[
+        <Field label="Filtrar ações por console"><select value={platform} onChange={(event) => setPlatform(event.target.value)}>
+          <option value="all">Todos os PlayStation</option><option value="PS4">PS4</option><option value="PS5">PS5</option>
+        </select></Field>
+        <DataTable<Account> rows={accounts.data} error={accounts.error?.message} cols={[
           ['Rótulo', (a) => <b>{a.label}</b>],
           ['Agente', (a) => a.agent_name],
           ['PSN ID', (a) => a.online_id || '—'],
           ['Estado', (a) => <StatusPill status={a.status} map={{ pending: 'pendente', linked: 'vinculada', expired: 'expirada', error: 'erro', disabled: 'desativada' }} />],
           ['Última verificação', (a) => dateTime(a.last_check_at)],
           ['Ações', (a) => <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-            <button className="btn sm" disabled={busy || a.status === 'disabled'} onClick={() => run(async () => {
-              const result = await post<{ login_url: string }>(`/admin/psn-accounts/${a.id}/login/start`);
-              setLogin({ id: a.id, label: a.label, url: result.login_url }); setRedirect('');
-            })}>Vincular</button>
-            <button className="btn sm" disabled={busy || a.status === 'disabled'} onClick={() => run(async () => {
-              const result = await post<{ok: boolean; message?: string}>(`/admin/psn-accounts/${a.id}/test`);
-              accounts.reload(); if (!result.ok) throw new Error(result.message || 'A conta PSN não foi validada.');
-            }, 'Token PSN validado na Sony.')}>Testar</button>
-            <button className="btn sm" disabled={busy || a.status !== 'linked'} onClick={() => run(async () => {
-              const response = await post<{ok: boolean; devices: PsnDevice[]}>(`/admin/psn-accounts/${a.id}/devices`);
-              setDevices({ source: 'psn', label: a.label, items: response.devices });
-            }, 'Consulta de dispositivos PS5 concluída na Sony.')}>Consultar PS5</button>
-            <button className="btn sm" disabled={busy} onClick={() => run(async () => {
-              const response = await post<{ devices: LanPs4[] }>(`/admin/psn-accounts/${a.id}/devices/ps4-lan`);
-              setDevices({ source: 'lan', label: a.agent_name, items: response.devices });
-            })}>Buscar PS4 na rede local</button>
-            <button className="btn sm" disabled={busy || a.status !== 'linked'} onClick={() => run(async () => {
-              setDiagnostic(null);
-              const result = await post<Ps4Diagnostic>(`/admin/psn-accounts/${a.id}/diagnose/ps4-psn`);
-              setDiagnostic({ ...result, label: a.label });
-            })}>Diagnosticar PS4 via PSN</button>
-            {options.data?.chiaki_import_enabled === true && (
-              <button className="btn sm" disabled={busy || a.status === 'disabled'} onClick={() => run(async () => {
-                await post(`/admin/psn-accounts/${a.id}/import/chiaki`); accounts.reload();
-              }, 'Credencial Chiaki importada. Execute Testar para validar.')}>Importar Chiaki</button>
-            )}
+            <DropdownActions key={platform} disabled={busy} actions={[
+              { id: 'link', label: 'Vincular', disabled: a.status === 'disabled', execute: () => run(async () => {
+                const result = await post<{ login_url: string }>('/admin/psn-accounts/' + a.id + '/login/start');
+                setLogin({ id: a.id, label: a.label, url: result.login_url }); setRedirect('');
+              }) },
+              { id: 'test', label: 'Testar autentica??o', disabled: a.status === 'disabled', execute: () => run(async () => {
+                const result = await post<{ ok: boolean; message?: string }>('/admin/psn-accounts/' + a.id + '/test');
+                accounts.reload(); if (!result.ok) throw new Error(result.message || 'A conta PSN n?o foi validada.');
+              }, 'Autentica??o PSN validada.') },
+              ...(platform !== 'PS4' ? [{ id: 'ps5', label: 'Consultar PS5', disabled: a.status !== 'linked', execute: () => run(async () => {
+                const response = await post<{ devices: PsnDevice[] }>('/admin/psn-accounts/' + a.id + '/devices');
+                setDevices({ source: 'psn', label: a.label, items: response.devices });
+              }) }] : []),
+              ...(platform !== 'PS5' ? [
+                { id: 'ps4-lan', label: 'Buscar PS4 na rede local', execute: () => run(async () => {
+                  const response = await post<{ devices: LanPs4[] }>('/admin/psn-accounts/' + a.id + '/devices/ps4-lan');
+                  setDevices({ source: 'lan', label: a.agent_name, items: response.devices });
+                }) },
+                { id: 'ps4-wan', label: 'Diagnosticar PS4 via PSN', disabled: a.status !== 'linked', execute: () => run(async () => {
+                  const result = await post<Ps4Diagnostic>('/admin/psn-accounts/' + a.id + '/diagnose/ps4-psn');
+                  setDiagnostic({ ...result, label: a.label });
+                }) },
+              ] : []),
+              ...(options.data?.chiaki_import_enabled ? [{ id: 'chiaki', label: 'Importar Chiaki', disabled: a.status === 'disabled', execute: () => run(async () => {
+                await post('/admin/psn-accounts/' + a.id + '/import/chiaki'); accounts.reload();
+              }, 'Credencial importada. Execute o teste de autentica??o.') }] : []),
+              ...(a.status === 'disabled' ? [{ id: 'enable', label: 'Reativar', execute: () => run(async () => {
+                await patch('/admin/psn-accounts/' + a.id, { status: 'pending' }); refresh();
+              }, 'Conta reativada.') }] : []),
+            ]} />
             <button className="btn sm" disabled={busy} onClick={() => run(async () => {
               const yes = await confirm({ title: 'Desativar conta PSN', message: `Desativar ${a.label}? A conta ficará indisponível para novas conexões.`, confirm: 'Desativar', danger: true });
               if (!yes) return;
               await patch(`/admin/psn-accounts/${a.id}`, { status: 'disabled' }); refresh();
             }, 'Conta desativada no agente e no painel.')}>Desativar</button>
-            {a.status === 'disabled' && <button className="btn sm" disabled={busy} onClick={() => run(async () => {
-              await patch(`/admin/psn-accounts/${a.id}`, { status: 'pending' }); accounts.reload();
-            }, 'Conta reativada. Vincule e valide o login Sony novamente.')}>Reativar</button>}
             <button className="btn sm danger" disabled={busy} onClick={() => deletion.remove(
               `/admin/psn-accounts/${a.id}`, 'Excluir conta PSN?',
               (request) => run(async () => { await request(); refresh(); }, 'Conta excluída do agente e do banco.'),
@@ -129,8 +140,8 @@ export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?:
         </div>) : <p>Nenhum PS4 respondeu. Confira se o console está ligado, na rede do agente e com Uso remoto habilitado.</p>}
         <button className="btn sm" onClick={() => setDevices(null)}>Fechar</button>
       </section>}
-      {login && <section className="card stack">
-        <h2>Vincular conta {login.label}</h2>
+      {login && <Modal title={`Vincular conta ${login.label}`} onClose={() => { setLogin(null); setRedirect(''); }}>
+        <div className="stack">
         <p>1. Abra o login oficial Sony. 2. Faça a autenticação. 3. Copie a URL completa da página de retorno e cole abaixo.</p>
         <div><a className="btn primary" href={login.url} target="_blank" rel="noopener noreferrer">Abrir login Sony</a></div>
         <Field label="URL completa de retorno da Sony"><textarea rows={3} value={redirect} onChange={(e) => setRedirect(e.target.value)}
@@ -139,10 +150,10 @@ export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?:
           <button className="btn primary" disabled={busy || !redirect.trim()} onClick={() => run(async () => {
             await post(`/admin/psn-accounts/${login.id}/login/finish`, { redirect_url: redirect.trim() }); refresh();
           }, 'Conta vinculada à PSN com tokens cifrados no agente.')}>Concluir vínculo</button>
-          <button className="btn" onClick={() => { setLogin(null); setRedirect(''); }}>Cancelar</button>
         </div>
         <div className="small muted">Prazo de 10 minutos entre iniciar e concluir. A URL de retorno não é salva no banco.</div>
-      </section>}
+        </div>
+      </Modal>}
     </div>
   );
 }

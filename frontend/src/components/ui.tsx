@@ -1,5 +1,5 @@
 'use client';
-import { cloneElement, isValidElement, useId, useState } from 'react';
+import { cloneElement, isValidElement, useEffect, useId, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
 import type { ApiError } from '@/lib/api';
 
@@ -98,16 +98,28 @@ export function StatusPill({ status, map, tone }: { status: string; map?: Record
   return <span className={`pill ${t}`}>{map?.[status] || LABELS[status] || status}</span>;
 }
 
-export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+export function ModalShell({ title, onClose, children, allowEscape = false, closeLabel = 'Fechar' }: {
+  title: string; onClose: () => void; children: React.ReactNode; allowEscape?: boolean; closeLabel?: string;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const node = dialog.current;
+    node?.showModal();
+    return () => node?.close();
+  }, []);
   return (
-    <div className="modal-bg" onClick={onClose} onKeyDown={(e) => e.key === 'Escape' && onClose()} role="presentation">
-      <div className="card modal" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+    <dialog ref={dialog} className="card modal modal-shell" aria-modal="true" aria-label={title} onCancel={(event) => {
+      // O backdrop nunca fecha o diálogo. Esc é opt-in para telas que não guardam alterações.
+      event.preventDefault();
+      if (allowEscape) onClose();
+    }}>
         <div className="spread" style={{ marginBottom: 12 }}>
           <h2 style={{ margin: 0 }}>{title}</h2>
-          <button className="btn sm" onClick={onClose} aria-label="Fechar" autoFocus>Fechar</button>
+          <button type="button" className="btn sm" onClick={onClose} autoFocus>{closeLabel}</button>
         </div>
         {children}
-      </div>
-    </div>
+    </dialog>
   );
 }
+
+export const Modal = ModalShell;

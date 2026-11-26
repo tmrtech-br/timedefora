@@ -44,14 +44,56 @@ export function useAction() {
   return { run, msg: view, busy };
 }
 
-export function DataTable<T extends Record<string, unknown>>({ rows, cols, empty = 'Nenhum registro.' }: {
-  rows: T[] | null; cols: [string, (r: T) => React.ReactNode][]; empty?: string }) {
+export function ScrollableDataGrid<T extends Record<string, unknown>>({ rows, cols, empty = 'Nenhum registro encontrado.', error }: {
+  rows: T[] | null; cols: [string, (r: T) => React.ReactNode][]; empty?: string; error?: string }) {
+  const viewport = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const container = viewport.current;
+    const header = container?.querySelector('thead');
+    const last = container?.querySelector('tbody tr:nth-child(10)');
+    if (!container || !header || !last || !rows || rows.length <= 10) {
+      container?.style.removeProperty('max-height');
+      return;
+    }
+    const measure = () => {
+      container.style.maxHeight = `${Math.ceil(last.getBoundingClientRect().bottom - container.getBoundingClientRect().top + container.scrollTop)}px`;
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(container.querySelector('table')!);
+    Array.from(container.querySelectorAll('tbody tr')).slice(0, 10).forEach((row) => observer.observe(row));
+    observer.observe(header);
+    measure();
+    return () => observer.disconnect();
+  }, [rows]);
+  if (error) return <Alert kind="error">{error}</Alert>;
   if (!rows) return <div className="skeleton" style={{ height: 120 }} />;
   if (!rows.length) return <div className="empty">{empty}</div>;
   return (
-    <div className="table-wrap"><table className="table"><thead><tr>{cols.map(([h]) => <th key={h}>{h}</th>)}</tr></thead>
+    <div className="table-wrap scrollable-grid" ref={viewport} tabIndex={rows.length > 10 ? 0 : undefined} aria-label={rows.length > 10 ? 'Tabela com rolagem' : undefined}><table className="table"><thead><tr>{cols.map(([h]) => <th key={h}>{h}</th>)}</tr></thead>
       <tbody>{rows.map((r, i) => <tr key={String(r.id ?? i)}>{cols.map(([h, f]) => <td key={h}>{f(r)}</td>)}</tr>)}</tbody></table></div>
   );
+}
+
+export const DataTable = ScrollableDataGrid;
+
+export function DropdownActions({ actions, disabled }: {
+  actions: { id: string; label: string; execute: () => void; disabled?: boolean }[];
+  disabled?: boolean;
+}) {
+  const [selected, setSelected] = useState('');
+  const active = actions.find((item) => item.id === selected && !item.disabled);
+  useEffect(() => { if (selected && !active) setSelected(''); }, [selected, active]);
+  return <div className="row">
+    <select className="btn sm" aria-label="Selecionar ação" value={active?.id ?? ''} disabled={disabled}
+      onChange={(event) => setSelected(event.target.value)}>
+      <option value="">Ações</option>
+      {actions.map((action) => <option key={action.id} value={action.id} disabled={action.disabled}>{action.label}</option>)}
+    </select>
+    {active && <button type="button" className="btn sm primary" disabled={disabled} onClick={() => {
+      setSelected('');
+      active.execute();
+    }}>Executar</button>}
+  </div>;
 }
 
 /** Lista suspensa com marcação múltipla (aparência de <select>, sem caixa com rolagem). */

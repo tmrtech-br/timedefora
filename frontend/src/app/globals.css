@@ -228,6 +228,19 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tabs .on { background: rgba(120, 45, 205, .45); border-color: rgba(170, 90, 255, .65); }
 .modal-bg { position: fixed; inset: 0; z-index: 80; background: rgba(4, 2, 12, .72); display: grid; place-items: center; padding: 18px; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 36px); overflow: auto; }
+.modal-shell { width: min(1040px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); margin: auto; color: inherit; }
+.modal-shell::backdrop { background: rgba(4, 2, 12, .78); }
+.scrollable-grid { overflow: auto; }
+.scrollable-grid th { position: sticky; top: 0; z-index: 1; background: var(--panel, #231a38); }
+.modal-shell .table { min-width: max-content; }
+.accordion-trigger { display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left; }
+.accordion-body { min-width: 0; }
+.accordion-body[hidden] { display: none; }
+.accordion-body:not([hidden]) { animation: accordion-appear .18s ease-out; }
+@keyframes accordion-appear { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .accordion-body:not([hidden]) { animation: none; } }
+.admin-nav { --menu-highlight-bg: rgba(142, 84, 208, .24); }
+.admin-nav a.menu-highlight:not(.on) { background: var(--menu-highlight-bg); }
 .queue-list { display: flex; flex-direction: column; gap: 6px; }
 .queue-row { display: grid; grid-template-columns: 30px 1fr auto auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 9px; background: rgba(255, 255, 255, .03); border: 1px solid transparent; font-size: 13.5px; }
 .queue-row.me { border-color: rgba(177, 60, 255, .6); background: rgba(120, 45, 205, .18); }
