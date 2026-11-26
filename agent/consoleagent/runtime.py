@@ -162,9 +162,21 @@ class ConsoleRuntime:
         except (Fail, ChiakiError, LinkError, GamepadUnavailable, ValueError, OSError) as e:
             j.state, j.message = 'failed', f'{j.step}: {e}'
             log.warning('preparação falhou (%s): %s', t.identifier or t.console_id, j.message)
+            self._release_after_failure()
         except Exception as e:  # nunca derrubar o agente
             j.state, j.message = 'failed', f'{j.step}: erro inesperado {e.__class__.__name__}: {e}'
             log.exception('erro inesperado na preparação')
+            self._release_after_failure()
+
+    def _release_after_failure(self) -> None:
+        """Conexão que falhou não pode ficar meio aberta: o console recusaria a próxima ("sessão em uso")."""
+        if self.session_id or self.link.kind == 'chiaki' or self.streaming:
+            return                      # jogador ligado, chiaki-ng (processo próprio) ou conexão boa (ex.: só o roteiro falhou)
+        try:
+            self._drop_pad()
+            self.link.stop()
+        except Exception as e:
+            log.warning('falha ao liberar a conexão depois do erro: %s', e)
 
     def _bringup(self, t: Target, j: Job) -> str:
         link, cfg = self.link, self.cfg

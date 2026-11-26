@@ -551,6 +551,20 @@ def set_console_status(cid: uuid.UUID, body: StatusIn, p: Principal = Depends(OP
         return _console_view(conn, one(conn, 'select * from consoles where id=%s', (cid,)))
 
 
+def _release_agent_connection(ref) -> None:
+    """Encerra a conexão que o agente mantém com o console (melhor esforço).
+
+    Sem isso, excluir ou reconfigurar um console deixava a sessão Remote Play aberta no agente e o PS4
+    recusava as próximas conexões ("Another Remote Play session is connected to host").
+    """
+    if ref is None or ref.method in ('unconfigured', 'simulated'):
+        return
+    try:
+        get_adapter(ref.method).disconnect(ref)
+    except Exception:  # agente fora do ar ou método sem agente: nada a liberar daqui
+        pass
+
+
 @router.delete('/consoles/{cid}')
 def delete_console(cid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     with tx() as conn:
@@ -565,6 +579,7 @@ def delete_console(cid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)
                            'Coloque em manutenção com reembolso (ou remarque as reservas) antes de excluir.',
                            reservations=[{'code': r['code'], 'starts_at': r['starts_at'].isoformat()} for r in fut])
         audit_event(conn, 'console.deleted', 'consoles', cid, reason=body.reason)
+        previous = console_ref(conn, cid)
         conn.execute("update consoles set deleted_at=%s, is_published=false, status='disabled' where id=%s", (timeutil.now(), cid))
         conn.execute("update console_game_assignments set status='archived' where console_id=%s and status='active' and ends_at > %s", (cid, timeutil.now()))
         conn.execute('''update console_connection_configs
@@ -572,6 +587,7 @@ def delete_console(cid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)
                             connection_status=%s, method=%s
                         where console_id=%s''',
                      ('unconfigured', 'unconfigured', cid))
+    _release_agent_connection(previous)
     return {'ok': True}
 
 
@@ -714,6 +730,8 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
             insert(conn, 'console_method_changes', {'console_id': cid, 'from_method': cfg['method'], 'to_method': body.method,
                                                     'config_snapshot': Jsonb(jsonable(cfg)), 'reason': body.reason, 'changed_by': p.user_id})
         data = body.model_dump(exclude={'reason'})
+        connection_fields = ('method', 'agent_id', 'network_route', 'internal_host', 'console_identifier', 'psn_account_id')
+        previous = console_ref(conn, cid) if any(str(cfg.get(k) or '') != str(data.get(k) or '') for k in connection_fields) else None
         data['connection_status'] = 'unconfigured' if body.method == 'unconfigured' else 'offline'
         # Qualquer alteração exige nova validação completa.
         data.update({'video_validated_at': None, 'audio_validated_at': None, 'control_validated_at': None,
@@ -721,7 +739,9 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
         update(conn, 'console_connection_configs', cfg['id'], data)
         conn.execute("update consoles set is_published=false, status=%s where id=%s",
                      ('unconfigured' if body.method == 'unconfigured' else 'offline', cid))
-        return _console_view(conn, one(conn, 'select * from consoles where id=%s', (cid,)))
+        view = _console_view(conn, one(conn, 'select * from consoles where id=%s', (cid,)))
+    _release_agent_connection(previous)          # a conexão antiga do agente não vale para a nova configuração
+    return view
 
 
 @router.post('/consoles/{cid}/connection/rollback/{change_id}')

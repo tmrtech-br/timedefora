@@ -215,3 +215,55 @@ def test_stream_stop_with_standby_only_for_active_session():
     res = client.post('/v1/consoles/c1/stream/stop', json={**body, 'session_id': 's1', 'standby': True}, headers=headers)
     assert res.json()['data']['standby'] is True and link.standbys == 1 and link.stops >= 1
     assert app.state.runtimes['c1'].session_id is None
+
+
+def test_stream_stop_notifies_console_even_after_session_marked_stop():
+    """Session.stop marca o stop_event (compartilhado) antes de chamar stream.stop: o aviso ainda precisa sair."""
+    from pyremoteplay.stream import RPStream
+
+    stream = RPStream.__new__(RPStream)
+    stream._stop_event = asyncio.Event()
+    stream._stop_event.set()                       # como a sessão deixa antes de chamar stream.stop()
+    calls = []
+    stream._disconnect = lambda: calls.append('disconnect')
+    stream._protocol = type('P', (), {'close': lambda self: calls.append('close')})()
+    stream._cb_stop = None
+    stream.stop()
+    stream.stop()                                  # idempotente
+    assert calls == ['disconnect', 'close']
+
+
+def test_device_disconnect_stops_session_that_never_ran():
+    from pyremoteplay.device import RPDevice
+
+    stopped = []
+    session = type('S', (), {'is_stopped': False, 'is_running': False,
+                             'stop': lambda self: stopped.append(True)})()
+    dev = RPDevice.__new__(RPDevice)
+    dev._session = session
+    dev.disconnect()
+    assert stopped == [True] and dev._session is None
+
+
+def test_failed_bringup_releases_half_open_connection():
+    class HalfOpen(FlakyPsnLink):
+        def start(self, t, sleep=None):
+            self.starts += 1
+            self._on = False                      # conectou mas nunca transmitiu
+
+    link = HalfOpen(failures=0)
+    rt = ConsoleRuntime(cfg(stream_timeout_seconds=0.01), Deps(link=link, sleep=lambda s: None))
+    t = psn_target()
+    t.route, t.host = 'lan', '192.168.0.10'
+    rt.d.discover = lambda *a: [type('C', (), {'state': 'ligado'})()]
+    job = rt.start_job(t, 'connect', wait=5)
+    assert job.state == 'failed' and link.stops >= 1
+
+
+def test_refusal_messages_are_actionable():
+    from consoleagent.links import _explain_refusal
+    from pyremoteplay.errors import RPErrorHandler
+
+    busy = RPErrorHandler()(0x80108B13)
+    assert 'reinicie o PS4' in _explain_refusal(busy)
+    assert 'outra sessão' in _explain_refusal(RPErrorHandler()(0x80108B10))

@@ -364,9 +364,13 @@ class DirectLink:
             raise LinkError('Não foi possível criar a sessão Remote Play (perfil de usuário inválido).')
         self.device = dev
         if not self._run(dev.connect(), self.SESSION_TIMEOUT):
-            raise LinkError('O console recusou a conexão: ' + (getattr(session, 'error', '') or 'sem detalhes.'))
+            reason = getattr(session, 'error', '') or 'sem detalhes.'
+            self.stop()
+            raise LinkError('O console recusou a conexão: ' + _explain_refusal(reason))
         if not self._run(dev.async_wait_for_session(self.SESSION_TIMEOUT), self.SESSION_TIMEOUT + 5):
-            raise LinkError('A sessão não ficou pronta no prazo: ' + (getattr(session, 'error', '') or 'sem detalhes.'))
+            reason = getattr(session, 'error', '') or 'sem detalhes.'
+            self.stop()                                  # não deixar meia sessão aberta no console
+            raise LinkError('A sessão não ficou pronta no prazo: ' + _explain_refusal(reason))
         dev.controller.start()
         self.error = ''
 
@@ -394,10 +398,15 @@ class DirectLink:
         d, self.device = self.device, None
         if d is not None:
             try:
-                d.controller.stop()
-                d.disconnect()
+                # No laço da própria sessão (os sockets são dele) e com uma pausa curta para o aviso de
+                # desconexão chegar ao console antes de fechar: sem isso o PS4 mantém a sessão presa.
+                self._run(_shutdown_device(d), 5)
             except Exception as e:
                 log.warning('erro ao encerrar a sessão Remote Play: %s', e)
+                try:
+                    d.disconnect()
+                except Exception:
+                    pass
         if self.receiver is not None:
             try:
                 self.receiver.close()
@@ -575,6 +584,28 @@ class PsnLink(DirectLink):
         if self._controller is None:
             raise GamepadUnavailable('Conecte ao PS4 pela PSN antes de usar o controle.')
         return DirectPad(self._controller)
+
+
+async def _shutdown_device(dev) -> None:
+    try:
+        dev.controller.stop()
+    finally:
+        dev.disconnect()
+        await asyncio.sleep(0.3)
+
+
+_REFUSALS = {
+    'Another Remote Play session is connected to host':
+        'o PS4 já tem outra sessão de Uso Remoto aberta (celular, PC ou uma sessão anterior que não foi encerrada). '
+        'Feche o outro aparelho; se não houver nenhum, aguarde 1 a 2 minutos ou reinicie o PS4.',
+    'Remote Play busy on host; previous session not released':
+        'o PS4 ainda não liberou a sessão de Uso Remoto anterior. Aguarde 1 a 2 minutos; se continuar, reinicie o PS4.',
+    'RP Crashed on Host; Host needs restart': 'o Uso Remoto travou no PS4. Reinicie o console.',
+}
+
+
+def _explain_refusal(reason: str) -> str:
+    return _REFUSALS.get(reason, reason)
 
 
 def _log_psn_end(task: asyncio.Task) -> None:
