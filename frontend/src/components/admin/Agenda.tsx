@@ -169,17 +169,17 @@ export default function Agenda() {
         </div>
       </section>
 
-      <section className="card stack">
-        <div className="spread"><h2 style={{ margin: 0 }}>Próximos vínculos</h2>
+      <CollapsibleCard title="Próximos vínculos" className="card stack">
+        <div className="spread">
           <select className="btn sm" value={listConsole} onChange={(e) => { setListConsole(e.target.value); setShowDays(3); }} aria-label="Filtrar por console">
             <option value="">Todos os consoles</option>{consoles?.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
         <DataTable rows={assigns.data ? groups.slice(0, showDays).flatMap(([day, rows]) => rows.map((row) => ({ ...row, day }))) : null}
-          error={assigns.error?.message} empty="Nenhum v?nculo futuro." cols={[
+          error={assigns.error?.message} empty="Nenhum vínculo futuro." cols={[
             ['Dia', (r) => r.day], ['Console', (r) => r.console_name], ['Jogo', (r) => r.game_title],
-            ['In?cio', (r) => dateTime(r.starts_at)], ['Fim', (r) => dateTime(r.ends_at)],
-            ['Dura??o', (r) => minutesLabel(mins(r.starts_at, r.ends_at))],
-            ['Recorr?ncia', (r) => r.recurrence_group_id ? 'recorrente' : '?nica'],
-            ['A??es', (r) => <div className="row">
+            ['Início', (r) => dateTime(r.starts_at)], ['Fim', (r) => dateTime(r.ends_at)],
+            ['Duração', (r) => minutesLabel(mins(r.starts_at, r.ends_at))],
+            ['Recorrência', (r) => r.recurrence_group_id ? 'recorrente' : 'única'],
+            ['Ações', (r) => <div className="row">
               <button className="btn sm" onClick={() => { setDlgErr(''); setDlg({ kind: 'end', a: r, ends_at: toLocalInput(r.ends_at), reason: '' }); }}>Alterar fim</button>
               <button className="btn sm danger" onClick={() => { setDlgErr(''); setDlg({ kind: 'cancel', a: r, refund: false, reason: '' }); }}>Cancelar</button>
             </div>],
