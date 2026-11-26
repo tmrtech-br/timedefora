@@ -195,3 +195,11 @@ html { scroll-padding-top: calc(var(--header-h) + 16px); }
   .catalog-filters .catalog-search { grid-column: 1 / -1; }
   .catalog-filters select { width: 100%; }
 }
+
+@media (max-width: 420px) {
+  .footer-item { min-width: 0; padding-right: 8px; white-space: normal; }
+  .footer-devices { width: 100%; }
+}
+@media (max-width: 350px) {
+  .catalog-filters { grid-template-columns: minmax(0, 1fr); }
+}
