@@ -24,7 +24,7 @@ export default function Agents() {
       <PageHeader title="Agentes locais e dispositivos" subtitle="PC ao lado dos consoles: captura, encode, stream e interfaces de controle." />
       {msg}
       {deletion.dialog}
-      {secret && <Alert kind="warn"><span>Tokens gerados (exibidos uma única vez): agente→API <code>{secret.agent_token}</code> · API→agente <code>{secret.api_to_agent_token}</code></span></Alert>}
+      {secret && <Alert kind="warn" dismissible={false}><span>Tokens gerados (exibidos uma única vez): agente→API <code>{secret.agent_token}</code> · API→agente <code>{secret.api_to_agent_token}</code></span></Alert>}
       <section className="card stack"><h2>Agentes</h2><NewRecord title="Novo agente">{(close) => <><div className="grid3">
         <Field label="Nome"><input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value })} /></Field>
         <Field label="Host"><input maxLength={253} value={a.host_name} onChange={(e) => setA({ ...a, host_name: e.target.value })} /></Field>

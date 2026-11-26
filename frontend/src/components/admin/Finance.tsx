@@ -31,13 +31,13 @@ export default function Finance() {
           {!rangeErr && ['payments', 'reservations', 'sessions', 'refunds'].map((k) => <a key={k} className="btn sm" href={`/api/admin/reports/export.csv?kind=${k}&${range}`}>CSV {k}</a>)}
           <button className="btn sm primary" disabled={Boolean(rangeErr)} onClick={() => run(async () => {
             const report = await get<Sum>(`/admin/reports/summary?${range}`);
-            downloadReportPdf('Relatório financeiro LocaPlay', `Período: ${from.split('-').reverse().join('/')} a ${to.split('-').reverse().join('/')}`, [
+            downloadReportPdf('Relatório financeiro timedefora', `Período: ${from.split('-').reverse().join('/')} a ${to.split('-').reverse().join('/')}`, [
               `Receita bruta: ${money(report.gross_cents)}`, `Reembolsos: ${money(report.refunds_cents)}`,
               `Receita líquida: ${money(report.net_cents)}`, `Contestações: ${report.chargebacks}`,
               `Sessões: ${report.sessions} | Minutos jogados: ${report.minutes_played} | Ausências: ${report.no_shows}`, '',
               'Receita por jogo', ...report.revenue_by_game.map((row) => `${row.title} | ${row.payments} pagamentos | ${money(Number(row.revenue_cents))}`),
               '', 'Receita por console', ...report.revenue_by_console.map((row) => `${row.name} | ${row.minutes_sold} min | ${money(Number(row.revenue_cents))}`),
-            ], `locaplay-financeiro-${from}-${to}.pdf`);
+            ], `timedefora-financeiro-${from}-${to}.pdf`);
           }, 'Relatório PDF gerado.')}>Exportar PDF</button></div>
         {rangeErr && <Alert kind="error">{rangeErr}</Alert>}
         {sum.data && !rangeErr && <div className="kpis">{[['Bruto', money(sum.data.gross_cents)], ['Reembolsos', money(sum.data.refunds_cents)], ['Líquido', money(sum.data.net_cents)], ['Contestações', sum.data.chargebacks],

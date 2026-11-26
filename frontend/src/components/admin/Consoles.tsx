@@ -2,7 +2,7 @@
 import { ProgressModal } from '@/components/admin/ProgressModal';
 import { useEffect, useState } from 'react';
 import { Eraser } from 'lucide-react';
-import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
+import { Alert, Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, get, patch, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
@@ -144,9 +144,9 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
         
         <Field label="Método (obrigatório)"><select value={m} onChange={(e) => set('method', e.target.value)}>
           {methods?.map((x) => <option key={x.method} value={x.method} disabled={!x.applicable}>{x.label}{!x.applicable ? ' — não aplicável a esta plataforma' : ''}</option>)}</select></Field>
-        {m === 'remote_play_chiaki' && cfg.network_route !== 'lan' && <div className="alert warn"><span><b>Console em outra rede (pela internet):</b> mais atraso e menos estabilidade que na rede local;
-          ligar o console do modo de repouso pode não funcionar; o PS4 deve ficar em modo de repouso com "Permanecer conectado à Internet" ativo. Indicado para testes — para clientes, prefira um agente na mesma rede do console.</span></div>}
-        {info && <div className={`alert ${info.status === 'simulated' ? 'warn' : 'info'}`}><span><b>{info.label}</b> · {info.operational ? 'operacional' : 'NÃO validado com hardware'}<br />{info.guide}</span></div>}
+        {m === 'remote_play_chiaki' && cfg.network_route !== 'lan' && <Alert kind="warn"><span><b>Console em outra rede (pela internet):</b> mais atraso e menos estabilidade que na rede local;
+          ligar o console do modo de repouso pode não funcionar; o PS4 deve ficar em modo de repouso com "Permanecer conectado à Internet" ativo. Indicado para testes — para clientes, prefira um agente na mesma rede do console.</span></Alert>}
+        {info && <Alert key={m} kind={info.status === 'simulated' ? 'warn' : 'info'}><span><b>{info.label}</b> · {info.operational ? 'operacional' : 'NÃO validado com hardware'}<br />{info.guide}</span></Alert>}
         {m !== 'unconfigured' && <div className="grid3">
           <Field label="Agente local / PC host"><select value={String(cfg.agent_id)} onChange={(e) => set('agent_id', e.target.value)}><option value="">Selecione</option>
             {agents?.filter((a) => (m === 'simulated') === a.is_simulated).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
@@ -189,7 +189,7 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
               {c.platform_code === 'PS4' ? (
                 <p className="small muted">Usar o PS4 principal da conta selecionada.</p>
               ) : (
-                <p className="small muted" role="alert">Remote Play nativo pela PSN ainda funciona só com PS4. Use a rota “Mesma rede” para o PS5.</p>
+                <Alert kind="warn">Remote Play nativo pela PSN ainda funciona só com PS4. Use a rota “Mesma rede” para o PS5.</Alert>
               )}
             </>}
             <label className="check"><input type="checkbox" checked={!!cfg.standby_after_session} onChange={(e) => set('standby_after_session', e.target.checked)} />Hibernar ao terminar (rota PSN do PS4)</label>

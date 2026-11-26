@@ -6,7 +6,7 @@ test.describe('Página inicial e navegação', () => {
     await page.setViewportSize({ width: 1536, height: 864 });
     await page.goto('/');
     const hero = page.locator('.hero');
-    await expect(hero.getByRole('heading', { level: 1 })).toHaveText('LocaPlay');
+    await expect(hero.getByRole('heading', { level: 1 })).toHaveText('timedefora');
     await expect(hero.locator('.hero-feature')).toContainText('GTA VI');
     await expect(page.locator('.hero-panel .price-line')).toHaveCount(2);
     await expect(page.locator('.hero-panel')).toContainText('10 min — R$ 30');
@@ -40,10 +40,10 @@ test.describe('Página inicial e navegação', () => {
   test('botões e links levam ao destino correto', async ({ page }) => {
     await page.setViewportSize({ width: 1536, height: 864 });
     test.setTimeout(120_000);
-    const cases: [string, RegExp][] = [['Jogos', /\/jogos$/], ['Como Funciona', /\/como-funciona$/], ['Planos', /\/planos$/], ['Suporte', /\/suporte$/]];
+    const cases: [string, RegExp][] = [['Jogos', /\/jogos$/], ['Como Funciona', /\/como-funciona$/], ['Suporte', /\/suporte$/]];
     for (const [label, url] of cases) {
       await page.goto('/');
-      await expect(page.getByRole('heading', { name: 'LocaPlay' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'timedefora' })).toBeVisible();
       await page.locator('.top-nav').getByRole('link', { name: label }).click();
       await expect(page).toHaveURL(url, { timeout: 20_000 });
     }

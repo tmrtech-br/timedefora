@@ -225,7 +225,6 @@ export default function OwnerInventory() {
               close();
             }, 'Rascunho criado para revisão da equipe.');
           }}>
-            {msg}
             <p>Plataforma do console: {current.platform_code}</p>
             <GameRegistrationFields f={gameDraft} set={(key, value) => setGameDraft((form) => ({ ...form, [key]: value }))} owner />
             <div><button className="btn primary" disabled={busy || String(gameDraft.title).trim().length < 2}>Cadastrar rascunho</button></div>

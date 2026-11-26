@@ -112,10 +112,11 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
         if action == 'stream/webrtc':
             return await _webrtc(console_id, sid, body.get('offer') or {}, body)
         # As ações podem esperar (capturas de tela, preparação): fora do laço assíncrono do servidor.
+        peer = hub.peers.get(console_id) if action == 'disconnect' else None
         res = await run_in_threadpool(handle, console_id, action, body)
         if action in ('input/revoke', 'stream/stop'):
             await hub.close(console_id, sid or None)          # vídeo acompanha o controle
-        elif action == 'disconnect':
+        elif action == 'disconnect' and res['ok'] and peer is not None and hub.peers.get(console_id) is peer:
             await hub.close(console_id)
         return res
 
@@ -143,6 +144,11 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
         return _result(True, msg, 'streaming', {'answer': answer})
 
     def handle(console_id: str, action: str, body: dict):
+        if action == 'disconnect':
+            current = runtimes.get(console_id)
+            if current is not None and not current.disconnect_if_idle():
+                return _result(False, 'Há uma sessão de jogo em andamento neste console.', 'streaming')
+            return _result(True, 'Conexão com o console encerrada e controle removido.', 'stopped')
         t = target_from(cfg, console_id, body)
         r = rt(console_id, body)
         sid = str(body.get('session_id') or '')
@@ -195,9 +201,6 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             if cfg.stop_chiaki_after_session:
                 r.disconnect()
             return _result(True, 'Sessão encerrada no console.', 'idle' if r.streaming else 'stopped')
-        if action == 'disconnect':
-            r.disconnect()
-            return _result(True, 'Conexão com o console encerrada e controle removido.', 'stopped')
         if action == 'test/video-audio':
             return _test_video_audio(r)
         if action == 'test/controls':

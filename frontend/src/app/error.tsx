@@ -1,5 +1,6 @@
 'use client';
 import { useEffect } from 'react';
+import { Alert } from '@/components/ui';
 
 /** Erro numa página: se for arquivo desatualizado (site atualizado com a aba aberta), recarrega; senão oferece tentar de novo. */
 export default function PageError({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
@@ -14,12 +15,12 @@ export default function PageError({ error, reset }: { error: Error & { digest?: 
     }
   }, [chunk]);
   return (
-    <div className="card stack" role="alert" style={{ maxWidth: 560, margin: '40px auto', textAlign: 'center' }}>
-      <h2 style={{ margin: 0 }}>{chunk ? 'O site foi atualizado' : 'Algo deu errado nesta página'}</h2>
-      <p className="muted" style={{ margin: 0 }}>{chunk ? 'Recarregue para carregar a versão nova.' : 'Tente novamente. Se continuar, abra um chamado no suporte.'}</p>
-      <div className="row" style={{ justifyContent: 'center' }}>
-        <button className="btn primary" onClick={() => (chunk ? window.location.reload() : reset())}>{chunk ? 'Recarregar' : 'Tentar novamente'}</button>
+    <Alert kind={chunk ? 'warn' : 'error'} dismissible={false}>
+      <div className="stack">
+        <strong>{chunk ? 'O site foi atualizado' : 'Algo deu errado nesta página'}</strong>
+        <span>{chunk ? 'Recarregue para carregar a versão nova.' : 'Tente novamente. Se continuar, abra um chamado no suporte.'}</span>
+        <div><button className="btn primary" onClick={() => (chunk ? window.location.reload() : reset())}>{chunk ? 'Recarregar' : 'Tentar novamente'}</button></div>
       </div>
-    </div>
+    </Alert>
   );
 }

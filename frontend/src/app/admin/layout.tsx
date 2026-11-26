@@ -21,7 +21,7 @@ const RANK: Record<string, number> = { client: 0, operator: 1, admin: 2, superad
 function Guard({ children }: { children: React.ReactNode }) {
   const { me } = useAuth();
   const path = usePathname();
-  if (!isStaff(me)) return <Alert kind="error">Acesso restrito à equipe LocaPlay.</Alert>;
+  if (!isStaff(me)) return <Alert kind="error">Acesso restrito à equipe timedefora.</Alert>;
   if (!me!.mfa_enabled) return <Alert kind="warn"><span>Ative a autenticação em dois fatores em <Link className="link-purple" href="/configuracoes">Configurações</Link> para acessar o painel.</span></Alert>;
   if (!me!.mfa_verified) return <Alert kind="warn"><span>Confirme o segundo fator: <Link className="link-purple" href={`/mfa?proximo=${path}`}>verificar código</Link>.</span></Alert>;
   const rank = Math.max(...me!.roles.map((r) => RANK[r] ?? 0));

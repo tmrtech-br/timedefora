@@ -3,7 +3,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import GameCard from '@/components/GameCard';
-import { Alert, Empty, ErrorBox, PageHeader, Skeleton } from '@/components/ui';
+import { Empty, ErrorBox, PageHeader, Skeleton } from '@/components/ui';
+import { toast } from '@/components/Toaster';
 import { del, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
@@ -42,17 +43,15 @@ function Catalog() {
   const { data, error, loading, reload } = useApi<G[]>(`/catalog/games?${qs}`, 20000);
   const filters = useApi<Filters>('/catalog/filters').data;
   const favs = useApi<string[]>(me ? '/me/favorites' : null);
-  const [favoriteFeedback, setFavoriteFeedback] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
   async function toggleFav(id: string) {
     if (!me) return router.push('/entrar?proximo=/jogos');
     const on = favs.data?.includes(id);
-    setFavoriteFeedback(null);
     try {
       await (on ? del(`/me/favorites/${id}`) : put(`/me/favorites/${id}`));
       favs.setData(on ? (favs.data || []).filter((x) => x !== id) : [...(favs.data || []), id]);
-      setFavoriteFeedback({ kind: 'ok', text: on ? 'Jogo removido dos favoritos.' : 'Jogo adicionado aos favoritos.' });
+      toast('ok', on ? 'Jogo removido dos favoritos.' : 'Jogo adicionado aos favoritos.');
     } catch {
-      setFavoriteFeedback({ kind: 'error', text: 'Não foi possível atualizar os favoritos. Tente novamente.' });
+      toast('error', 'Não foi possível atualizar os favoritos. Tente novamente.');
     }
   }
   return (
@@ -74,7 +73,6 @@ function Catalog() {
           <option value="popularity">Mais populares</option><option value="price">Menor preço</option><option value="title">Nome</option><option value="release">Lançamentos</option></select></label>
       </div>
       <ErrorBox error={error} onRetry={reload} />
-      {favoriteFeedback && <Alert kind={favoriteFeedback.kind}>{favoriteFeedback.text}</Alert>}
       {loading && !data && !error ? <div className="games-grid" style={{ marginLeft: 0 }}>{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} h={182} />)}</div>
         : data && data.length ? (
           <div className="games-grid" style={{ marginLeft: 0 }}>

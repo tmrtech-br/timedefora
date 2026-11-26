@@ -1,6 +1,6 @@
 'use client';
 import { useMemo, useState } from 'react';
-import { Field, Modal, PageHeader } from '@/components/ui';
+import { Alert, Field, Modal, PageHeader } from '@/components/ui';
 import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime, minutesLabel, time } from '@/lib/format';
@@ -195,7 +195,7 @@ export default function Agenda() {
               : <label className="check"><input type="checkbox" checked={dlg.refund} onChange={(e) => setDlg({ ...dlg, refund: e.target.checked })} />Cancelar e reembolsar as reservas afetadas</label>}
             <Field label="Justificativa (registrada na auditoria)" required><input maxLength={500} value={dlg.reason} onChange={(e) => setDlg({ ...dlg, reason: e.target.value })} /></Field>
             {dlg.kind === 'end' && <p className="small dim" style={{ margin: 0 }}>Reservas que deixarem de caber na nova janela: “Salvar” bloqueia a alteração e lista as reservas; “Salvar e reembolsar” cancela e reembolsa essas reservas.</p>}
-            {dlgErr && <span className="err small" role="alert">{dlgErr}</span>}
+            {dlgErr && <Alert kind="error">{dlgErr}</Alert>}
             <div className="row">
               {dlg.kind === 'end' ? <>
                 <button className="btn primary" disabled={busy} onClick={() => confirmDialog(false)}>Salvar</button>
@@ -203,7 +203,6 @@ export default function Agenda() {
               </> : <button className="btn danger" disabled={busy} onClick={() => confirmDialog(false)}>Confirmar cancelamento</button>}
               <button className="btn" onClick={() => setDlg(null)}>Voltar</button>
             </div>
-            {msg}
           </div>
         </Modal>)}
     </div>

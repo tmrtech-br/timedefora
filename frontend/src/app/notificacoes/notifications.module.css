@@ -1,0 +1,11 @@
+﻿.list[data-scrollable='true'] {
+  overflow-y: auto;
+  padding-inline-end: 4px;
+  scrollbar-color: var(--purple) var(--bg2);
+  scrollbar-width: thin;
+}
+
+.list > div { flex: none; }
+.notification { overflow-wrap: anywhere; }
+.notification[data-unread='true'] { border-color: #c7b2ff80; }
+.notification p { margin: 6px 0; white-space: pre-wrap; }

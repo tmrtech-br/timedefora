@@ -1,5 +1,5 @@
 """Provedores de pagamento (adaptador). Mercado Pago Checkout Pro reduz o escopo PCI: dados de cartão
-nunca passam pela LocaPlay. O provedor 'simulated' existe SOMENTE para desenvolvimento e é recusado em produção."""
+nunca passam pela timedefora. O provedor 'simulated' existe SOMENTE para desenvolvimento e é recusado em produção."""
 import hashlib
 import hmac
 import time
@@ -57,7 +57,7 @@ class MercadoPagoProvider:
         excluded = ([{'id': 'credit_card'}, {'id': 'debit_card'}, {'id': 'ticket'}, {'id': 'atm'}] if method == 'pix'
                     else [{'id': 'ticket'}, {'id': 'atm'}, {'id': 'bank_transfer'}])
         body = {
-            'items': [{'id': str(reservation['id']), 'title': f"LocaPlay — {game_title} ({reservation['minutes']} min)",
+            'items': [{'id': str(reservation['id']), 'title': f"timedefora — {game_title} ({reservation['minutes']} min)",
                        'quantity': 1, 'currency_id': 'BRL', 'unit_price': round(payment['amount_cents'] / 100, 2)}],
             'external_reference': str(payment['id']),
             'notification_url': settings.api_public_url.rstrip('/') + '/webhooks/mercadopago',
@@ -67,7 +67,7 @@ class MercadoPagoProvider:
             'expires': True,
             'expiration_date_to': payment['expires_at'].isoformat(timespec='milliseconds'),
             'payment_methods': {'excluded_payment_types': excluded, 'installments': 1},
-            'statement_descriptor': 'LOCAPLAY',
+            'statement_descriptor': 'TIMEDEFORA',
         }
         try:
             r = httpx.post(f'{MP_API}/checkout/preferences', json=body, headers=self._headers(payment['idempotency_key']), timeout=15)

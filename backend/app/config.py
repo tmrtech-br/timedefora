@@ -36,7 +36,7 @@ class Settings:
     session_days: int = field(default_factory=lambda: int(os.getenv('SESSION_DAYS', '14')))
     # E-mail: dev (grava em dev_mailbox), smtp ou resend
     email_provider: str = field(default_factory=lambda: os.getenv('EMAIL_PROVIDER', 'dev'))
-    email_from: str = field(default_factory=lambda: os.getenv('EMAIL_FROM', 'LocaPlay <nao-responda@locaplay.local>'))
+    email_from: str = field(default_factory=lambda: os.getenv('EMAIL_FROM', 'timedefora <nao-responda@locaplay.local>'))
     smtp_host: str = field(default_factory=lambda: os.getenv('SMTP_HOST', ''))
     smtp_port: int = field(default_factory=lambda: int(os.getenv('SMTP_PORT', '587')))
     smtp_user: str = field(default_factory=lambda: os.getenv('SMTP_USER', ''))

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Headphones, Send, X } from 'lucide-react';
 import { ApiError, get, post } from '@/lib/api';
 import { TICKET_STATUS, time } from '@/lib/format';
+import { Alert } from './ui';
 
 type Msg = { id: string; body: string; is_staff: boolean; author: string; created_at: string };
 type Ticket = { id: string; subject: string; status: string; reservation_id: string | null; messages?: Msg[] };
@@ -72,7 +73,7 @@ export default function SupportPanel({ open, onClose, reservationId, game, conso
         {!loaded ? <p className="small muted">Carregando…</p> : ticket ? (
           (ticket.messages || []).map((m) => (
             <div key={m.id} className={`support-msg ${m.is_staff ? 'staff' : 'me'}`}>
-              <span className="who">{m.is_staff ? 'Equipe LocaPlay' : 'Você'} · {time(m.created_at)}</span>
+              <span className="who">{m.is_staff ? 'Equipe timedefora' : 'Você'} · {time(m.created_at)}</span>
               <p>{m.body}</p>
             </div>))
         ) : (
@@ -83,7 +84,7 @@ export default function SupportPanel({ open, onClose, reservationId, game, conso
         {ticket?.messages && !ticket.messages.some((m) => m.is_staff) && <p className="small dim" style={{ margin: 0 }}>Chamado recebido. A equipe responde aqui; você pode continuar jogando.</p>}
       </div>
       <footer>
-        {err && <span className="err small" role="alert">{err}</span>}
+        {err && <Alert kind="error">{err}</Alert>}
         <div className="support-input">
           <textarea rows={2} maxLength={5000} value={text} placeholder={ticket ? 'Escreva uma mensagem…' : 'Descreva o problema…'}
             onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />

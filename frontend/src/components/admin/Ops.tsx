@@ -53,7 +53,7 @@ export function Reservations() {
           }}>Cancelar</button>
           {['confirmed', 'needs_resolution'].includes(String(r.status)) && <button className="btn sm" onClick={() => setResched({ id: String(r.id), start: '', reason: '' })}>Remarcar</button>}</div> : null]]} /></section>
       {resched && <Modal title="Remarcar reserva" onClose={() => setResched(null)}>
-        <div className="stack">{msg}
+        <div className="stack">
           <Field label="Novo horário"><input type="datetime-local" value={resched.start} onChange={(e) => setResched({ ...resched, start: e.target.value })} /></Field>
           <Field label="Justificativa"><input value={resched.reason} onChange={(e) => setResched({ ...resched, reason: e.target.value })} /></Field>
           <div><button className="btn primary" onClick={() => run(async () => {
@@ -165,7 +165,6 @@ export function Sessions() {
               }}>Resolver incidente</button>
               <button className="btn" onClick={() => setRes(null)}>Voltar</button>
             </div>
-            {msg}
           </div>
         </Modal>)}
     </div>

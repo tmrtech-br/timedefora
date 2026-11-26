@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
-  Bell, CirclePlay, CreditCard, Crown, Gamepad2, Headphones, Heart, Home, Info, ListOrdered, LogOut, Menu, Monitor, Receipt,
+  Bell, CirclePlay, CreditCard, Gamepad2, Headphones, Heart, Home, Info, ListOrdered, LogOut, Menu, Monitor, Receipt,
   Settings, ShieldCheck, ShieldHalf, Smartphone, Tablet, UserRound, UserRoundPlus, X, Zap,
 } from 'lucide-react';
 import { useAuth, isStaff } from '@/lib/auth';
@@ -11,7 +11,7 @@ import { get } from '@/lib/api';
 import Toaster from '@/components/Toaster';
 
 function LogoIcon() {
-  // Ícone próprio (cartucho de videogame) — identidade LocaPlay
+  // Ícone próprio (cartucho de videogame) — identidade timedefora
   return (
     <svg className="logo-icon" viewBox="0 0 48 36" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" aria-hidden>
       <path d="M14 2h20a3 3 0 0 1 3 3v22h-3v5H14v-5h-3V5a3 3 0 0 1 3-3Z" />
@@ -27,7 +27,6 @@ const TOP = [
   { href: '/', label: 'Início', icon: Home },
   { href: '/jogos', label: 'Jogos', icon: Gamepad2 },
   { href: '/como-funciona', label: 'Como Funciona', icon: Info },
-  { href: '/planos', label: 'Planos', icon: Crown },
   { href: '/suporte', label: 'Suporte', icon: Headphones },
 ];
 const SIDE_MAIN = [
@@ -53,8 +52,8 @@ export function Header({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
       <button className="icon-btn mobile-toggle" onClick={onMenu} aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'} aria-expanded={menuOpen} aria-controls="player-sidebar">
         {menuOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
-      <Link href="/" className="logo" aria-label="LocaPlay — página inicial">
-        <LogoIcon /><span className="logo-text">Loca<b>Play</b></span>
+      <Link href="/" className="logo" aria-label="timedefora — página inicial">
+        <LogoIcon /><span className="logo-text">timedefora</span>
       </Link>
       <nav className="top-nav" aria-label="Navegação principal">
         {TOP.map((i) => (
@@ -163,17 +162,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('keydown', onEscape);
   }, [open]);
   return (
-    <>
+    <Toaster>
       <a href="#conteudo" className="skip-link">Pular para o conteúdo</a>
       <Header onMenu={() => setOpen(!open)} menuOpen={open} />
       <div className="shell">
         <Sidebar open={open} onNavigate={() => setOpen(false)} />
         <div className="main">
           <main id="conteudo" tabIndex={-1} className={path === '/' ? 'content' : 'content pad'}>{children}</main>
-          <Toaster />
           <Footer />
         </div>
       </div>
-    </>
+    </Toaster>
   );
 }

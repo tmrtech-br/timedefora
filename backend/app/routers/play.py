@@ -11,10 +11,10 @@ from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx
 from ..core.deps import Principal, client_ip, current_user as authenticated_user, verified_user as verified_account
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found
-from ..services import notifications, payments, scheduling, sessions
+from ..services import notifications, payments, scheduling, sessions, support
 from ..services.payment_providers import verify_mp_signature
 from ..services.settings_store import get_settings, require_enabled
-from .common import jsonable
+from .common import SupportMessageIn, jsonable
 
 router = APIRouter(tags=['jogador'])
 
@@ -282,14 +282,23 @@ class TicketIn(BaseModel):
     reservation_id: uuid.UUID | None = None
 
 
-class MessageIn(BaseModel):
-    body: str = Field(min_length=1, max_length=5000)
-
-
 @router.get('/support/tickets')
 def my_tickets(p: Principal = Depends(current_user)):
     with tx() as conn:
-        return jsonable(all_(conn, 'select id, subject, category, status, priority, reservation_id, created_at, updated_at from support_tickets where user_id=%s order by updated_at desc', (p.user_id,)))
+        return jsonable(all_(conn, '''select id, subject, category, status, priority, reservation_id, created_at, updated_at
+                                      from support_tickets where user_id=%s and hidden_by_user_at is null
+                                      order by updated_at desc, id''', (p.user_id,)))
+
+
+@router.delete('/support/tickets/{tid}', status_code=204)
+def hide_ticket(tid: uuid.UUID, p: Principal = Depends(current_user)):
+    with tx() as conn:
+        t = one(conn, 'select hidden_by_user_at from support_tickets where id=%s and user_id=%s for update', (tid, p.user_id))
+        if not t:
+            raise not_found('Chamado não encontrado.')
+        if t['hidden_by_user_at'] is None:
+            conn.execute('update support_tickets set hidden_by_user_at=%s where id=%s', (timeutil.now(), tid))
+            audit_event(conn, 'support.ticket_hidden_by_user', 'support_tickets', tid)
 
 
 @router.post('/support/tickets', status_code=201)
@@ -313,29 +322,19 @@ def open_ticket(body: TicketIn, p: Principal = Depends(current_user)):
 def ticket(tid: uuid.UUID, p: Principal = Depends(current_user)):
     with tx() as conn:
         t = one(conn, 'select * from support_tickets where id=%s', (tid,))
-        if not t or (str(t['user_id']) != p.user_id and not p.is_staff):
+        if not t or t['hidden_by_user_at'] is not None or (str(t['user_id']) != p.user_id and not p.is_staff):
             raise not_found('Chamado não encontrado.')
-        msgs = all_(conn, '''select m.id, m.body, m.is_staff, m.created_at, u.username author from support_messages m
-                             join users u on u.id=m.author_user_id where m.ticket_id=%s order by m.created_at''', (tid,))
+        msgs = support.ticket_messages(conn, tid)
     return {**jsonable(t), 'messages': jsonable(msgs)}
 
 
 @router.post('/support/tickets/{tid}/messages', status_code=201)
-def reply(tid: uuid.UUID, body: MessageIn, p: Principal = Depends(current_user)):
+def reply(tid: uuid.UUID, body: SupportMessageIn, p: Principal = Depends(current_user)):
     with tx() as conn:
         t = one(conn, 'select * from support_tickets where id=%s for update', (tid,))
-        if not t or (str(t['user_id']) != p.user_id and not p.is_staff):
+        if not t or t['hidden_by_user_at'] is not None or (str(t['user_id']) != p.user_id and not p.is_staff):
             raise not_found('Chamado não encontrado.')
-        if t['status'] == 'closed':
-            raise conflict('ticket_closed', 'Chamado encerrado. Abra um novo chamado.')
-        m = insert(conn, 'support_messages', {'ticket_id': tid, 'author_user_id': p.user_id, 'body': body.body,
-                                              'is_staff': p.is_staff and str(t['user_id']) != p.user_id})
-        conn.execute("update support_tickets set status=%s where id=%s",
-                     ('in_progress' if m['is_staff'] else ('open' if t['status'] == 'resolved' else t['status']), tid))
-        if m['is_staff']:
-            notifications.notify(conn, str(t['user_id']), 'support_reply', {'assunto': t['subject']},
-                                 dedupe=f"support:{m['id']}", link=f'/suporte/{tid}')
-    return jsonable(m)
+        return jsonable(support.reply(conn, t, p.user_id, body.body, is_staff=p.is_staff and str(t['user_id']) != p.user_id))
 
 
 # ----------------------------------------------------------------- ConsoleAgent

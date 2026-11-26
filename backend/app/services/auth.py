@@ -288,7 +288,7 @@ def mfa_setup(user_id: str, username: str) -> dict:
             raise conflict('mfa_already_enabled', 'A autenticação em dois fatores já está ativa.')
         conn.execute('delete from mfa_factors where user_id=%s and confirmed_at is null', (user_id,))
         insert(conn, 'mfa_factors', {'user_id': user_id, 'totp_secret_enc': security.encrypt(secret)})
-    return {'secret': secret, 'otpauth_uri': pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name='LocaPlay')}
+    return {'secret': secret, 'otpauth_uri': pyotp.TOTP(secret).provisioning_uri(name=username, issuer_name='timedefora')}
 
 
 def _check_totp(conn, factor: dict, code: str) -> bool:

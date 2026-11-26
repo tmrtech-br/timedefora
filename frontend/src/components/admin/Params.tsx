@@ -159,7 +159,6 @@ export default function Params() {
             <Alert kind="warn">{pending.label}</Alert>
             <Field label="Motivo (registrado na auditoria)" hint="Opcional, mas recomendado."><input maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
             <div className="row"><button className="btn primary" disabled={busy} onClick={confirm}>Confirmar</button><button className="btn" onClick={() => setPending(null)}>Cancelar</button></div>
-            {msg}
           </div>
         </Modal>)}
     </div>

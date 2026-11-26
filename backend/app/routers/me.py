@@ -47,7 +47,8 @@ def me(p: Principal = Depends(current_user)):
     out['permission_overrides'] = p.permissions
     out['unread_notifications'] = 0
     with tx() as conn:
-        out['unread_notifications'] = one(conn, 'select count(*) n from notifications where user_id=%s and read_at is null',
+        out['unread_notifications'] = one(conn, '''select count(*) n from notifications
+                                                   where user_id=%s and read_at is null and hidden_by_user_at is null''',
                                           (p.user_id,))['n']
     return out
 
@@ -374,23 +375,36 @@ def my_payments(p: Principal = Depends(current_user)):
 @router.get('/notifications')
 def notifications_list(p: Principal = Depends(current_user), unread: bool = False):
     with tx() as conn:
-        rows = all_(conn, 'select id, event_code, title, body, link, read_at, created_at from notifications where user_id=%s '
-                    + ('and read_at is null ' if unread else '') + 'order by created_at desc limit 100', (p.user_id,))
+        rows = all_(conn, '''select id, event_code, title, body, link, read_at, created_at from notifications
+                            where user_id=%s and hidden_by_user_at is null and (not %s or read_at is null)
+                            order by created_at desc, id limit 100''', (p.user_id, unread))
     return jsonable(rows)
 
 
 @router.post('/notifications/{nid}/read')
 def notif_read(nid: uuid.UUID, p: Principal = Depends(current_user)):
     with tx() as conn:
-        conn.execute('update notifications set read_at=coalesce(read_at,%s) where id=%s and user_id=%s', (timeutil.now(), nid, p.user_id))
+        conn.execute('''update notifications set read_at=%s
+                        where id=%s and user_id=%s and read_at is null and hidden_by_user_at is null''',
+                     (timeutil.now(), nid, p.user_id))
     return {'ok': True}
 
 
 @router.post('/notifications/read-all')
 def notif_read_all(p: Principal = Depends(current_user)):
     with tx() as conn:
-        conn.execute('update notifications set read_at=%s where user_id=%s and read_at is null', (timeutil.now(), p.user_id))
+        conn.execute('''update notifications set read_at=%s
+                        where user_id=%s and read_at is null and hidden_by_user_at is null''', (timeutil.now(), p.user_id))
     return {'ok': True}
+
+
+@router.delete('/notifications', status_code=204)
+def clear_notifications(p: Principal = Depends(current_user)):
+    with tx() as conn:
+        cleared = conn.execute('''update notifications set hidden_by_user_at=%s
+                                  where user_id=%s and hidden_by_user_at is null''', (timeutil.now(), p.user_id)).rowcount
+        if cleared:
+            audit_event(conn, 'notifications.cleared_by_user', 'notifications', details={'count': cleared})
 
 
 # ------------------------------------------------------------ LGPD

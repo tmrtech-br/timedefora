@@ -21,10 +21,10 @@ from ..core.deps import Principal, require_role
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found, unprocessable
 from ..core.permissions import ADMIN_MENUS, action_key, is_allowed, menu_key, route_menu
 from ..gamebridge import METHODS, AdapterError, get_adapter, method_info
-from ..services import notifications, owner_settlements, payments, scheduling, sessions
+from ..services import notifications, owner_settlements, payments, scheduling, sessions, support
 from ..services.consoles import console_ref
 from ..services.settings_store import DEFAULTS, get_settings
-from .common import DeleteIn, jsonable
+from .common import DeleteIn, SupportMessageIn, jsonable
 from . import psn_accounts
 
 router = APIRouter(prefix='/admin', tags=['admin'])
@@ -717,11 +717,14 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
                     errors[fk] = 'Adaptador de controle não marcado como autorizado/compatível.'
         if errors:
             raise unprocessable('validation_error', 'Verifique a configuração.', fields=errors)
-        if cfg['method'] != body.method:
-            # Troca de método: bloqueada com sessão ativa ou reservas futuras.
+        data = body.model_dump(exclude={'reason'})
+        connection_fields = ('method', 'agent_id', 'network_route', 'internal_host', 'console_identifier', 'psn_account_id')
+        connection_changed = any(str(cfg.get(k) or '') != str(data.get(k) or '') for k in connection_fields)
+        if connection_changed:
             active = one(conn, "select 1 from game_sessions where console_id=%s and status in ('ready','active')", (cid,))
             if active:
-                raise conflict('active_session', 'Não é possível trocar o método durante uma sessão ativa.')
+                raise conflict('active_session', 'Não é possível alterar a conexão durante uma sessão de jogo.')
+        if cfg['method'] != body.method:
             fut = _future_paid(conn, console_id=cid)
             if fut:
                 raise conflict('affected_reservations', f'{len(fut)} reserva(s) futura(s) neste console. Coloque em manutenção '
@@ -729,9 +732,7 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
                                reservations=[{'code': r['code'], 'starts_at': r['starts_at'].isoformat()} for r in fut])
             insert(conn, 'console_method_changes', {'console_id': cid, 'from_method': cfg['method'], 'to_method': body.method,
                                                     'config_snapshot': Jsonb(jsonable(cfg)), 'reason': body.reason, 'changed_by': p.user_id})
-        data = body.model_dump(exclude={'reason'})
-        connection_fields = ('method', 'agent_id', 'network_route', 'internal_host', 'console_identifier', 'psn_account_id')
-        previous = console_ref(conn, cid) if any(str(cfg.get(k) or '') != str(data.get(k) or '') for k in connection_fields) else None
+        previous = console_ref(conn, cid) if connection_changed else None
         data['connection_status'] = 'unconfigured' if body.method == 'unconfigured' else 'offline'
         # Qualquer alteração exige nova validação completa.
         data.update({'video_validated_at': None, 'audio_validated_at': None, 'control_validated_at': None,
@@ -740,7 +741,8 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
         conn.execute("update consoles set is_published=false, status=%s where id=%s",
                      ('unconfigured' if body.method == 'unconfigured' else 'offline', cid))
         view = _console_view(conn, one(conn, 'select * from consoles where id=%s', (cid,)))
-    _release_agent_connection(previous)          # a conexão antiga do agente não vale para a nova configuração
+        # A abertura da sessão usa a mesma trava do console.
+        _release_agent_connection(previous)
     return view
 
 
@@ -1987,7 +1989,7 @@ def export_csv(kind: str, date_from: datetime, date_to: datetime, p: Principal =
             # Neutraliza injeção de fórmulas em planilhas
             w.writerow([("'" + str(v)) if isinstance(v, str) and v[:1] in '=+-@' else v for v in jsonable(r).values()])
     return StreamingResponse(iter(['﻿' + buf.getvalue()]), media_type='text/csv; charset=utf-8',
-                             headers={'Content-Disposition': f'attachment; filename="locaplay-{kind}.csv"'})
+                             headers={'Content-Disposition': f'attachment; filename="timedefora-{kind}.csv"'})
 
 
 # ================================================================== notificações
@@ -2044,10 +2046,33 @@ def audit(table_name: str | None = None, record_id: str | None = None, actor: uu
 
 
 @router.get('/support/tickets')
-def support_tickets(status: str | None = None, p: Principal = Depends(OPERATOR)):
+def support_tickets(status: str | None = None, q: str = '', p: Principal = Depends(OPERATOR)):
+    query = q.strip()
     with tx() as conn:
-        return jsonable(all_(conn, '''select t.*, u.username from support_tickets t join users u on u.id=t.user_id'''
-                             + (' where t.status=%s' if status else '') + ' order by t.updated_at desc limit 200', [status] if status else []))
+        return jsonable(all_(conn, '''select t.*, u.username from support_tickets t join users u on u.id=t.user_id
+                                      where (%s = '' or t.status = %s)
+                                        and (%s = '' or strpos(lower(t.subject), lower(%s)) > 0
+                                             or strpos(lower(u.username), lower(%s)) > 0 or t.id::text = %s)
+                                      order by t.updated_at desc limit 200''',
+                             (status or '', status or '', query, query, query, query)))
+
+
+@router.get('/support/tickets/{tid}')
+def support_ticket_for_audit(tid: uuid.UUID, p: Principal = Depends(OPERATOR)):
+    with tx() as conn:
+        t = one(conn, 'select * from support_tickets where id=%s', (tid,))
+        if not t:
+            raise not_found('Chamado não encontrado.')
+        return {**jsonable(t), 'messages': jsonable(support.ticket_messages(conn, tid))}
+
+
+@router.post('/support/tickets/{tid}/messages', status_code=201)
+def reply_to_support_ticket(tid: uuid.UUID, body: SupportMessageIn, p: Principal = Depends(OPERATOR)):
+    with tx() as conn:
+        t = one(conn, 'select * from support_tickets where id=%s for update', (tid,))
+        if not t:
+            raise not_found('Chamado não encontrado.')
+        return jsonable(support.reply(conn, t, p.user_id, body.body, is_staff=True))
 
 
 @router.patch('/support/tickets/{tid}')

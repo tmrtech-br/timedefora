@@ -33,7 +33,7 @@ function Config() {
   async function exportData() {
     const data = await get('/me/export');
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    const a = document.createElement('a'); a.href = url; a.download = 'meus-dados-locaplay.json'; a.click(); URL.revokeObjectURL(url);
+    const a = document.createElement('a'); a.href = url; a.download = 'meus-dados-timedefora.json'; a.click(); URL.revokeObjectURL(url);
   }
   if (!me) return null;
   const p = prefs.data;
@@ -79,7 +79,7 @@ function Config() {
             <Field label="Código de 6 dígitos"><input maxLength={6} inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} /></Field>
             <button className="btn primary" onClick={() => run(async () => { const r = await post<{ recovery_codes: string[] }>('/me/mfa/confirm', { code }); setRecovery(r.recovery_codes); setMfa(null); setCode(''); await refresh(); }, 'Autenticação em dois fatores ativada.')}>Confirmar</button>
           </>}
-          {recovery.length > 0 && <Alert kind="warn"><span>Códigos de recuperação (guarde agora, não serão exibidos de novo): <code>{recovery.join('  ')}</code></span></Alert>}
+          {recovery.length > 0 && <Alert kind="warn" dismissible={false}><span>Códigos de recuperação (guarde agora, não serão exibidos de novo): <code>{recovery.join('  ')}</code></span></Alert>}
         </section>
         <section className="card stack">
           <div className="spread"><h2>Sessões ativas</h2><button className="btn sm" onClick={() => run(async () => { await post('/me/sessions/revoke-others'); sessions.reload(); }, 'Outras sessões encerradas.')}>Encerrar as outras</button></div>

@@ -1,7 +1,8 @@
 'use client';
 import { cloneElement, isValidElement, useEffect, useId, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { ApiError } from '@/lib/api';
+import { SystemAlert, updateNoticeDialog, type NoticeKind } from './Toaster';
 
 export function PageHeader({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) {
   return (
@@ -12,15 +13,14 @@ export function PageHeader({ title, subtitle, children }: { title: string; subti
   );
 }
 
-export function Alert({ kind = 'info', children }: { kind?: 'info' | 'error' | 'ok' | 'warn'; children: React.ReactNode }) {
-  const Icon = kind === 'error' ? XCircle : kind === 'ok' ? CheckCircle2 : kind === 'warn' ? AlertTriangle : Info;
-  return <div className={`alert ${kind}`} role={kind === 'error' ? 'alert' : 'status'}><Icon aria-hidden />{children}</div>;
+export function Alert({ kind = 'info', children, dismissible = true }: { kind?: NoticeKind; children: React.ReactNode; dismissible?: boolean }) {
+  return <SystemAlert key={typeof children === 'string' ? `${kind}:${children}` : kind} kind={kind} dismissible={dismissible}>{children}</SystemAlert>;
 }
 
 export function ErrorBox({ error, onRetry }: { error: ApiError | Error | null; onRetry?: () => void }) {
   if (!error) return null;
   return (
-    <Alert kind="error">
+    <Alert key={error.message} kind="error" dismissible={!onRetry}>
       <span>{error.message} {onRetry && <button className="btn sm" onClick={onRetry} style={{ marginLeft: 8 }}>Tentar novamente</button>}</span>
     </Alert>
   );
@@ -98,14 +98,18 @@ export function StatusPill({ status, map, tone }: { status: string; map?: Record
   return <span className={`pill ${t}`}>{map?.[status] || LABELS[status] || status}</span>;
 }
 
-export function ModalShell({ title, onClose, children, allowEscape = false, closeLabel = 'Fechar' }: {
-  title: string; onClose: () => void; children: React.ReactNode; allowEscape?: boolean; closeLabel?: string;
+export function ModalShell({ title, onClose, children, allowEscape = false, closeLabel = 'Fechar', closeButtonClassName = 'sm', showCloseButton = true }: {
+  title: string; onClose: () => void; children: React.ReactNode; allowEscape?: boolean; closeLabel?: string; closeButtonClassName?: string; showCloseButton?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const node = dialog.current;
     node?.showModal();
-    return () => node?.close();
+    updateNoticeDialog();
+    return () => {
+      node?.close();
+      updateNoticeDialog();
+    };
   }, []);
   return (
     <dialog ref={dialog} className="card modal modal-shell" aria-modal="true" aria-label={title} onCancel={(event) => {
@@ -115,7 +119,7 @@ export function ModalShell({ title, onClose, children, allowEscape = false, clos
     }}>
         <div className="spread" style={{ marginBottom: 12 }}>
           <h2 style={{ margin: 0 }}>{title}</h2>
-          <button type="button" className="btn sm" onClick={onClose} autoFocus>{closeLabel}</button>
+          {showCloseButton && <button type="button" className={`btn ${closeButtonClassName}`} onClick={onClose} autoFocus>{closeLabel}</button>}
         </div>
         {children}
     </dialog>

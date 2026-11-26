@@ -25,7 +25,7 @@ PLATFORMS = [('PS5', 'PlayStation 5', 'Sony', 'playstation', True), ('PS4', 'Pla
 
 POLICIES = {
     'terms': ('Termos de Uso (rascunho)', 'RASCUNHO — requer revisão jurídica antes da operação comercial.\n\n'
-              'A LocaPlay oferece acesso remoto e temporário a consoles físicos mediante reserva paga de um intervalo. '
+              'A timedefora oferece acesso remoto e temporário a consoles físicos mediante reserva paga de um intervalo. '
               'O usuário deve manter seus dados corretos, não compartilhar a conta e respeitar as regras de uso dos jogos e plataformas. '
               'É proibido tentar acessar consoles, transmissões ou dados de terceiros.'),
     'privacy': ('Política de Privacidade (rascunho)', 'RASCUNHO — requer revisão jurídica (LGPD).\n\n'
@@ -45,7 +45,7 @@ POLICIES = {
 }
 
 T = {  # code: (subject/title, text, include_email)
-    'verify_email': ('Seu código de verificação LocaPlay', 'Olá, {nome_usuario}! Seu código é {codigo}. Ele expira em {validade}. Se você não criou uma conta, ignore este e-mail.', True),
+    'verify_email': ('Seu código de verificação timedefora', 'Olá, {nome_usuario}! Seu código é {codigo}. Ele expira em {validade}. Se você não criou uma conta, ignore este e-mail.', True),
     'email_change': ('Confirme seu novo e-mail', 'Olá, {nome_usuario}! Use o código {codigo} para confirmar a troca de e-mail. Expira em {validade}.', True),
     'password_reset': ('Recuperação de senha', 'Olá, {nome_usuario}! Para criar uma nova senha acesse: {link} (válido por {validade}). Se não foi você, ignore.', True),
     'security_alert': ('Alerta de segurança da sua conta', 'Olá, {nome_usuario}! Detectamos uma alteração ou acesso relevante na sua conta ({quando}). Se não foi você, troque sua senha e encerre as sessões no perfil.', True),
@@ -58,7 +58,7 @@ T = {  # code: (subject/title, text, include_email)
     'session_ending': ('Restam {restante} de sessão', 'Sua sessão de {jogo} termina em {restante}.', False),
     'session_ended': ('Sessão encerrada', 'Sua sessão de {jogo} foi encerrada ({motivo}). O controle do console foi revogado.', False),
     'console_not_ready': ('Problema técnico na sua sessão de {jogo}', 'O console {console} não ficou pronto no horário da reserva {codigo} por um problema técnico. Seu tempo NÃO foi consumido: nossa equipe já foi avisada e vai remarcar ou reembolsar sua reserva. Acompanhe: {link}', True),
-    'staff_incident': ('[LocaPlay] Incidente: {incidente}', '{incidente}. {detalhe}. Veja e defina a compensação no painel: {link}', True),
+    'staff_incident': ('[timedefora] Incidente: {incidente}', '{incidente}. {detalhe}. Veja e defina a compensação no painel: {link}', True),
     'console_failure': ('Problema no console', 'Detectamos uma falha no console {console}. Nossa equipe foi acionada; o tempo perdido será compensado conforme a política.', True),
     'reservation_cancelled': ('Reserva cancelada', 'A reserva {codigo} foi cancelada. Se houve pagamento, o reembolso foi solicitado.', True),
     'schedule_changed': ('Alteração na sua reserva', 'A reserva {codigo} foi alterada pela operação. Motivo: {motivo}. Acompanhe: {link}', True),
@@ -71,7 +71,7 @@ T = {  # code: (subject/title, text, include_email)
 
 def _html(text: str) -> str:
     return ('<div style="font-family:Arial,sans-serif;background:#0b0718;color:#f1ecff;padding:24px">'
-            '<h1 style="color:#c026ff;font-size:22px;margin:0 0 16px">LocaPlay</h1>'
+            '<h1 style="color:#c026ff;font-size:22px;margin:0 0 16px">timedefora</h1>'
             f'<p style="font-size:16px;line-height:1.5">{text}</p>'
             '<p style="font-size:12px;color:#a99bd1">Mensagem automática. Não responda este e-mail.</p></div>')
 
@@ -83,9 +83,10 @@ def base(conn) -> None:
         conn.execute('''insert into platforms(code, name, manufacturer, family, remote_play_capable) values (%s,%s,%s,%s,%s)
                         on conflict (code) do nothing''', (code, name, man, fam, rp))
     for kind, (title, body) in POLICIES.items():
+        version = '0.2-rascunho' if kind == 'terms' else '0.1-rascunho'
         conn.execute('''insert into policy_documents(kind, version, title, body, is_current, published_at)
-                        select %s, '0.1-rascunho', %s, %s, not exists(select 1 from policy_documents where kind=%s and is_current), now()
-                        on conflict (kind, version) do nothing''', (kind, title, body, kind))
+                        select %s, %s, %s, %s, not exists(select 1 from policy_documents where kind=%s and is_current), now()
+                        on conflict (kind, version) do nothing''', (kind, version, title, body, kind))
     for code, (subj, text, email) in T.items():
         conn.execute('''insert into notification_templates(code, channel, subject, body_text) values (%s,'in_app',%s,%s)
                         on conflict (code, channel) do nothing''', (code, subj, text))
@@ -103,7 +104,7 @@ def admin(conn) -> None:
         sys.exit('Senha do admin fraca: ' + ' '.join(probs))
     u = one(conn, 'select id from users where lower(email)=lower(%s)', (email,))
     if not u:
-        u = insert(conn, 'users', {'full_name': 'Administrador LocaPlay', 'username': username, 'email': email.lower(),
+        u = insert(conn, 'users', {'full_name': 'Administrador timedefora', 'username': username, 'email': email.lower(),
                                    'password_hash': security.hash_password(pw), 'status': 'active', 'email_verified_at': timeutil.now()})
         conn.execute('insert into notification_preferences(user_id) values (%s)', (u['id'],))
     for role in ('client', 'superadmin'):

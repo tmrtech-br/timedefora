@@ -62,7 +62,7 @@ function Checkout() {
         </div>
       )}
       {r.status === 'pending_payment' && <button className="btn danger" onClick={cancel}>Cancelar reserva provisória</button>}
-      <p className="small dim">Pagamentos processados pelo Mercado Pago (Checkout Pro). A LocaPlay não armazena dados de cartão. A confirmação chega ao servidor pelo provedor — fechar esta página não cancela um pagamento em andamento.</p>
+      <p className="small dim">Pagamentos processados pelo Mercado Pago (Checkout Pro). A timedefora não armazena dados de cartão. A confirmação chega ao servidor pelo provedor — fechar esta página não cancela um pagamento em andamento.</p>
     </div>
   );
 }

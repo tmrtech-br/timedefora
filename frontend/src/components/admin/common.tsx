@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Field, Modal } from '@/components/ui';
 import { del, type ApiError } from '@/lib/api';
-import { toast } from '@/components/Toaster';
 
 /** Nomes dos campos da API em português (para mensagens de validação). */
 export const FIELD_LABELS: Record<string, string> = {
@@ -30,17 +29,16 @@ export function useAction() {
   const [busy, setBusy] = useState(false);
   async function run<T>(fn: () => Promise<T>, ok?: string): Promise<T | undefined> {
     setBusy(true); setMsg(null);
-    try { const r = await fn(); if (ok) { setMsg({ k: 'ok', t: ok }); toast('ok', ok); } return r; }
+    try { const r = await fn(); if (ok) setMsg({ k: 'ok', t: ok }); return r; }
     catch (e) {
       const a = e as ApiError;
       const fields = a.fields && Object.keys(a.fields).length
         ? ' Corrija: ' + Object.entries(a.fields).map(([k, v]) => `${FIELD_LABELS[k] || k} (${String(v).replace(/^Valor inválido\.?$/, 'valor inválido ou não preenchido').replace(/^Campo obrigatório\.?$/, 'obrigatório')})`).join(' · ') + '.' : '';
       setMsg({ k: 'error', t: a.message + fields, extra: a.data });
-      toast('error', a.message + fields);
     } finally { setBusy(false); }
   }
-  const view = msg ? <Alert kind={msg.k}><span>{msg.t}{Array.isArray((msg.extra as { reservations?: unknown[] })?.reservations) &&
-    <ul>{((msg.extra as { reservations: { code: string; starts_at: string }[] }).reservations).map((r) => <li key={r.code}>{r.code} — {new Date(r.starts_at).toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' })}</li>)}</ul>}</span></Alert> : null;
+  const view = msg ? <Alert key={msg.t} kind={msg.k}><div>{msg.t}{Array.isArray((msg.extra as { reservations?: unknown[] })?.reservations) &&
+    <ul>{((msg.extra as { reservations: { code: string; starts_at: string }[] }).reservations).map((r) => <li key={r.code}>{r.code} — {new Date(r.starts_at).toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' })}</li>)}</ul>}</div></Alert> : null;
   return { run, msg: view, busy };
 }
 

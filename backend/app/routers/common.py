@@ -17,6 +17,10 @@ class DeleteIn(BaseModel):
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 
 
+class SupportMessageIn(BaseModel):
+    body: Annotated[str, StringConstraints(min_length=1, max_length=5000)]
+
+
 def set_session_cookies(resp: Response, token: str) -> None:
     max_age = settings.session_days * 86400
     resp.set_cookie(SESSION_COOKIE, token, max_age=max_age, httponly=True, secure=settings.cookie_secure,

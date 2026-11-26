@@ -1,10 +1,11 @@
 'use client';
 import { useState } from 'react';
 import { Loader2, Wifi } from 'lucide-react';
+import { Alert } from './ui';
 
 type Result = { rttMs: number; jitterMs: number; mbps: number };
 
-/** Mede latência (média de 6 pings) e download (arquivo de 1–2 MB) até o servidor LocaPlay. */
+/** Mede latência (média de 6 pings) e download (arquivo de 1–2 MB) até o servidor timedefora. */
 async function measure(): Promise<Result> {
   const rtts: number[] = [];
   for (let i = 0; i < 6; i++) {
@@ -50,9 +51,9 @@ export default function NetworkTest() {
       <button className="btn sm" onClick={run} disabled={busy}>{busy ? <Loader2 className="spin" size={15} aria-hidden /> : <Wifi size={15} aria-hidden />}{busy ? 'Testando…' : 'Testar conexão'}</button>
       <div className="small" aria-live="polite">
         {r && v && <><span className={`pill ${v.tone}`}>{v.text}</span><div style={{ marginTop: 4 }}>Download <b>{r.mbps} Mbps</b> · Latência <b>{r.rttMs} ms</b> · Variação <b>{r.jitterMs} ms</b></div>
-          <div className="dim">Medido até o servidor LocaPlay. Recomendado: 15 Mbps e até 60 ms.</div>
-          {local && <div className="err" style={{ marginTop: 4 }}>Servidor rodando neste computador (ambiente de desenvolvimento): os números medem a própria máquina, não a sua internet. Só valem com o site publicado.</div>}</>}
-        {err && <span className="err">{err}</span>}
+          <div className="dim">Medido até o servidor timedefora. Recomendado: 15 Mbps e até 60 ms.</div>
+          {local && <Alert kind="warn">Servidor rodando neste computador (ambiente de desenvolvimento): os números medem a própria máquina, não a sua internet. Só valem com o site publicado.</Alert>}</>}
+        {err && <Alert kind="error">{err}</Alert>}
         {!r && !err && !busy && <span className="dim">Mede velocidade e latência reais até o servidor.</span>}
       </div>
     </div>

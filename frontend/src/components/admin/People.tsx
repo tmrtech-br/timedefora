@@ -66,7 +66,6 @@ export function Users() {
           }, 'Permissões atualizadas.');
         }}>
           <p className="small muted">As permissões marcadas respeitam o papel da pessoa.</p>
-          {msg}
           <div className="stack" style={{ maxHeight: '55vh', overflowY: 'auto' }}>
             {(['menu', 'level', 'action'] as const).map((kind) => <fieldset key={kind} className="stack">
               <legend>{{ menu: 'Menus', level: 'Níveis de acesso', action: 'Ações' }[kind]}</legend>
@@ -107,7 +106,7 @@ export function Notifications() {
       <PageHeader title="Notificações" subtitle="Templates HTML/texto, entregas, falhas e reenvio. Variáveis entre chaves, ex.: {nome_usuario}." />
       {msg}
       {edit && <Modal title={`Editar ${String(edit.code)} · ${String(edit.channel)}`} onClose={() => setEdit(null)}>
-        <div className="stack">{msg}
+        <div className="stack">
         <Field label="Assunto / título"><input maxLength={200} value={String(edit.subject)} onChange={(e) => setEdit({ ...edit, subject: e.target.value })} /></Field>
         <Field label="Texto"><textarea maxLength={50000} value={String(edit.body_text)} onChange={(e) => setEdit({ ...edit, body_text: e.target.value })} /></Field>
         {edit.channel === 'email' && <Field label="HTML"><textarea maxLength={50000} value={String(edit.body_html)} onChange={(e) => setEdit({ ...edit, body_html: e.target.value })} /></Field>}
@@ -124,14 +123,21 @@ export function Notifications() {
 
 export function Support() {
   const [status, setStatus] = useState('open');
-  const list = useApi<R[]>(`/admin/support/tickets?status=${status}`);
+  const [query, setQuery] = useState('');
+  const list = useApi<R[]>(`/admin/support/tickets?status=${status}&q=${encodeURIComponent(query)}`);
   const { run, msg } = useAction();
   return (
     <div className="stack">
       <PageHeader title="Suporte" />
       {msg}
-      <select className="btn" value={status} onChange={(e) => setStatus(e.target.value)}><option value="open">Abertos</option><option value="in_progress">Em andamento</option><option value="resolved">Resolvidos</option><option value="closed">Fechados</option><option value="">Todos</option></select>
-      <section className="card"><h2>Chamados de suporte</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Assunto', (r) => <a className="link-purple" href={`/suporte/${r.id}`}>{String(r.subject)}</a>], ['Usuário', (r) => String(r.username)], ['Categoria', (r) => String(r.category)],
+      <div className="row">
+        <select className="btn" aria-label="Status do chamado" value={status} onChange={(e) => setStatus(e.target.value)}><option value="open">Abertos</option><option value="in_progress">Em andamento</option><option value="resolved">Resolvidos</option><option value="closed">Fechados</option><option value="">Todos</option></select>
+        <input className="btn" aria-label="Buscar chamados" placeholder="Assunto, usuário ou ID" value={query} onChange={(e) => { setQuery(e.target.value); if (e.target.value.trim()) setStatus(''); }} />
+      </div>
+      <section className="card"><h2>Chamados de suporte</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Assunto', (r) => (
+        <div><a className="link-purple" href={`/suporte/${r.id}${r.hidden_by_user_at ? '?auditoria=1' : ''}`}>{String(r.subject)}</a>
+          {Boolean(r.hidden_by_user_at) && <div className="small muted">Removido da lista pelo usuário em {dateTime(String(r.hidden_by_user_at))}</div>}</div>
+      )], ['Usuário', (r) => String(r.username)], ['Categoria', (r) => String(r.category)],
         ['Prioridade', (r) => String(r.priority)], ['Atualizado', (r) => dateTime(String(r.updated_at))],
         ['Status', (r) => <select className="btn sm" value={String(r.status)} onChange={(e) => run(async () => { await patch(`/admin/support/tickets/${r.id}`, { status: e.target.value }); list.reload(); })}>
           {['open', 'in_progress', 'resolved', 'closed'].map((s) => <option key={s}>{s}</option>)}</select>]]} /></section>

@@ -24,6 +24,8 @@ def _event(conn, session_id, kind: str, details: dict | None = None) -> None:
 
 def prepare_session(conn, r: dict) -> dict:
     """Libera o console para a reserva (chamado pelo worker no início ou no primeiro acesso)."""
+    # Serializa a liberação do console com a troca da configuração de conexão.
+    conn.execute('select id from consoles where id=%s for update', (r['console_id'],))
     s = conn.execute('select * from game_sessions where reservation_id=%s', (r['id'],)).fetchone()
     if s:
         return s

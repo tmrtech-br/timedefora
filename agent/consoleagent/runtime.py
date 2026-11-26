@@ -308,15 +308,16 @@ class ConsoleRuntime:
 
     # ------------------------------------------------------------ sessão do jogador
     def start_session(self, session_id: str) -> tuple[bool, str]:
-        if not self.streaming:
-            return False, 'Console não está conectado (a preparação não terminou).'
-        # A conexão com o console basta: tela preta/carregando/aviso aberto no momento não pode travar o jogador
-        # (a imagem foi validada na preparação; aqui ela é só informativa).
-        f = self.link.frame()
-        pad = self.ensure_pad()
-        pad.reset()
-        self.session_id = session_id
-        return True, f'Sessão liberada. {f.message}'
+        with self._lock:
+            if not self.streaming:
+                return False, 'Console não está conectado (a preparação não terminou).'
+            # A conexão com o console basta: tela preta/carregando/aviso aberto no momento não pode travar o jogador
+            # (a imagem foi validada na preparação; aqui ela é só informativa).
+            f = self.link.frame()
+            pad = self.ensure_pad()
+            pad.reset()
+            self.session_id = session_id
+            return True, f'Sessão liberada. {f.message}'
 
     def input(self, session_id: str, command: dict) -> None:
         if not session_id or session_id != self.session_id:
@@ -338,6 +339,13 @@ class ConsoleRuntime:
         self._drop_pad()
         self.link.stop()
         self.ready_game, self.job = None, None
+
+    def disconnect_if_idle(self) -> bool:
+        with self._lock:
+            if self.session_id:
+                return False
+            self.disconnect()
+            return True
 
     def standby(self) -> tuple[bool, str]:
         """Fim de sessão com hibernação: solta os controles, pede repouso ao console e encerra a conexão."""
