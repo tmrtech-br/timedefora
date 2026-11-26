@@ -189,12 +189,10 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
               {c.platform_code === 'PS4' ? (
                 <p className="small muted">Usar o PS4 principal da conta selecionada.</p>
               ) : (
-                <Field label="DUID do PS5" required hint="Use o DUID exibido em Contas PSN → Consultar PS5.">
-                  <input value={String(cfg.psn_device_uid || '')} onChange={(e) => set('psn_device_uid', e.target.value)} />
-                </Field>
+                <p className="small muted" role="alert">Remote Play nativo pela PSN ainda funciona só com PS4. Use a rota “Mesma rede” para o PS5.</p>
               )}
             </>}
-            <label className="check"><input type="checkbox" checked={!!cfg.standby_after_session} onChange={(e) => set('standby_after_session', e.target.checked)} />Hibernar ao terminar (execução real pendente)</label>
+            <label className="check"><input type="checkbox" checked={!!cfg.standby_after_session} onChange={(e) => set('standby_after_session', e.target.checked)} />Hibernar ao terminar (rota PSN do PS4)</label>
             <Field label="Manter acordado se houver reserva em X minutos"><input type="number" min={0} max={240} value={Number(cfg.keep_awake_minutes ?? 15)} onChange={(e) => set('keep_awake_minutes', Number(e.target.value))} /></Field>
           </>}
           {m === 'hdmi_capture' && <>

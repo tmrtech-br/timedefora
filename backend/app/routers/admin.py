@@ -655,8 +655,10 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
                         errors['psn_account_id'] = 'Esta conta já está associada a outro PS4 pela internet.'
                 if c['platform_code'] == 'PS4':
                     body.psn_device_uid = None
-                elif not (body.psn_device_uid or '').strip():
-                    errors['psn_device_uid'] = 'Informe o DUID do PS5 retornado em Contas PSN → Consultar PS5.'
+                else:
+                    # O agente só negocia PS4 pela PSN: salvar PS5 aqui deixaria um console que nunca conecta.
+                    errors['network_route'] = ('Remote Play nativo pela PSN ainda funciona só com PS4. '
+                                               'Use a rota "Mesma rede" para o PS5.')
         if body.method == 'remote_play_chiaki':
             if body.network_route == 'lan':
                 if not (body.internal_host and HOST_RE.match(body.internal_host)) and body.discovery_mode == 'manual':

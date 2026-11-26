@@ -31,7 +31,7 @@ def reserve_ps4_account(account_id):
 
 
 @asynccontextmanager
-async def open_ps4_connection(client, token, receiver, progress, *, resolution='720p', fps=30):
+async def open_ps4_connection(client, token, receiver, progress, *, resolution='720p', fps=30, quality='medium'):
     async with AsyncExitStack() as stack:
         peer, notifications = await stack.enter_async_context(open_remote_peer(client, token, 'PS4'))
         progress('console_join', 'O PS4 entrou na sessão PSN e enviou o DUID.', peer.duid)
@@ -73,8 +73,9 @@ async def open_ps4_connection(client, token, receiver, progress, *, resolution='
         await control.switch_to_media()
         session = await stack.enter_async_context(open_ps4_media(
             media_udp, media_selected, media_own, media_remote, cipher, control.identifier, receiver,
-            resolution=resolution, fps=fps,
+            resolution=resolution, fps=fps, quality=quality,
         ))
+        session.ps4_control = control          # canal de controle RUDP (repouso ao fim da sessão)
         frame = receiver.latest_video
         progress('media_video', f'O ConsoleAgent decodificou vídeo real do PS4 ({frame.width}×{frame.height}).')
         yield session

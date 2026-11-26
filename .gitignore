@@ -19,3 +19,7 @@ agent/config.json
 agent/logs/
 agent/data/
 /agent/data/
+
+# capturas e sessões locais do Playwright
+output/
+.playwright-cli/

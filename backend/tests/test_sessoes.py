@@ -147,3 +147,35 @@ def test_encerrar_antes_libera_console(world, freeze):
     other = login(make_user('outro'))
     res = reserve(other, world, 10)          # intervalo restante liberado
     assert res.status_code == 201, res.text
+
+
+def test_fim_de_sessao_pede_repouso_so_sem_reserva_proxima(world, freeze, monkeypatch):
+    from app.gamebridge.simulated import SimulatedAdapter
+    calls = []
+    original = SimulatedAdapter.stop_stream
+
+    def stop(self, ref, session_id, standby=False):
+        calls.append(standby)
+        return original(self, ref, session_id, standby)
+
+    monkeypatch.setattr(SimulatedAdapter, 'stop_stream', stop)
+    api1, r1 = confirmed(world, freeze, start=(2, 9, 0), minutes=30)
+    api2 = login(make_user('jogador2'))
+    resp = reserve(api2, world, 30, mode='scheduled', start_at=at(2, 9, 30))
+    assert resp.status_code < 300, resp.text
+    r2 = resp.json()
+    pay(api2, r2['id'])
+    freeze(at(2, 9, 0))
+    sid = api1.post(f"/reservations/{r1['id']}/join", json={'input_device': 'keyboard_mouse'}).json()['session_id']
+    freeze(at(2, 9, 25))
+    assert api1.post(f'/sessions/{sid}/end').status_code == 200
+    assert calls[-1] is False                     # reserva seguinte começa em menos de 15 min: mantém acordado
+
+    with tx() as conn:
+        conn.execute("update reservations set status='cancelled' where id=%s", (r2['id'],))
+    api3, r3 = confirmed(world, freeze, start=(2, 9, 30), minutes=30, user='jogador3')
+    freeze(at(2, 9, 30))
+    sid = api3.post(f"/reservations/{r3['id']}/join", json={'input_device': 'keyboard_mouse'}).json()['session_id']
+    freeze(at(2, 9, 40))
+    assert api3.post(f'/sessions/{sid}/end').status_code == 200
+    assert calls[-1] is True                      # nada na agenda: o console pode hibernar

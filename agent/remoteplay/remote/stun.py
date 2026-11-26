@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import secrets
 import socket
 import struct
@@ -81,14 +82,23 @@ def parse_binding_response(packet: bytes, txid: bytes) -> tuple[str, int]:
     raise ValueError('Resposta STUN sem endereço mapeado.')
 
 
+# O mesmo socket recebe a mídia do PS4 depois do furo: um quadro-chave chega em rajada de centenas de pacotes.
+PEER_QUEUE_SIZE = 4096
+
+
 class _Dispatcher(asyncio.DatagramProtocol):
     def __init__(self):
         self.pending: dict[bytes, asyncio.Future] = {}
-        self.peer_packets = asyncio.Queue(maxsize=64)
+        self.peer_packets = asyncio.Queue(maxsize=PEER_QUEUE_SIZE)
+        self.dropped = 0
 
     def datagram_received(self, data: bytes, addr):
         if len(data) < 20 or data[4:8] != struct.pack('!I', COOKIE):
-            if not self.peer_packets.full():
+            if self.peer_packets.full():
+                self.dropped += 1
+                if self.dropped in (1, 100) or self.dropped % 1000 == 0:
+                    logging.getLogger(__name__).warning('Fila UDP do console cheia: %d pacote(s) descartado(s).', self.dropped)
+            else:
                 self.peer_packets.put_nowait((data, addr))
             return
         txid = data[8:20]
@@ -120,7 +130,7 @@ class StunClient:
         sock = self._socket
         if sock is None:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
             sock.bind(('0.0.0.0', 0))
         sock.setblocking(False)
         loop = asyncio.get_running_loop()
@@ -139,6 +149,10 @@ class StunClient:
 
     async def receive_peer_packet(self):
         return await self._protocol.peer_packets.get()
+
+    @property
+    def dropped(self) -> int:
+        return self._protocol.dropped if self._protocol else 0
 
     async def probe(self, server: str, port: int = 3478, timeout: float = 1.5) -> Mapping:
         if not self.transport:

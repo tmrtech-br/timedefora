@@ -353,6 +353,7 @@ async def open_remote_peer(client, token: str, platform: str, *, duid: str | Non
     stage = 'push_lookup'
     headers = {'Authorization': f'Bearer {token}'}
     session = None
+    yielded = False
     try:
         payload = await _json(client, PUSH_ADDRESS, headers)
         fqdn = payload.get('fqdn') if isinstance(payload, dict) else None
@@ -413,12 +414,16 @@ async def open_remote_peer(client, token: str, platform: str, *, duid: str | Non
                             raise NegotiationError(stage, 'O canal PSN fechou antes de o console entrar.')
                     replay = _replay_notifications(pending, notifications)
                     try:
+                        yielded = True
                         yield RemotePeer(session, uid.lower(), data1, data2), replay
                     finally:
                         await replay.aclose()
                 finally:
                     await notifications.aclose()
     except (aiohttp.ClientError, httpx.HTTPError, TimeoutError, ValueError, SessionManagerError) as exc:
+        if yielded:
+            # Falha depois da negociação (controle, mídia ou jogo): não é erro desta etapa; repassa como veio.
+            raise
         message = 'A etapa da negociação PSN falhou. Confira a conta, a rede e se o console está ligado ou em repouso.'
         if stage == 'push_connect':
             if isinstance(exc, aiohttp.WSServerHandshakeError):

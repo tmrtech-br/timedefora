@@ -482,15 +482,20 @@ class PsnLink(DirectLink):
             self._run(self._connect_remote(t), 80)
         except (OSError, ValueError, RuntimeError) as exc:
             self.stop()
-            raise LinkError(str(exc) or 'A conexão com o PS4 pela PSN expirou.') from exc
+            error = LinkError(str(exc) or 'A conexão com o PS4 pela PSN expirou.')
+            # Conta desativada/expirada não melhora com nova tentativa: o admin precisa agir.
+            error.retryable = not isinstance(exc, ValueError)
+            raise error from exc
 
     async def _connect_remote(self, target):
         import httpx
         from pyremoteplay.controller import Controller
-        from remoteplay.psn.accounts import PsnAccountStore
+        from remoteplay.psn.accounts import DEFAULT_PATH, shared_store
         from remoteplay.psn.connection import open_ps4_connection, reserve_ps4_account
+        from remoteplay.psn.media import stream_options
         from remoteplay.psn.oauth import request_token
 
+        options = stream_options(target.resolution, target.fps, getattr(target, 'bitrate_kbps', 0))
         ready = asyncio.Event()
 
         def progress(stage, message, identifier=None):
@@ -500,12 +505,11 @@ class PsnLink(DirectLink):
             try:
                 with reserve_ps4_account(target.psn_account_id):
                     async with httpx.AsyncClient(follow_redirects=False) as client:
-                        store = PsnAccountStore(Path(__file__).resolve().parent.parent / 'data' / 'psn_accounts.json.dpapi')
-                        token = await store.access_token(
+                        token = await shared_store(DEFAULT_PATH).access_token(
                             target.psn_account_id, lambda refresh: request_token(client, refresh_token=refresh),
                         )
                         async with open_ps4_connection(
-                            client, token, self.receiver, progress, fps=target.fps,
+                            client, token, self.receiver, progress, **options,
                         ) as session:
                             self._session = session
                             self._controller = Controller(session)
@@ -519,6 +523,7 @@ class PsnLink(DirectLink):
                 self._controller = self._session = None
 
         self._connection = asyncio.create_task(run())
+        self._connection.add_done_callback(_log_psn_end)
         waiting = asyncio.create_task(ready.wait())
         try:
             async with asyncio.timeout(70):
@@ -546,15 +551,39 @@ class PsnLink(DirectLink):
 
     def stop(self):
         if self._connection is not None:
-            self._run(self._stop_remote(), 8)
+            try:
+                self._run(self._stop_remote(), 8)
+            except Exception as e:      # encerramento lento da Sony não pode travar quem desconecta
+                log.warning('Remote Play PSN: encerramento incompleto da sessão (%s)', e.__class__.__name__)
+                self._connection = None
         if self.receiver is not None:
             self.receiver.close()
             self.receiver = None
+
+    def standby(self) -> bool:
+        """Pede repouso ao PS4 pelo canal de controle PSN. A conexão é encerrada logo depois por quem chamou."""
+        control = getattr(self._session, 'ps4_control', None)
+        if control is None:
+            return False
+        try:
+            return bool(self._run(control.standby(), 5))
+        except Exception as e:
+            log.warning('Remote Play PSN: pedido de repouso falhou (%s)', e.__class__.__name__)
+            return False
 
     def new_pad(self):
         if self._controller is None:
             raise GamepadUnavailable('Conecte ao PS4 pela PSN antes de usar o controle.')
         return DirectPad(self._controller)
+
+
+def _log_psn_end(task: asyncio.Task) -> None:
+    """A conexão PSN roda em segundo plano: registra por que ela terminou (sem isso o erro some em silêncio)."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning('Remote Play PSN: conexão encerrada: %s: %s', exc.__class__.__name__, exc)
 
 
 def _make_receiver(AVReceiver):

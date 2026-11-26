@@ -186,6 +186,11 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             r.revoke(sid or None)
             return _result(True, 'Controle revogado.', 'streaming' if r.streaming else 'stopped')
         if action == 'stream/stop':
+            if sid and r.session_id and sid != r.session_id:
+                return _result(True, 'Sessão já encerrada neste console.', 'streaming' if r.streaming else 'stopped')
+            if body.get('standby') and hasattr(r.link, 'standby'):
+                ok, msg = r.standby()       # a API decide: hibernar ao fim e sem reserva próxima
+                return _result(True, f'Sessão encerrada no console. {msg}', 'stopped', {'standby': ok})
             r.revoke(sid or None)
             if cfg.stop_chiaki_after_session:
                 r.disconnect()

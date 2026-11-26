@@ -43,6 +43,7 @@ class Target:
     mac: str = ''
     resolution: str = '720p'
     fps: int = 30
+    bitrate_kbps: int = 0           # 0 = padrão do método (Remote Play pela PSN usa 6 Mbps)
     codec: str = 'h264'
 
     @property
@@ -64,6 +65,10 @@ def target_from(cfg: AgentConfig, console_id: str, body: dict) -> Target:
         fps = int(t.get('fps') or settings.get('fps') or 30)
     except (TypeError, ValueError):
         fps = 30
+    try:
+        bitrate = int(t.get('bitrate_kbps') or settings.get('bitrate_kbps') or 0)
+    except (TypeError, ValueError):
+        bitrate = 0
     return Target(console_id=console_id, route=route, host=(host or '').strip() or None,
                   platform=(t.get('platform_code') or body.get('platform_code') or entry.get('platform') or 'PS4'),
                   identifier=ident, nickname=(entry.get('nickname') or ident).strip(),
@@ -72,7 +77,7 @@ def target_from(cfg: AgentConfig, console_id: str, body: dict) -> Target:
                   games=dict(entry.get('games') or {}), psn_user=str(entry.get('psn_user') or ''),
                   psn_account_id=str(t.get('psn_account_id') or settings.get('psn_account_id') or ''),
                   mac=str(entry.get('mac') or ''), resolution=str(t.get('resolution') or settings.get('resolution') or '720p'),
-                  fps=fps, codec=str(t.get('codec') or settings.get('codec') or 'h264'))
+                  fps=fps, codec=str(t.get('codec') or settings.get('codec') or 'h264'), bitrate_kbps=max(0, bitrate))
 
 
 @dataclass
@@ -204,7 +209,18 @@ class ConsoleRuntime:
         why = ''
         for attempt in range(1, attempts + 1):
             j.step = 'conectando ao console' + (f' (tentativa {attempt} de {attempts})' if attempts > 1 else '')
-            started = link.start(t, self.d.sleep)
+            try:
+                started = link.start(t, self.d.sleep)
+            except LinkError as e:
+                # Pela PSN o próprio link negocia até a 1ª imagem: a falha dele também precisa de nova tentativa
+                # (console em repouso acorda durante a 1ª e quase sempre a perde).
+                if not psn or attempt >= attempts or not getattr(e, 'retryable', True):
+                    raise
+                why = str(e)
+                log.info('rota PSN: tentativa %s falhou (%s); tentando de novo', attempt, why)
+                link.stop()
+                self.d.sleep(PSN_RETRY_GAP_SECONDS)
+                continue
             if started:
                 notes.append(started)
             if link.kind != 'chiaki':
@@ -310,6 +326,25 @@ class ConsoleRuntime:
         self._drop_pad()
         self.link.stop()
         self.ready_game, self.job = None, None
+
+    def standby(self) -> tuple[bool, str]:
+        """Fim de sessão com hibernação: solta os controles, pede repouso ao console e encerra a conexão."""
+        if self.job and self.job.state == 'running':
+            return False, 'Conexão/preparação em andamento: o console não foi colocado em repouso.'
+        self.revoke()
+        self._drop_pad()
+        fn = getattr(self.link, 'standby', None)
+        ok = False
+        if fn is not None and self.streaming:
+            try:
+                ok = bool(fn())
+            except Exception as e:  # repouso é melhor esforço: nunca impede o encerramento
+                log.warning('falha ao pedir repouso ao console: %s', e)
+        self.link.stop()
+        self.ready_game, self.job = None, None
+        if fn is None:
+            return False, 'Este método de conexão não coloca o console em repouso; conexão encerrada.'
+        return ok, 'Console colocado em repouso.' if ok else 'O console não confirmou o repouso; conexão encerrada.'
 
 
 def run_pad_steps(pad, steps: list, sleep=time.sleep) -> None:

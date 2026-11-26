@@ -164,6 +164,29 @@ def send_input(session_id, token: str, command: dict) -> dict:
     return res.to_dict()
 
 
+def should_standby(conn, ref, s: dict) -> bool:
+    """Hibernar ao fim da sessão só se o cadastro pedir e não houver outra reserva começando em breve."""
+    settings = ref.settings or {}
+    if not settings.get('standby_after_session', True):
+        return False
+    try:
+        minutes = max(0, int(settings.get('keep_awake_minutes', 15)))
+    except (TypeError, ValueError):
+        minutes = 15
+    soon = conn.execute(
+        '''select 1 from reservations where console_id=%s and id<>%s and status = any(%s)
+           and starts_at <= %s limit 1''',
+        (s['console_id'], s['reservation_id'], list(scheduling.OCCUPYING), timeutil.now() + timedelta(minutes=minutes)),
+    ).fetchone()
+    if soon:
+        return False
+    other = conn.execute(
+        "select 1 from game_sessions where console_id=%s and id<>%s and status in ('ready','active') limit 1",
+        (s['console_id'], s['id']),
+    ).fetchone()
+    return not other
+
+
 def end_session(conn, s: dict, reason: str, status: str = 'ended') -> None:
     n = timeutil.now()
     if s['status'] not in ('ready', 'active'):
@@ -184,14 +207,23 @@ def end_session(conn, s: dict, reason: str, status: str = 'ended') -> None:
     ref = console_ref(conn, s['console_id'])
     try:
         a = get_adapter(ref.method)
-        a.revoke_input(ref, str(s['id']))
-        a.stop_stream(ref, str(s['id']))
     except AdapterError:
-        pass  # tokens já revogados no banco: autoridade final é o servidor
+        a = None
+    if a is not None:
+        try:
+            a.revoke_input(ref, str(s['id']))
+        except AdapterError:
+            pass  # tokens já revogados no banco: autoridade final é o servidor
     # Reserva concluída deixa de ocupar a agenda (status fora de OCCUPYING): o restante do intervalo fica livre.
     scheduling.recompute_queue(conn, s['console_id'])
     if reason in ('user_ended', 'admin', 'failure', 'no_show'):
         scheduling.compact_queue(conn, s['console_id'])
+    if a is not None:
+        try:
+            # Depois de reorganizar a fila: a próxima reserva pode ter sido antecipada.
+            a.stop_stream(ref, str(s['id']), standby=should_standby(conn, ref, s))
+        except AdapterError:
+            pass
     r = conn.execute('select r.code, g.title from reservations r join games g on g.id=r.game_id where r.id=%s', (s['reservation_id'],)).fetchone()
     notifications.notify(conn, str(s['user_id']), 'session_ended', {'jogo': r['title'], 'motivo': {
         'time_up': 'tempo contratado encerrado', 'user_ended': 'encerrada por você', 'admin': 'encerrada pela operação',

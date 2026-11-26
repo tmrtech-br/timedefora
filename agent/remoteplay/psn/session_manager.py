@@ -2,9 +2,8 @@
 """Primitivas HTTP reais do Sony Remote Play Session Manager.
 
 Referência: chiaki-ng/lib/src/remote/holepunch.c http_create_session/deleteSession.
-ATENÇÃO: criar sessão não representa console conectado ou streaming ativo.
-As notificações push, comandos de início, ofertas, NAT traversal e cleanup
-precisam ser integrados antes de usar esta API em produção.
+Criar sessão não representa console conectado: notificações push, ofertas e
+NAT traversal ficam em negotiation.py e o fluxo completo em connection.py.
 """
 from __future__ import annotations
 
