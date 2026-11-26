@@ -3,16 +3,19 @@ estatísticas, notificações, LGPD (exportação e solicitações)."""
 import os
 import re
 import uuid
+from datetime import date
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from ..core import timeutil
 from ..core.db import all_, audit_event, insert, one, tx
 from ..core.deps import Principal, current_user, optional_user
 from ..core.errors import bad_request, conflict, not_found, unprocessable
+from ..core.usernames import username_problem
 from ..services import auth
+from ..services.settings_store import require_enabled
 from .common import clear_session_cookies, jsonable, pick
 
 router = APIRouter(prefix='/me', tags=['perfil'])
@@ -69,8 +72,9 @@ def update_me(body: ProfileIn, p: Principal = Depends(current_user)):
     data = body.model_dump(exclude_none=True)
     if 'full_name' in data and not 3 <= len(data['full_name'].strip()) <= 120:
         raise unprocessable('validation_error', 'Nome inválido.', fields={'full_name': 'Informe 3 a 120 caracteres.'})
-    if 'username' in data and not auth.USERNAME_RE.match(data['username']):
-        raise unprocessable('validation_error', 'Nome de usuário inválido.', fields={'username': 'Use 3 a 24 letras, números, "_" ou ".".'})
+    if 'username' in data and data['username'] != p.username:
+        if problem := username_problem(data['username']):
+            raise unprocessable('validation_error', 'Nome de usuário inválido.', fields={'username': problem})
     with tx() as conn:
         if 'username' in data and one(conn, 'select 1 from users where lower(username)=lower(%s) and id<>%s', (data['username'], p.user_id)):
             raise conflict('username_taken', 'Este nome de usuário já está em uso.', fields={'username': 'Indisponível.'})
@@ -115,31 +119,8 @@ def change_password(body: PasswordIn, p: Principal = Depends(current_user)):
     return {'message': 'Senha alterada. As outras sessões foram encerradas.'}
 
 
-class EmailIn(BaseModel):
-    new_email: str = Field(max_length=254)
-    password: str = Field(default='', max_length=128)
-
-
 class CodeIn(BaseModel):
     code: str = Field(max_length=20)
-
-
-@router.post('/email')
-def change_email(body: EmailIn, p: Principal = Depends(current_user)):
-    auth.request_email_change(p.user_id, body.new_email, body.password)
-    return {'message': 'Enviamos um código para o novo e-mail. Ele só será trocado após a confirmação.'}
-
-
-@router.post('/email/confirm')
-def confirm_email(body: CodeIn, p: Principal = Depends(current_user)):
-    auth.verify_code(p.user_id, 'email_change', body.code)
-    return {'message': 'E-mail alterado com sucesso.'}
-
-
-@router.post('/email/resend')
-def resend_email_code(p: Principal = Depends(current_user)):
-    auth.resend_code(p.user_id, 'email_change')
-    return {'message': 'Código reenviado.'}
 
 
 @router.get('/sessions')
@@ -310,6 +291,7 @@ def put_bindings(body: BindingsIn, p: Principal = Depends(current_user)):
     from psycopg.types.json import Jsonb
     data = body.model_dump()
     with tx() as conn:
+        require_enabled(conn, 'controls_menu_enabled', 'A personalização de teclado e mouse está desativada.')
         conn.execute('update users set input_bindings=%s where id=%s', (Jsonb(data), p.user_id))
     return data
 
@@ -317,6 +299,7 @@ def put_bindings(body: BindingsIn, p: Principal = Depends(current_user)):
 @router.delete('/input-bindings')
 def reset_bindings(p: Principal = Depends(current_user)):
     with tx() as conn:
+        require_enabled(conn, 'controls_menu_enabled', 'A personalização de teclado e mouse está desativada.')
         conn.execute('update users set input_bindings=null where id=%s', (p.user_id,))
     return {'keys': None, 'mouse_look': True, 'mouse_sensitivity': 1.0}
 
@@ -361,13 +344,34 @@ def stats(p: Principal = Depends(current_user)):
 
 
 @router.get('/payments')
-def my_payments(p: Principal = Depends(current_user)):
+def my_payments(p: Principal = Depends(current_user), q: str = Query('', max_length=120),
+                method: str = '', status: str = '', date_from: date | None = None, date_to: date | None = None):
+    if date_from and date_to and date_from > date_to:
+        raise unprocessable('validation_error', 'A data final deve ser igual ou posterior à inicial.')
+    conditions = ['pm.user_id=%s']
+    params = [p.user_id]
+    query = q.strip()
+    if query:
+        conditions.append('(strpos(lower(r.code), lower(%s)) > 0 or strpos(lower(g.title), lower(%s)) > 0)')
+        params.extend((query, query))
+    if method:
+        conditions.append('pm.method=%s')
+        params.append(method)
+    if status:
+        conditions.append('pm.status=%s')
+        params.append(status)
+    if date_from:
+        conditions.append('(pm.created_at at time zone %s)::date >= %s')
+        params.extend((timeutil.TZ.key, date_from))
+    if date_to:
+        conditions.append('(pm.created_at at time zone %s)::date <= %s')
+        params.extend((timeutil.TZ.key, date_to))
     with tx() as conn:
-        rows = all_(conn, '''select pm.id, pm.status, pm.method, pm.provider, pm.amount_cents, pm.created_at, pm.approved_at,
+        rows = all_(conn, f'''select pm.id, pm.status, pm.method, pm.provider, pm.amount_cents, pm.created_at, pm.approved_at,
                                     r.code reservation_code, g.title game_title,
                                     (select coalesce(sum(amount_cents),0) from refunds rf where rf.payment_id=pm.id and rf.status='completed') refunded_cents
                              from payments pm join reservations r on r.id=pm.reservation_id join games g on g.id=r.game_id
-                             where pm.user_id=%s order by pm.created_at desc limit 200''', (p.user_id,))
+                             where {' and '.join(conditions)} order by pm.created_at desc, pm.id limit 200''', params)
     return jsonable(rows)
 
 

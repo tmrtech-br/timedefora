@@ -1,35 +1,61 @@
 'use client';
 import { useState } from 'react';
-import KeyBindingsEditor from '@/components/KeyBindings';
+import LimitedScroll from '@/components/LimitedScroll';
 import RequireAuth from '@/components/RequireAuth';
 import QrCode from '@/components/QrCode';
-import { Alert, Field, PageHeader } from '@/components/ui';
+import { toast } from '@/components/Toaster';
+import { Alert, Empty, ErrorBox, Field, PageHeader, Skeleton } from '@/components/ui';
 import { ApiError, del, get, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
 import { DATA_REQUEST_STATUS, dateTime } from '@/lib/format';
+import styles from './settings.module.css';
 
 type Prefs = { email_queue_updates: boolean; email_reminders: boolean; email_marketing: boolean; in_app_enabled: boolean; reminder_minutes: number[] };
 type Sess = { id: string; ip: string; user_agent: string; created_at: string; last_seen_at: string; current: boolean };
 type DR = { id: string; request_type: string; status: string; created_at: string; resolution: string | null };
 const DR_LABEL: Record<string, string> = { access: 'Acesso', rectification: 'Retificação', deletion: 'Exclusão da conta', portability: 'Portabilidade', consent_revocation: 'Revogar consentimento' };
+const NOTIFICATION_OPTIONS = [
+  ['in_app_enabled', 'Notificações no site'],
+  ['email_reminders', 'E-mails de lembrete (15/10/1 min). O aviso de 5 minutos e o “sua vez chegou” são sempre enviados.'],
+  ['email_queue_updates', 'E-mails de mudança na fila'],
+  ['email_marketing', 'Novidades e promoções (opcional)'],
+] as const;
+
+function NotificationSwitch({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
+  return <label className={styles.switchRow}>
+    <span>{label}</span>
+    <input type="checkbox" role="switch" className={`switch ${styles.toggle}`} checked={checked} disabled={disabled} onChange={(event) => onChange(event.target.checked)} />
+  </label>;
+}
 
 function Config() {
   const { me, refresh } = useAuth();
   const prefs = useApi<Prefs>('/me/notification-preferences');
   const sessions = useApi<Sess[]>('/me/sessions');
   const drs = useApi<DR[]>('/me/data-requests');
-  const [msg, setMsg] = useState<{ k: 'ok' | 'error'; t: string } | null>(null);
-  const [pw, setPw] = useState({ current_password: '', new_password: '', new_password_confirm: '' });
+  const [savingPrefs, setSavingPrefs] = useState(false);
   const [mfa, setMfa] = useState<{ secret: string; otpauth_uri: string } | null>(null);
   const [code, setCode] = useState('');
   const [recovery, setRecovery] = useState<string[]>([]);
   const [dr, setDr] = useState({ request_type: 'access', details: '' });
-  const run = async (fn: () => Promise<unknown>, ok: string) => {
-    setMsg(null);
-    try { await fn(); setMsg({ k: 'ok', t: ok }); } catch (e) { setMsg({ k: 'error', t: (e as ApiError).message }); }
+  const run = async (fn: () => Promise<unknown>, message: string, kind: 'ok' | 'info' = 'ok') => {
+    try {
+      await fn();
+      toast(kind, message);
+    } catch (error) {
+      toast('error', error instanceof ApiError ? error.message : 'Não foi possível concluir a ação.');
+    }
   };
-  async function savePrefs(patch: Partial<Prefs>) { await run(async () => prefs.setData(await put<Prefs>('/me/notification-preferences', patch)), 'Preferências salvas.'); }
+  async function savePrefs(patch: Partial<Prefs>) {
+    if (savingPrefs) return;
+    setSavingPrefs(true);
+    try {
+      await run(async () => prefs.setData(await put<Prefs>('/me/notification-preferences', patch)), 'Preferências salvas.');
+    } finally {
+      setSavingPrefs(false);
+    }
+  }
   async function exportData() {
     const data = await get('/me/export');
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
@@ -39,38 +65,30 @@ function Config() {
   const p = prefs.data;
   return (
     <div className="stack">
-      <PageHeader title="Configurações" subtitle="Notificações, controles, segurança e privacidade." />
-      {msg && <Alert kind={msg.k}>{msg.t}</Alert>}
-      <div className="grid2">
-        <section className="card stack">
+      <PageHeader title="Configurações" subtitle="Notificações, segurança e privacidade." />
+      <div className={`grid2 ${styles.cards}`}>
+        <section className={`card stack ${styles.notifications}`}>
           <h2>Notificações</h2>
+          <ErrorBox error={prefs.error} onRetry={prefs.reload} />
           {p && <>
-            <label className="check"><input type="checkbox" checked={p.in_app_enabled} onChange={(e) => savePrefs({ in_app_enabled: e.target.checked })} /><span>Notificações no site</span></label>
-            <label className="check"><input type="checkbox" checked={p.email_reminders} onChange={(e) => savePrefs({ email_reminders: e.target.checked })} /><span>E-mails de lembrete (15/10/1 min). O aviso de 5 minutos e o “sua vez chegou” são sempre enviados.</span></label>
-            <label className="check"><input type="checkbox" checked={p.email_queue_updates} onChange={(e) => savePrefs({ email_queue_updates: e.target.checked })} /><span>E-mails de mudança na fila</span></label>
-            <label className="check"><input type="checkbox" checked={p.email_marketing} onChange={(e) => savePrefs({ email_marketing: e.target.checked })} /><span>Novidades e promoções (opcional)</span></label>
-            <div className="row small">Avisos antes da vez:{[15, 10, 5, 1].map((m) => (
-              <label key={m} className="check"><input type="checkbox" disabled={m === 5} checked={p.reminder_minutes.includes(m)}
-                onChange={(e) => savePrefs({ reminder_minutes: e.target.checked ? [...p.reminder_minutes, m] : p.reminder_minutes.filter((x) => x !== m) })} />{m} min</label>))}</div>
+            {NOTIFICATION_OPTIONS.map(([key, label]) => <NotificationSwitch key={key} label={label} checked={p[key]} disabled={savingPrefs}
+              onChange={(checked) => void savePrefs({ [key]: checked })} />)}
+            <fieldset className={styles.reminders}>
+              <legend>Avisos antes da vez</legend>
+              {[15, 10, 5, 1].map((minutes) => <NotificationSwitch key={minutes} label={`${minutes} min`}
+                checked={minutes === 5 || p.reminder_minutes.includes(minutes)} disabled={savingPrefs || minutes === 5}
+                onChange={(checked) => void savePrefs({ reminder_minutes: checked ? [...p.reminder_minutes, minutes] : p.reminder_minutes.filter((value) => value !== minutes) })} />)}
+            </fieldset>
           </>}
         </section>
-        <section className="card stack">
-          <h2>Senha</h2>
-          {me.has_password && <Field label="Senha atual"><input type="password" autoComplete="current-password" value={pw.current_password} onChange={(e) => setPw({ ...pw, current_password: e.target.value })} /></Field>}
-          <Field label="Nova senha" hint="Mínimo 10 caracteres, com letras e números."><input type="password" autoComplete="new-password" value={pw.new_password} onChange={(e) => setPw({ ...pw, new_password: e.target.value })} /></Field>
-          <Field label="Confirmar nova senha"><input type="password" autoComplete="new-password" value={pw.new_password_confirm} onChange={(e) => setPw({ ...pw, new_password_confirm: e.target.value })} /></Field>
-          <button className="btn primary" onClick={() => run(async () => { await post('/me/password', pw); setPw({ current_password: '', new_password: '', new_password_confirm: '' }); sessions.reload(); }, 'Senha alterada; outras sessões foram encerradas.')}>Alterar senha</button>
-        </section>
-      </div>
-      <div className="grid2">
         <section className="card stack">
           <h2>Autenticação em dois fatores (TOTP)</h2>
           <p className="muted small">Obrigatória para operadores e administradores; recomendada para todos.</p>
           {me.mfa_enabled ? <>
-            <Alert kind="ok">Ativa.</Alert>
+            <div><span className="pill green">Ativa</span></div>
             <Field label="Código atual para desativar"><input maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} /></Field>
             <button className="btn danger" onClick={() => run(async () => { await post('/me/mfa/disable', { code }); setCode(''); await refresh(); }, 'Autenticação em dois fatores desativada.')}>Desativar</button>
-          </> : !mfa ? <button className="btn primary" onClick={() => run(async () => setMfa(await post('/me/mfa/setup')), 'Escaneie ou digite a chave no seu app autenticador.')}>Ativar</button> : <>
+          </> : !mfa ? <button className="btn primary" onClick={() => run(async () => setMfa(await post('/me/mfa/setup')), 'Escaneie ou digite a chave no seu app autenticador.', 'info')}>Ativar</button> : <>
             <div className="mfa-qr">
               <p className="small" style={{ margin: 0 }}>Escaneie o QR code com o aplicativo autenticador (Google Authenticator, Microsoft Authenticator, Authy…):</p>
               <QrCode value={mfa.otpauth_uri} label="QR code para configurar o aplicativo autenticador" />
@@ -82,25 +100,31 @@ function Config() {
           {recovery.length > 0 && <Alert kind="warn" dismissible={false}><span>Códigos de recuperação (guarde agora, não serão exibidos de novo): <code>{recovery.join('  ')}</code></span></Alert>}
         </section>
         <section className="card stack">
-          <div className="spread"><h2>Sessões ativas</h2><button className="btn sm" onClick={() => run(async () => { await post('/me/sessions/revoke-others'); sessions.reload(); }, 'Outras sessões encerradas.')}>Encerrar as outras</button></div>
-          {sessions.data?.map((s) => (
-            <div key={s.id} className="spread small"><span>{s.current && <span className="pill green">esta</span>} {s.user_agent.slice(0, 60) || 'Navegador'} · {s.ip} · visto {dateTime(s.last_seen_at)}</span>
-              {!s.current && <button className="btn sm danger" onClick={() => run(async () => { await del(`/me/sessions/${s.id}`); sessions.reload(); }, 'Sessão encerrada.')}>Encerrar</button>}</div>
-          ))}
+          <h2>Privacidade e dados (LGPD)</h2>
+          <div className="row"><button className="btn" onClick={exportData}>Baixar meus dados (JSON)</button><a className="btn" href="/privacidade">Política de privacidade</a></div>
+          <div className="row">
+            <select className="btn" value={dr.request_type} onChange={(e) => setDr({ ...dr, request_type: e.target.value })} aria-label="Tipo de solicitação">
+              {Object.entries(DR_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+            <input className={`btn ${styles.details}`} placeholder="Detalhes (opcional)" maxLength={500} value={dr.details} onChange={(e) => setDr({ ...dr, details: e.target.value })} />
+            <button className="btn primary" onClick={() => run(async () => { await post('/me/data-requests', dr); drs.reload(); }, 'Solicitação registrada.')}>Enviar solicitação</button>
+          </div>
+          {!!drs.data?.length && <LimitedScroll label="Solicitações de privacidade" limit={2}>
+            {drs.data.map((d) => <div key={d.id} className={`small ${styles.request}`}>{DR_LABEL[d.request_type]} · {DATA_REQUEST_STATUS[d.status] || d.status} · {dateTime(d.created_at)} {d.resolution && `— ${d.resolution}`}</div>)}
+          </LimitedScroll>}
+        </section>
+        <section className="card stack">
+          <div className="spread"><h2>Sessões ativas</h2><button className="btn sm" disabled={!sessions.data?.some((session) => !session.current)} onClick={() => run(async () => { await post('/me/sessions/revoke-others'); await sessions.reload(); }, 'Outras sessões encerradas.')}>Encerrar as outras</button></div>
+          <ErrorBox error={sessions.error} onRetry={sessions.reload} />
+          {sessions.data?.length ? <LimitedScroll label="Lista de sessões ativas">
+            {sessions.data.map((session) => (
+              <div key={session.id} className={`spread small ${styles.session}`}>
+                <span>{session.current && <span className="pill green">Esta sessão</span>} {session.user_agent?.slice(0, 60) || 'Navegador'} · {session.ip} · Último acesso em {dateTime(session.last_seen_at)}</span>
+                {!session.current && <button className="btn sm danger" onClick={() => run(async () => { await del(`/me/sessions/${session.id}`); await sessions.reload(); }, 'Sessão encerrada.')}>Encerrar</button>}
+              </div>
+            ))}
+          </LimitedScroll> : !sessions.error && (sessions.data ? <Empty>Nenhuma sessão ativa.</Empty> : <Skeleton h={100} />)}
         </section>
       </div>
-      <KeyBindingsEditor />
-      <section className="card stack">
-        <h2>Privacidade e dados (LGPD)</h2>
-        <div className="row"><button className="btn" onClick={exportData}>Baixar meus dados (JSON)</button><a className="btn" href="/privacidade">Política de privacidade</a></div>
-        <div className="row">
-          <select className="btn" value={dr.request_type} onChange={(e) => setDr({ ...dr, request_type: e.target.value })} aria-label="Tipo de solicitação">
-            {Object.entries(DR_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-          <input className="btn" style={{ flex: 1, minWidth: 220 }} placeholder="Detalhes (opcional)" maxLength={500} value={dr.details} onChange={(e) => setDr({ ...dr, details: e.target.value })} />
-          <button className="btn primary" onClick={() => run(async () => { await post('/me/data-requests', dr); drs.reload(); }, 'Solicitação registrada.')}>Enviar solicitação</button>
-        </div>
-        {drs.data?.map((d) => <div key={d.id} className="small">{DR_LABEL[d.request_type]} · {DATA_REQUEST_STATUS[d.status] || d.status} · {dateTime(d.created_at)} {d.resolution && `— ${d.resolution}`}</div>)}
-      </section>
     </div>
   );
 }

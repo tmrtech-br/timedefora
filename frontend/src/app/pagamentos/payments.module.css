@@ -1,0 +1,28 @@
+﻿.filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.5fr) repeat(4, minmax(125px, 1fr));
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.filters > div { grid-column: 1 / -1; }
+.filters input, .filters select { width: 100%; min-width: 0; color-scheme: dark; }
+
+.scroll:global(.table-wrap):global(.max10) {
+  --heading-height: 40px;
+  --payment-height: 50px;
+  max-height: calc(var(--heading-height) + 10 * var(--payment-height) + 2px);
+  padding-block-end: 0;
+  scrollbar-color: var(--purple) var(--bg2);
+  scrollbar-width: thin;
+}
+.scroll table { min-width: 740px; white-space: nowrap; }
+.scroll th, .scroll td { vertical-align: middle; }
+.scroll thead tr { height: var(--heading-height); }
+.scroll tbody tr { height: var(--payment-height); }
+.method { display: grid; grid-template-columns: 7.25rem max-content; align-items: center; gap: 6px; }
+
+@media (max-width: 970px) {
+  .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filters > :first-child { grid-column: 1 / -1; }
+}

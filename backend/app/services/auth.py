@@ -8,6 +8,7 @@ from ..config import settings
 from ..core import security, timeutil
 from ..core.db import audit_event, get_pool, insert, tx
 from ..core.errors import AppError, bad_request, conflict, unprocessable
+from ..core.usernames import username_problem
 from . import notifications
 
 CODE_TTL = timedelta(minutes=10)
@@ -15,7 +16,6 @@ RESEND_COOLDOWN = timedelta(seconds=60)
 MAX_SENDS_PER_HOUR = 5
 MAX_FAILED_LOGINS = 8
 LOCK_TIME = timedelta(minutes=15)
-USERNAME_RE = re.compile(r'^[A-Za-z0-9_.]{3,24}$')
 EMAIL_RE = re.compile(r'^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$')
 
 
@@ -35,7 +35,8 @@ def create_session(conn, user_id: str, ip: str, ua: str, mfa_verified: bool = Fa
     return token
 
 
-def _issue_code(conn, user_id: str, purpose: str, target_email: str) -> None:
+def _issue_code(conn, user_id: str, target_email: str) -> None:
+    purpose = 'signup'
     n = timeutil.now()
     last = conn.execute(
         """select * from email_verification_codes where user_id=%s and purpose=%s
@@ -56,7 +57,7 @@ def _issue_code(conn, user_id: str, purpose: str, target_email: str) -> None:
         'user_id': user_id, 'purpose': purpose, 'target_email': target_email,
         'code_hash': security.hmac_hex('email-code', user_id, purpose, code), 'expires_at': n + CODE_TTL,
         'last_sent_at': n, 'created_at': n})
-    notifications.notify(conn, user_id, 'verify_email' if purpose == 'signup' else 'email_change',
+    notifications.notify(conn, user_id, 'verify_email',
                          {'codigo': code, 'validade': '10 minutos'}, dedupe=f"code:{row['id']}",
                          in_app=False, email_to=target_email)
 
@@ -68,7 +69,8 @@ def register(data: dict, ip: str, ua: str) -> tuple[dict, str]:
     pw, pw2 = data.get('password') or '', data.get('password_confirm') or ''
     errors = {}
     if not 3 <= len(full_name) <= 120: errors['full_name'] = 'Informe seu nome completo.'
-    if not USERNAME_RE.match(username): errors['username'] = 'Use 3 a 24 letras, números, "_" ou ".".'
+    if problem := username_problem(username):
+        errors['username'] = problem
     if pw != pw2: errors['password_confirm'] = 'As senhas não conferem.'
     probs = security.password_problems(pw, email, username)
     if probs: errors['password'] = ' '.join(probs)
@@ -94,13 +96,14 @@ def register(data: dict, ip: str, ua: str) -> tuple[dict, str]:
             conn.execute("""insert into policy_acceptances(user_id, policy_id, context, ip)
                             select %s, id, 'signup', %s from policy_documents where kind=%s and is_current""",
                          (user['id'], ip, kind))
-        _issue_code(conn, str(user['id']), 'signup', email)
+        _issue_code(conn, str(user['id']), email)
         token = create_session(conn, str(user['id']), ip, ua)
     notifications.process_deliveries(limit=5)
     return user, token
 
 
-def verify_code(user_id: str, purpose: str, code: str) -> dict:
+def verify_code(user_id: str, code: str) -> dict:
+    purpose = 'signup'
     code = (code or '').strip()
     n = timeutil.now()
     error: AppError | None = None
@@ -126,37 +129,20 @@ def verify_code(user_id: str, purpose: str, code: str) -> dict:
                 conn.execute('update email_verification_codes set invalidated_at=%s where id=%s', (n, row['id']))
         else:
             conn.execute('update email_verification_codes set consumed_at=%s where id=%s', (n, row['id']))
-            if purpose == 'signup':
-                conn.execute("update users set email_verified_at=%s, status='active' where id=%s and status='pending_verification'",
-                             (n, user_id))
-                conn.execute('update users set email_verified_at=coalesce(email_verified_at,%s) where id=%s', (n, user_id))
-            else:
-                taken = conn.execute('select 1 from users where lower(email)=lower(%s) and id<>%s and deleted_at is null',
-                                     (row['target_email'], user_id)).fetchone()
-                if taken:
-                    raise conflict('email_unavailable', 'Este e-mail não está disponível.')
-                old = conn.execute('select email from users where id=%s', (user_id,)).fetchone()['email']
-                conn.execute('update users set email=%s, email_verified_at=%s where id=%s', (row['target_email'], n, user_id))
-                notifications.notify(conn, user_id, 'security_email_changed', {'email_novo': row['target_email']},
-                                     dedupe=f"emailchg:{row['id']}", template='security_alert', email_to=old)
+            conn.execute("update users set email_verified_at=%s, status='active' where id=%s and status='pending_verification'",
+                         (n, user_id))
+            conn.execute('update users set email_verified_at=coalesce(email_verified_at,%s) where id=%s', (n, user_id))
             return {'verified': True}
     # Commit das tentativas acontece antes de sinalizar o erro.
     raise error
 
 
-def resend_code(user_id: str, purpose: str = 'signup') -> None:
+def resend_code(user_id: str) -> None:
     with tx(actor_id=user_id) as conn:
         u = conn.execute('select email, status from users where id=%s', (user_id,)).fetchone()
-        if purpose == 'signup' and u['status'] != 'pending_verification':
+        if u['status'] != 'pending_verification':
             raise bad_request('already_verified', 'Seu e-mail já está confirmado.')
-        target = u['email']
-        if purpose == 'email_change':
-            last = conn.execute("""select target_email from email_verification_codes where user_id=%s and purpose='email_change'
-                                   order by created_at desc limit 1""", (user_id,)).fetchone()
-            if not last:
-                raise bad_request('no_code', 'Nenhuma troca de e-mail em andamento.')
-            target = last['target_email']
-        _issue_code(conn, user_id, purpose, target)
+        _issue_code(conn, user_id, u['email'])
     notifications.process_deliveries(limit=5)
 
 
@@ -250,33 +236,24 @@ def reset_password(token: str, password: str, password_confirm: str) -> None:
 def change_password(user_id: str, session_id: str, current: str, new: str, confirm: str) -> None:
     security.rate_limit(f'chpw:{user_id}', 5, 900)
     with tx(actor_id=user_id) as conn:
-        u = conn.execute('select * from users where id=%s', (user_id,)).fetchone()
+        u = conn.execute('select email, username, password_hash from users where id=%s for update', (user_id,)).fetchone()
+        if u['password_hash'] and not current:
+            raise unprocessable('validation_error', 'Informe a senha atual.', fields={'current_password': 'Informe a senha atual.'})
         if u['password_hash'] and not security.verify_password(u['password_hash'], current or ''):
             raise AppError(400, 'wrong_password', 'Senha atual incorreta.')
         if new != confirm:
-            raise unprocessable('validation_error', 'As senhas não conferem.')
+            raise unprocessable('validation_error', 'As senhas não conferem.',
+                                fields={'new_password_confirm': 'As senhas não conferem.'})
+        if u['password_hash'] and new == current:
+            raise unprocessable('validation_error', 'Escolha uma senha diferente da atual.',
+                                fields={'new_password': 'Escolha uma senha diferente da atual.'})
         probs = security.password_problems(new, u['email'], u['username'])
         if probs:
-            raise unprocessable('validation_error', ' '.join(probs), fields={'password': ' '.join(probs)})
+            raise unprocessable('validation_error', ' '.join(probs), fields={'new_password': ' '.join(probs)})
         conn.execute('update users set password_hash=%s where id=%s', (security.hash_password(new), user_id))
         revoke_all_sessions(conn, user_id, 'password_changed', except_session=session_id)
         notifications.notify(conn, user_id, 'password_changed', {'quando': timeutil.fmt(timeutil.now())},
                              dedupe=f'pwchg:{user_id}:{int(timeutil.now().timestamp())}', template='security_alert')
-
-
-def request_email_change(user_id: str, new_email: str, password: str) -> None:
-    new_email = _norm_email(new_email)
-    security.rate_limit(f'emailchg:{user_id}', 5, 3600)
-    with tx(actor_id=user_id) as conn:
-        u = conn.execute('select * from users where id=%s', (user_id,)).fetchone()
-        if u['password_hash'] and not security.verify_password(u['password_hash'], password or ''):
-            raise AppError(400, 'wrong_password', 'Senha atual incorreta.')
-        if new_email == u['email'].lower():
-            raise bad_request('same_email', 'Informe um e-mail diferente do atual.')
-        if conn.execute('select 1 from users where lower(email)=%s and deleted_at is null', (new_email,)).fetchone():
-            raise conflict('email_unavailable', 'Este e-mail não está disponível.')
-        _issue_code(conn, user_id, 'email_change', new_email)
-    notifications.process_deliveries(limit=5)
 
 
 # ---------------------------------------------------------------- MFA (TOTP)

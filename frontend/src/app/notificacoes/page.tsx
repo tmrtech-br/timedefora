@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import LimitedScroll from '@/components/LimitedScroll';
 import RequireAuth from '@/components/RequireAuth';
 import { Empty, ErrorBox, Modal, PageHeader, Skeleton } from '@/components/ui';
 import { toast } from '@/components/Toaster';
@@ -11,7 +12,6 @@ import { dateTime } from '@/lib/format';
 import styles from './notifications.module.css';
 
 type Notification = { id: string; title: string; body: string; link: string | null; read_at: string | null; created_at: string };
-const VISIBLE_COUNT = 5;
 
 function NotificationCard({ item, onOpen }: { item: Notification; onOpen: (item: Notification) => void }) {
   return (
@@ -20,34 +20,6 @@ function NotificationCard({ item, onOpen }: { item: Notification; onOpen: (item:
       <p className="muted">{item.body}</p>
       {item.link && <Link className="link-purple small" href={item.link} onClick={() => onOpen(item)}>Abrir</Link>}
     </article>
-  );
-}
-
-function NotificationList({ items, onOpen }: { items: Notification[]; onOpen: (item: Notification) => void }) {
-  const firstGroup = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState<number>();
-  const hasMore = items.length > VISIBLE_COUNT;
-
-  useEffect(() => {
-    const group = firstGroup.current;
-    if (!group || !hasMore) return;
-    const measure = () => setHeight(group.getBoundingClientRect().height);
-    const observer = new ResizeObserver(measure);
-    observer.observe(group);
-    measure();
-    return () => observer.disconnect();
-  }, [hasMore]);
-
-  return (
-    <div className={`stack ${styles.list}`} style={{ maxHeight: hasMore ? height : undefined }} data-scrollable={hasMore}
-      role="region" aria-label="Lista de notificações" tabIndex={hasMore ? 0 : undefined}>
-      <div className="stack" ref={firstGroup}>
-        {items.slice(0, VISIBLE_COUNT).map((item) => <NotificationCard key={item.id} item={item} onOpen={onOpen} />)}
-      </div>
-      {hasMore && <div className="stack">
-        {items.slice(VISIBLE_COUNT).map((item) => <NotificationCard key={item.id} item={item} onOpen={onOpen} />)}
-      </div>}
-    </div>
   );
 }
 
@@ -103,7 +75,7 @@ function Notificacoes() {
         </div>
       </PageHeader>
       <ErrorBox error={error} onRetry={reload} />
-      {data?.length ? <NotificationList items={data} onOpen={open} /> : !error && (
+      {data?.length ? <LimitedScroll label="Lista de notificações">{data.map((item) => <NotificationCard key={item.id} item={item} onOpen={open} />)}</LimitedScroll> : !error && (
         data ? <Empty>Nenhuma notificação.</Empty> : <Skeleton h={200} />
       )}
       {confirm && <Modal title="Limpar notificações?" showCloseButton={false} onClose={() => setConfirm(false)}>

@@ -56,12 +56,12 @@ def register(body: RegisterIn, request: Request, response: Response):
 
 @router.post('/verify-email')
 def verify_email(body: CodeIn, p: Principal = Depends(current_user)):
-    return auth.verify_code(p.user_id, 'signup', body.code)
+    return auth.verify_code(p.user_id, body.code)
 
 
 @router.post('/resend-code')
 def resend(p: Principal = Depends(current_user)):
-    auth.resend_code(p.user_id, 'signup')
+    auth.resend_code(p.user_id)
     return {'message': 'Novo código enviado.'}
 
 

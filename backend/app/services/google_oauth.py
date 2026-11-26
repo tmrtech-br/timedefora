@@ -18,6 +18,7 @@ from ..config import settings
 from ..core import security, timeutil
 from ..core.db import insert, tx
 from ..core.errors import AppError
+from ..core.usernames import username_problem
 from . import auth
 from .settings_store import get_settings
 
@@ -53,6 +54,8 @@ def _unique_username(conn, name: str) -> str:
     base = re.sub(r'[^A-Za-z0-9_]', '', (name or 'jogador').split(' ')[0])[:16] or 'jogador'
     if len(base) < 3:
         base = (base + 'jogador')[:8]
+    if username_problem(base):
+        base = 'jogador'
     candidate = base
     while conn.execute('select 1 from users where lower(username)=lower(%s)', (candidate,)).fetchone():
         candidate = f'{base}{secrets.randbelow(9999):04d}'

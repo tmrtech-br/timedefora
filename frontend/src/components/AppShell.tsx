@@ -3,11 +3,12 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
-  Bell, CirclePlay, CreditCard, Gamepad2, Headphones, Heart, Home, Info, ListOrdered, LogOut, Menu, Monitor, Receipt,
+  Bell, CirclePlay, CreditCard, Gamepad2, Headphones, Heart, Home, Info, Keyboard, ListOrdered, LogOut, Menu, Monitor, Receipt,
   Settings, ShieldCheck, ShieldHalf, Smartphone, Tablet, UserRound, UserRoundPlus, X, Zap,
 } from 'lucide-react';
 import { useAuth, isStaff } from '@/lib/auth';
 import { get } from '@/lib/api';
+import { useFeatures } from '@/lib/features';
 import Toaster from '@/components/Toaster';
 
 function LogoIcon() {
@@ -88,6 +89,7 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
   const path = usePathname();
   const router = useRouter();
   const { me, logout } = useAuth();
+  const features = useFeatures();
   const link = (i: { href: string; label: string; icon: typeof Home; also?: string[] }) => (
     <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''} aria-current={isActive(path, i.href) ? 'page' : undefined}>
       <i.icon aria-hidden />{i.label}
@@ -100,6 +102,7 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
         {SIDE_MAIN.map(link)}
         <div className="side-divider" />
         {SIDE_ACCOUNT.map(link)}
+        {features?.controls_menu_enabled && link({ href: '/controles', label: 'Teclado e mouse', icon: Keyboard })}
         {me && (
           <div className="side-extra">
             <div className="side-divider" />

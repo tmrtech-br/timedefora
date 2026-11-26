@@ -1,13 +1,16 @@
 'use client';
 import { useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
+import { Camera } from 'lucide-react';
 import GoogleButton from '@/components/GoogleButton';
+import PasswordForm from '@/components/PasswordForm';
 import RequireAuth from '@/components/RequireAuth';
 import { Alert, Field, PageHeader } from '@/components/ui';
 import { ApiError, api, del, patch, post } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
 import { dateTime, money } from '@/lib/format';
+import styles from './profile.module.css';
 
 type Stats = { minutes_played: number; sessions: number; total_spent_cents: number; favorites: number; top_games: { title: string; minutes: number }[] };
 type Link_ = { id: string; provider: string; link_type: string; provider_email: string | null; public_url: string | null; display_name: string | null };
@@ -20,8 +23,7 @@ function Perfil() {
   const [f, setF] = useState({ full_name: '', username: '' });
   const [msg, setMsg] = useState<{ k: 'ok' | 'error'; t: string } | null>(sp.get('google') === 'vinculado' ? { k: 'ok', t: 'Conta Google vinculada.' } : sp.get('google') === 'ja_vinculado' ? { k: 'error', t: 'Esta conta Google já está vinculada a outro usuário.' } : null);
   const [fields, setFields] = useState<Record<string, string>>({});
-  const [email, setEmail] = useState({ new_email: '', password: '', code: '' });
-  const [emailStep, setEmailStep] = useState(false);
+  const avatarInput = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState({ provider: 'twitch', public_url: '' });
   useEffect(() => { if (me) setF({ full_name: me.full_name, username: me.username }); }, [me]);
   const run = async (fn: () => Promise<unknown>, ok: string) => {
@@ -37,33 +39,32 @@ function Perfil() {
     <div className="stack">
       <PageHeader title="Perfil" subtitle="Seus dados, contas vinculadas e estatísticas." />
       {msg && <Alert kind={msg.k}>{msg.t}</Alert>}
-      <div className="grid2">
-        <section className="card stack">
+      <div className={`grid2 ${styles.profileForms}`}>
+        <section className={`card stack ${styles.compact} ${styles.personal}`}>
           <h2>Dados pessoais</h2>
-          <div className="row">{me.avatar_url ? <img className="avatar" style={{ width: 64, height: 64 }} src={me.avatar_url} alt="Seu avatar" /> : <span className="avatar" style={{ width: 64, height: 64, fontSize: 26 }}>{me.username[0]}</span>}
-            <label className="btn sm">Trocar avatar<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} /></label></div>
+          <button type="button" className={styles.avatarButton} aria-label="Trocar avatar" onClick={() => avatarInput.current?.click()}>
+            {me.avatar_url ? <img src={me.avatar_url} alt="" /> : <span aria-hidden>{me.username[0]?.toUpperCase()}</span>}
+            <span className={styles.avatarOverlay}><Camera size={18} aria-hidden /> Trocar avatar</span>
+          </button>
+          <input ref={avatarInput} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = '';
+            if (file) void upload(file);
+          }} />
           <Field label="Nome completo (privado)" required error={fields.full_name}><input value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></Field>
-          <Field label="Nome de usuário público (aparece nas filas)" required hint="3 a 24 caracteres: letras, números, _ ou ." error={fields.username}><input maxLength={24} value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></Field>
-          <button className="btn primary" onClick={() => {
+          <Field label="Nome de usuário público" required hint="Aparece nas filas. Use 3 a 24 letras, números, _ ou . sem palavrões ou discriminação." error={fields.username}><input maxLength={24} value={f.username} onChange={(e) => { setF({ ...f, username: e.target.value }); setFields((current) => ({ ...current, username: '' })); }} /></Field>
+          <button className={`btn primary ${styles.save}`} onClick={() => {
             const miss: Record<string, string> = {};
             if (!f.full_name.trim()) miss.full_name = 'Preencha este campo.';
             if (!f.username.trim()) miss.username = 'Preencha este campo.';
             if (Object.keys(miss).length) { setFields(miss); setMsg({ k: 'error', t: 'Preencha os campos obrigatórios.' }); return; }
             run(() => patch('/me', { full_name: f.full_name.trim(), username: f.username.trim() }), 'Perfil atualizado.');
           }}>Salvar</button>
+          {!me.email_verified && <a className="link-purple small" href="/verificar-email">Confirmar e-mail da conta</a>}
         </section>
-        <section className="card stack">
-          <h2>E-mail</h2>
-          <p className="muted">Atual: <b>{me.email}</b> {me.email_verified ? <span className="pill green">confirmado</span> : <a className="pill amber" href="/verificar-email">confirmar</a>}</p>
-          {!emailStep ? <>
-            <Field label="Novo e-mail"><input maxLength={254} type="email" value={email.new_email} onChange={(e) => setEmail({ ...email, new_email: e.target.value })} /></Field>
-            {me.has_password && <Field label="Senha atual"><input type="password" value={email.password} onChange={(e) => setEmail({ ...email, password: e.target.value })} /></Field>}
-            <button className="btn" onClick={() => run(async () => { await post('/me/email', { new_email: email.new_email, password: email.password }); setEmailStep(true); }, 'Código enviado para o novo e-mail.')}>Trocar e-mail</button>
-          </> : <>
-            <Field label="Código enviado ao novo e-mail"><input inputMode="numeric" maxLength={6} value={email.code} onChange={(e) => setEmail({ ...email, code: e.target.value })} /></Field>
-            <div className="row"><button className="btn primary" onClick={() => run(async () => { await post('/me/email/confirm', { code: email.code }); setEmailStep(false); }, 'E-mail alterado.')}>Confirmar</button>
-              <button className="btn" onClick={() => run(() => post('/me/email/resend'), 'Código reenviado.')}>Reenviar</button></div>
-          </>}
+        <section className={`card stack ${styles.compact}`}>
+          <h2>{me.has_password ? 'Alterar senha' : 'Definir senha'}</h2>
+          <PasswordForm hasPassword={me.has_password} onChanged={refresh} className={styles.form} />
         </section>
       </div>
       <div className="grid2">
@@ -74,7 +75,7 @@ function Perfil() {
             <dt>Mais jogados</dt><dd>{stats.data.top_games.map((t) => `${t.title} (${t.minutes} min)`).join(', ') || '—'}</dd></dl>}
           <p className="small dim" style={{ marginTop: 10 }}>Conta criada em {dateTime(me.created_at)}. Conquistas internas: em breve.</p>
         </section>
-        <section className="card stack">
+        <section className={`card stack ${styles.compact}`}>
           <h2>Contas vinculadas</h2>
           {links.data?.map((l) => (
             <div key={l.id} className="spread"><span><b>{l.provider === 'google' ? 'Google' : l.provider[0].toUpperCase() + l.provider.slice(1)}</b> · {l.link_type === 'oauth' ? `OAuth (${l.provider_email})` : <>perfil público: <a className="link-purple" href={l.public_url || '#'} target="_blank" rel="noopener noreferrer">{l.display_name}</a></>}</span>

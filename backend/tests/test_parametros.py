@@ -80,6 +80,22 @@ def test_teclado_mouse_desligado(world, freeze):
     assert user.post(f'/reservations/{rid}/join', json={'input_device': 'gamepad'}).status_code == 200
 
 
+def test_menu_controles_desligado_bloqueia_edicao_e_preserva_mapeamento():
+    adm, _ = admin_api()
+    user = login(make_user())
+    path = '/me/input-bindings'
+    bindings = {'keys': {'cross': 'KeyX'}, 'mouse_look': True, 'mouse_sensitivity': 1.0}
+    assert user.put(path, json=bindings).status_code == 200
+    _set(adm, 'controls_menu_enabled', False)
+    flags = Api().get('/features').json()
+    assert flags['controls_menu_enabled'] is False and flags['keyboard_mouse_enabled'] is True
+    assert user.put(path, json={**bindings, 'keys': {'cross': 'KeyZ'}}).status_code == 409
+    assert user.delete(path).status_code == 409
+    assert user.get(path).json() == bindings
+    _set(adm, 'controls_menu_enabled', True)
+    assert user.delete(path).status_code == 200
+
+
 def test_chamados_desligados():
     adm, _ = admin_api()
     _set(adm, 'support_tickets_enabled', False)
