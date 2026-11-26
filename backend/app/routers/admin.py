@@ -547,7 +547,10 @@ def delete_console(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
         audit_event(conn, 'console.deleted', 'consoles', cid)
         conn.execute("update consoles set deleted_at=%s, is_published=false, status='disabled' where id=%s", (timeutil.now(), cid))
         conn.execute("update console_game_assignments set status='archived' where console_id=%s and status='active' and ends_at > %s", (cid, timeutil.now()))
-        conn.execute('update console_connection_configs set capture_device_id=null, control_adapter_id=null, connection_status=%s, method=%s where console_id=%s',
+        conn.execute('''update console_connection_configs
+                        set capture_device_id=null, control_adapter_id=null, psn_account_id=null, psn_device_uid=null,
+                            connection_status=%s, method=%s
+                        where console_id=%s''',
                      ('unconfigured', 'unconfigured', cid))
     return {'ok': True}
 
@@ -559,6 +562,10 @@ class ConnectionIn(BaseModel):
     console_identifier: str | None = None
     discovery_mode: str = 'manual'
     network_route: str = 'lan'               # lan | internet_psn | internet_port_forward
+    psn_account_id: uuid.UUID | None = None
+    psn_device_uid: str | None = Field(default=None, max_length=160)
+    standby_after_session: bool = True
+    keep_awake_minutes: int = Field(default=15, ge=0, le=240)
     public_host: str | None = Field(default=None, max_length=253)
     public_port: int | None = Field(default=None, ge=1, le=65535)
     resolution: str = '1080p'
@@ -579,7 +586,7 @@ HOST_RE = re.compile(r'^(?:\d{1,3}\.){3}\d{1,3}$|^[A-Za-z0-9.-]{1,120}$')
 
 @router.put('/consoles/{cid}/connection')
 def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(ADMIN)):
-    if body.method not in ('unconfigured', 'remote_play_chiaki', 'remote_play_direct', 'native_remote_play', 'hdmi_capture', 'simulated'):
+    if body.method not in ('unconfigured', 'remote_play_chiaki', 'remote_play_direct', 'remote_play_native', 'native_remote_play', 'hdmi_capture', 'simulated'):
         raise unprocessable('validation_error', 'Método de conexão inválido.')
     errors = {}
     with tx() as conn:
@@ -590,19 +597,44 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
         info = method_info(body.method)
         if body.method != 'unconfigured' and info['platforms'] and c['platform_code'] not in info['platforms']:
             errors['method'] = f"{info['label']} não é aplicável a {c['platform_code']}."
-        if body.method in ('remote_play_chiaki', 'remote_play_direct', 'hdmi_capture', 'native_remote_play') and not body.agent_id:
+        if body.method in ('remote_play_chiaki', 'remote_play_direct', 'remote_play_native', 'hdmi_capture', 'native_remote_play') and not body.agent_id:
             errors['agent_id'] = 'Selecione o agente local.'
         if body.network_route not in ('lan', 'internet_psn', 'internet_port_forward'):
             errors['network_route'] = 'Rota de rede inválida.'
         elif body.method == 'remote_play_direct' and body.network_route != 'lan':
             errors['network_route'] = 'O Remote Play direto funciona só na rede local: o PC do agente fica no mesmo lugar do console.'
-        elif body.method != 'remote_play_chiaki' and body.network_route != 'lan':
+        elif body.method not in ('remote_play_chiaki', 'remote_play_native') and body.network_route != 'lan':
             errors['network_route'] = 'Acesso pela internet só se aplica ao Remote Play.'
         if body.method == 'remote_play_direct':
             if not (body.internal_host and HOST_RE.match(body.internal_host)):
                 errors['internal_host'] = 'Informe o IP do console na rede local (fixe o IP no roteador).'
             if not (body.console_identifier or '').strip():
                 errors['console_identifier'] = 'Informe a identificação do console (a mesma usada no config.json do agente, ex.: PS4-118).'
+        if body.method == 'remote_play_native':
+            if body.network_route == 'internet_port_forward':
+                errors['network_route'] = 'Remote Play nativo suporta as rotas LAN e PSN.'
+            elif body.network_route == 'lan':
+                if not (body.internal_host and HOST_RE.match(body.internal_host)):
+                    errors['internal_host'] = 'Informe o IP/hostname do console na rede local.'
+                if not (body.console_identifier or '').strip():
+                    errors['console_identifier'] = 'Informe a identificação local do console.'
+            elif body.network_route == 'internet_psn':
+                if not body.psn_account_id:
+                    errors['psn_account_id'] = 'Selecione uma conta PSN vinculada ao agente.'
+                else:
+                    account = one(conn, 'select agent_id, status from psn_accounts where id=%s', (body.psn_account_id,))
+                    if not account or str(account['agent_id']) != str(body.agent_id) or account['status'] != 'linked':
+                        errors['psn_account_id'] = 'Conta PSN deve estar vinculada e pertencer ao agente selecionado.'
+                    elif c['platform_code'] == 'PS4' and one(conn, '''select 1 from console_connection_configs cc
+                        join consoles cx on cx.id=cc.console_id join platforms pp on pp.id=cx.platform_id
+                        where cc.psn_account_id=%s and cc.network_route='internet_psn'
+                        and cc.method='remote_play_native' and pp.code='PS4' and cc.console_id<>%s''',
+                        (body.psn_account_id, cid)):
+                        errors['psn_account_id'] = 'Esta conta já está associada a outro PS4 pela internet.'
+                if c['platform_code'] == 'PS4':
+                    body.psn_device_uid = None
+                elif not (body.psn_device_uid or '').strip():
+                    errors['psn_device_uid'] = 'Informe o DUID do PS5 retornado em Contas PSN → Consultar PS5.'
         if body.method == 'remote_play_chiaki':
             if body.network_route == 'lan':
                 if not (body.internal_host and HOST_RE.match(body.internal_host)) and body.discovery_mode == 'manual':
@@ -612,10 +644,15 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
                     errors['public_host'] = 'Informe o IP público ou o endereço DDNS do roteador onde o console está.'
             elif body.network_route == 'internet_psn' and not (body.console_identifier or '').strip():
                 errors['console_identifier'] = 'Informe a identificação do console (nome ou ID exibido no pareamento PSN).'
+        if body.method != 'remote_play_native':
+            body.psn_account_id = None
+            body.psn_device_uid = None
         if body.network_route != 'lan':
             body.discovery_mode = 'manual'   # descoberta automática só funciona na rede local
         if body.network_route != 'internet_port_forward':
             body.public_host, body.public_port = None, None
+        if body.network_route != 'internet_psn':
+            body.psn_account_id, body.psn_device_uid = None, None
         if body.method == 'hdmi_capture':
             if not body.capture_device_id:
                 errors['capture_device_id'] = 'Selecione a capturadora/entrada HDMI.'
@@ -753,6 +790,11 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
         message = (message + ' ' if message else '') + '(resposta SIMULADA do agente — não valida o console real)'
     n = timeutil.now()
     with tx() as conn:
+        # O painel repete o teste enquanto a conexão está em andamento: a linha "em andamento" anterior é substituída
+        # (o histórico mostra o andamento atual ou o resultado final, não uma pilha de "em andamento").
+        conn.execute("delete from console_connection_tests where id = (select id from console_connection_tests "
+                     "where console_id=%s and test_type=%s order by created_at desc limit 1) "
+                     "and result='not_available' and message like 'Em andamento%%'", (cid, test_type))
         insert(conn, 'console_connection_tests', {'console_id': cid, 'test_type': test_type, 'result': result,
                                                   'simulated': simulated, 'message': message,
                                                   'metrics': Jsonb(metrics), 'run_by': p.user_id})
@@ -780,7 +822,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
             conn.execute('update console_connection_configs set validated_at=%s, validated_by=%s where id=%s', (n, p.user_id, cfg['id']))
             conn.execute("update consoles set status='online' where id=%s and status in ('offline','unconfigured','degraded')", (cid,))
     return {'test_type': test_type, 'result': result, 'message': message, 'simulated': simulated,
-            'metrics': metrics or None}
+            'metrics': metrics or None, 'in_progress': in_progress}
 
 
 @router.post('/consoles/{cid}/publish')

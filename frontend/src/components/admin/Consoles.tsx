@@ -9,7 +9,7 @@ import { DataTable, useAction, useConfirm } from './common';
 import { toast } from '@/components/Toaster';
 
 type Method = { method: string; label: string; status: string; applicable: boolean; operational: boolean; guide: string; needs: string[] };
-type Conn = Record<string, unknown> & { method: string; method_label?: string; connection_status: string; agent_id: string | null; validated_at: string | null;
+type Conn = Record<string, unknown> & { method: string; method_label?: string; connection_status: string; agent_id: string | null; psn_account_id?: string | null; validated_at: string | null;
   video_validated_at: string | null; audio_validated_at: string | null; control_validated_at: string | null; heartbeat_validated_at: string | null };
 type C = { id: string; code: string; name: string; platform_code: string; status: string; is_published: boolean; model: string; serial_number: string | null;
   location: string; description: string; connection: Conn; tests: { test_type: string; result: string; simulated: boolean; message: string; run_at: string }[];
@@ -17,6 +17,7 @@ type C = { id: string; code: string; name: string; platform_code: string; status
   pairing: { status: string } | null; method_history?: { id: string; from_method: string; to_method: string; reason: string; created_at: string }[];
   hours?: { weekday: number; opens_at: string; closes_at: string }[] };
 type Agent = { id: string; name: string; is_simulated: boolean };
+type PsnAccount = { id: string; label: string; agent_id: string; status: string };
 type Dev = { id: string; agent_id: string; manufacturer: string; model: string; device_identifier?: string; identifier?: string; input_port?: string; used_by_console: string | null; authorized?: boolean };
 
 const ROUTE_HINT: Record<string, string> = {
@@ -33,6 +34,7 @@ const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelete: () => void }) {
   const methods = useApi<Method[]>(`/admin/connection-methods?platform=${c.platform_code}`).data;
   const agents = useApi<Agent[]>('/admin/agents').data;
+  const psnAccounts = useApi<PsnAccount[]>('/admin/psn-accounts').data;
   const caps = useApi<Dev[]>('/admin/capture-devices').data;
   const ctls = useApi<Dev[]>('/admin/control-adapters').data;
   const [cfg, setCfg] = useState<Record<string, unknown>>({});
@@ -47,17 +49,42 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
     setCfg({ method: x.method, agent_id: x.agent_id || '', internal_host: x.internal_host || '', console_identifier: x.console_identifier || '', discovery_mode: x.discovery_mode,
       network_route: x.network_route || 'lan', public_host: x.public_host || '', public_port: x.public_port || '',
       resolution: x.resolution, fps: x.fps, codec: x.codec, bitrate_kbps: x.bitrate_kbps, low_latency: x.low_latency, audio_enabled: x.audio_enabled,
-      capture_device_id: x.capture_device_id || '', control_adapter_id: x.control_adapter_id || '', video_encoder: x.video_encoder || '', capture_color_space: x.capture_color_space || '', reason: '' });
+      capture_device_id: x.capture_device_id || '', control_adapter_id: x.control_adapter_id || '', video_encoder: x.video_encoder || '', capture_color_space: x.capture_color_space || '',
+      psn_account_id: x.psn_account_id || '', psn_device_uid: x.psn_device_uid || '',
+      standby_after_session: x.standby_after_session ?? true, keep_awake_minutes: x.keep_awake_minutes ?? 15, reason: '' });
   }, [c]);
   const m = String(cfg.method || 'unconfigured');
+  const savedMethod = c.connection.method;
+  const savedRoute = c.connection.network_route || 'lan';
+  const nativePsnRoute = savedMethod === 'remote_play_native' && savedRoute === 'internet_psn';
+  const lanPairing = savedMethod === 'remote_play_direct' ||
+    (savedMethod === 'remote_play_native' && savedRoute === 'lan');
   const info = methods?.find((x) => x.method === m);
   const set = (k: string, v: unknown) => setCfg({ ...cfg, [k]: v });
   const save = () => run(async () => {
     const body: Record<string, unknown> = { ...cfg, fps: Number(cfg.fps), bitrate_kbps: Number(cfg.bitrate_kbps), public_port: cfg.public_port ? Number(cfg.public_port) : null };
-    if (body.method !== 'remote_play_chiaki') body.network_route = 'lan';
+    if (body.method !== 'remote_play_chiaki' && body.method !== 'remote_play_native') body.network_route = 'lan';
+    body.keep_awake_minutes = Number(body.keep_awake_minutes);
+    if (!body.psn_account_id) body.psn_account_id = null;
+    if (c.platform_code === 'PS4' && body.method === 'remote_play_native') body.psn_device_uid = null;
     for (const k of ['agent_id', 'capture_device_id', 'control_adapter_id', 'internal_host', 'console_identifier', 'video_encoder', 'capture_color_space', 'public_host']) if (!body[k]) body[k] = null;
     await put(`/admin/consoles/${c.id}/connection`, body); onChange();
   }, 'Configuração salva. Execute os testes para validar novamente.');
+  const unlinkPsn = async () => {
+    const confirmed = await sure({
+      title: 'Desvincular conta PSN',
+      message: `A conexão de ${c.code} será desativada e precisará ser configurada e validada novamente. A conta permanece cadastrada em Contas PSN.`,
+      confirm: 'Desvincular',
+      danger: true,
+    });
+    if (!confirmed) return;
+    await run(async () => {
+      await put(`/admin/consoles/${c.id}/connection`, {
+        method: 'unconfigured', agent_id: c.connection.agent_id, reason: 'Conta PSN desvinculada no painel',
+      });
+      onChange();
+    }, 'Conta PSN desvinculada deste console.');
+  };
   const flag = (v: unknown) => (v ? <span className="pill green">validado</span> : <span className="pill red">não validado</span>);
   return (
     <div className="stack">
@@ -108,6 +135,30 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
             <Field label="Identificação do console" required hint='Mesmo nome usado em "consoles" no config.json do agente (ex.: PS4-118).'>
               <input maxLength={120} value={String(cfg.console_identifier)} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
           </>}
+          {m === 'remote_play_native' && <>
+            <Field label="Rota de rede"><select value={String(cfg.network_route || 'lan')} onChange={(e) => set('network_route', e.target.value)}>
+              <option value="lan">Mesma rede (LAN)</option>
+              <option value="internet_psn" disabled={c.platform_code !== 'PS4'}>Outra rede (PSN) — PS4</option>
+            </select></Field>
+            {cfg.network_route === 'lan' ? <>
+              <Field label="IP / hostname LAN do console"><input value={String(cfg.internal_host || '')} onChange={(e) => set('internal_host', e.target.value)} /></Field>
+              <Field label="Identificação do console"><input value={String(cfg.console_identifier || '')} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
+            </> : <>
+              <Field label="Conta PSN vinculada"><select value={String(cfg.psn_account_id || '')} onChange={(e) => set('psn_account_id', e.target.value)}>
+                <option value="">Selecione uma conta</option>
+                {psnAccounts?.filter((a) => a.agent_id === cfg.agent_id && a.status === 'linked').map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+              </select></Field>
+              {c.platform_code === 'PS4' ? (
+                <p className="small muted">Usar o PS4 principal da conta selecionada.</p>
+              ) : (
+                <Field label="DUID do PS5" required hint="Use o DUID exibido em Contas PSN → Consultar PS5.">
+                  <input value={String(cfg.psn_device_uid || '')} onChange={(e) => set('psn_device_uid', e.target.value)} />
+                </Field>
+              )}
+            </>}
+            <label className="check"><input type="checkbox" checked={!!cfg.standby_after_session} onChange={(e) => set('standby_after_session', e.target.checked)} />Hibernar ao terminar (execução real pendente)</label>
+            <Field label="Manter acordado se houver reserva em X minutos"><input type="number" min={0} max={240} value={Number(cfg.keep_awake_minutes ?? 15)} onChange={(e) => set('keep_awake_minutes', Number(e.target.value))} /></Field>
+          </>}
           {m === 'hdmi_capture' && <>
             <Field label="Capturadora / entrada HDMI"><select value={String(cfg.capture_device_id)} onChange={(e) => set('capture_device_id', e.target.value)}><option value="">Selecione</option>
               {caps?.filter((d) => d.agent_id === cfg.agent_id).map((d) => <option key={d.id} value={d.id} disabled={!!d.used_by_console && d.used_by_console !== c.id}>{d.manufacturer} {d.model} · {d.device_identifier} · {d.input_port}{d.used_by_console && d.used_by_console !== c.id ? ' (em uso)' : ''}</option>)}</select></Field>
@@ -124,20 +175,32 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
         </div>}
         <Field label="Motivo da alteração (registrado na auditoria)"><input maxLength={500} value={String(cfg.reason || '')} onChange={(e) => set('reason', e.target.value)} /></Field>
         <div className="row"><button className="btn primary" disabled={busy} onClick={save}>Salvar configuração</button>
-          <button className="btn" disabled={busy || m === 'unconfigured'} onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/connection`, { method: 'unconfigured', reason: 'Desativado no painel' }); onChange(); }, 'Conexão desativada.')}>Desativar</button></div>
+          <button className="btn" disabled={busy || m === 'unconfigured'} onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/connection`, { method: 'unconfigured', reason: 'Desativado no painel' }); onChange(); }, 'Conexão desativada.')}>Desativar</button>
+          {c.connection.psn_account_id && <button className="btn danger" disabled={busy} onClick={unlinkPsn}>Desvincular conta PSN</button>}
+        </div>
       </section>
 
       <section className="card stack">
         <h2>Testes e diagnóstico</h2>
         <div className="row">Vídeo {flag(c.connection.video_validated_at)} Áudio {flag(c.connection.audio_validated_at)} Controle {flag(c.connection.control_validated_at)} Heartbeat {flag(c.connection.heartbeat_validated_at)}
           Conexão <StatusPill status={c.connection.connection_status} /></div>
-        {m === 'remote_play_chiaki' && <Field label="Código de pareamento exibido no console (assistente do admin)"><input value={pairCode} onChange={(e) => setPairCode(e.target.value)} maxLength={12} /></Field>}
-        {m === 'remote_play_direct' && <Field label="PIN de registro (8 dígitos)" hint="No console: Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo. Digite aqui e clique em Pareamento (vale por ~5 min).">
+        {nativePsnRoute && <p className="small muted">O registro remoto é realizado automaticamente no teste de conexão.</p>}
+        {savedMethod === 'remote_play_chiaki' && <Field label="Código de pareamento exibido no console (assistente do admin)"><input value={pairCode} onChange={(e) => setPairCode(e.target.value)} maxLength={12} /></Field>}
+        {lanPairing && <Field label="PIN de registro (8 dígitos)" hint="No console: Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo. Digite o PIN e clique em Parear.">
           <input inputMode="numeric" value={pairCode} onChange={(e) => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 8))} maxLength={8} placeholder="12345678" /></Field>}
-        <div className="row">{TESTS.map(([t, l]) => <button key={t} className="btn sm" disabled={busy} onClick={() => run(async () => {
-          const r = await post<{ result: string; message: string; simulated: boolean }>(`/admin/consoles/${c.id}/tests/${t}`, t === 'pair' ? { code: pairCode || null } : {});
+        <div className="row">{TESTS.map(([t, l]) => <button key={t} className="btn sm" disabled={busy || (t === 'pair' && nativePsnRoute)} onClick={() => run(async () => {
+          type R = { result: string; message: string; simulated: boolean; in_progress?: boolean };
+          const call = () => post<R>(`/admin/consoles/${c.id}/tests/${t}`, t === 'pair' ? { code: pairCode || null } : {});
+          let r = await call();
+          const deadline = Date.now() + (nativePsnRoute ? 80_000 : 36_000);
+          while (r.in_progress && Date.now() < deadline) {
+            onChange();
+            toast('ok', `${l}: ${r.message.replace(/ Clique em "Testar".*$/, '')} Aguardando…`);
+            await new Promise((ok) => setTimeout(ok, 3000));
+            r = await call();
+          }
           onChange(); return r;
-        }).then((r) => r && toast(r.result === 'passed' ? 'ok' : 'error', `${l}: ${RESULT_PT[r.result] || r.result}${r.simulated ? ' (SIMULADO)' : ''} — ${r.message}`))}>{l}</button>)}</div>
+        }).then((r) => r && toast(r.result === 'passed' || r.in_progress ? 'ok' : 'error', `${l}: ${RESULT_PT[r.result] || r.result}${r.simulated ? ' (SIMULADO)' : ''} — ${r.message}`))}>{l}</button>)}</div>
         <div className="row">
           <button className="btn primary" disabled={busy || c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/publish`); onChange(); }, 'Console publicado para vendas.')}>Publicar</button>
           <button className="btn" disabled={busy || !c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/unpublish`); onChange(); }, 'Console despublicado.')}>Despublicar</button>

@@ -64,6 +64,21 @@ def test_autenticacao_obrigatoria():
     assert 'NÃO encontrado' in r.json()['message']
 
 
+def test_heartbeat_psn_preserves_authentication_and_requires_a_ps4_account():
+    client = TestClient(create_app(cfg()))
+    base = '/v1/consoles/ps4/'
+    body = {'method': 'remote_play_native', 'target': {'route': 'internet_psn'}}
+    assert client.post(base + 'health', json=body).status_code == 401
+    health = client.post(base + 'health', json=body, headers=H)
+    assert health.status_code == 200 and health.json()['ok']
+    assert health.json()['state'] is None
+    connect = client.post(base + 'connect', json=body, headers=H)
+    assert connect.status_code == 422 and connect.json()['code'] == 'psn_account_required'
+    body['target']['platform_code'] = 'PS5'
+    connect = client.post(base + 'connect', json=body, headers=H)
+    assert connect.status_code == 501 and connect.json()['code'] == 'psn_transport_pending'
+
+
 def test_descoberta_usa_rota_e_nao_finge():
     calls = []
 

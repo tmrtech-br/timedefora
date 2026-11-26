@@ -1,5 +1,5 @@
 """Registro de adaptadores por método de conexão escolhido no painel administrativo."""
-from .agent_client import ChiakiWebRemotePlayAdapter, DirectRemotePlayAdapter, HdmiCaptureAdapter, NativeRemotePlayAdapter
+from .agent_client import ChiakiWebRemotePlayAdapter, DirectRemotePlayAdapter, HdmiCaptureAdapter, NativeRemotePlayAdapter, NativePsnOrLanRemotePlayAdapter
 from .contract import AdapterError, ConsoleStreamingAdapter
 from .simulated import SimulatedAdapter
 
@@ -7,11 +7,16 @@ _ADAPTERS: dict[str, ConsoleStreamingAdapter] = {
     'simulated': SimulatedAdapter(),
     'remote_play_chiaki': ChiakiWebRemotePlayAdapter(),
     'remote_play_direct': DirectRemotePlayAdapter(),
+    'remote_play_native': NativePsnOrLanRemotePlayAdapter(),
     'hdmi_capture': HdmiCaptureAdapter(),
     'native_remote_play': NativeRemotePlayAdapter(),
 }
 
 METHODS = [
+    {'method': 'remote_play_native', 'label': 'Remote Play nativo', 'status': 'experimental',
+     'platforms': ['PS4', 'PS5'], 'needs': ['agent', 'pairing'],
+     'guide': 'Use a rota LAN para PS4 ou PS5 na rede do agente. Para PS4 em outra rede, selecione a conta que tem '
+              'este console como PS4 principal e execute os testes de imagem, áudio e controle.'},
     {'method': 'remote_play_direct', 'label': 'Remote Play direto — vários consoles por PC (experimental)', 'status': 'experimental',
      'platforms': ['PS4', 'PS5'], 'needs': ['agent', 'internal_host', 'pairing'],
      'guide': 'O ConsoleAgent conecta direto no console pelo protocolo Remote Play, sem chiaki-ng: sem janelas nem monitores, '

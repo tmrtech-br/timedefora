@@ -5,6 +5,7 @@ import abc
 from struct import unpack_from
 import warnings
 import logging
+import time
 from collections import deque
 from typing import Sequence, TYPE_CHECKING
 
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
     from pyremoteplay.session import Session
 
 _LOGGER = logging.getLogger(__name__)
+DECODE_REPORT_INTERVAL = 5
 
 try:
     import av
@@ -57,6 +59,7 @@ class AVReceiver(abc.ABC):
         buf: bytes,
         codec_ctx: av.CodecContext,
         resampler: av.audio.resampler.AudioResampler = None,
+        report_error=None,
     ) -> av.AudioFrame:
         """Return decoded audio frame."""
         frames = None
@@ -64,12 +67,18 @@ class AVReceiver(abc.ABC):
         try:
             frames = codec_ctx.decode(packet)
         except av.error.InvalidDataError as error:
-            _LOGGER.error("Error decoding audio frame: %s", error)
+            if report_error is None:
+                _LOGGER.error("Error decoding audio frame: %s", error)
+            else:
+                report_error("áudio", error)
         if not frames:
             return None
         frame = frames[0]
         if frame.is_corrupt:
-            _LOGGER.error("Corrupt Frame: %s", frame)
+            if report_error is None:
+                _LOGGER.error("Corrupt Frame: %s", frame)
+            else:
+                report_error("áudio", "quadro corrompido")
             return None
 
         if resampler:
@@ -86,7 +95,7 @@ class AVReceiver(abc.ABC):
 
     @staticmethod
     def video_frame(
-        buf: bytes, codec_ctx: av.CodecContext, video_format="rgb24"
+        buf: bytes, codec_ctx: av.CodecContext, video_format="rgb24", report_error=None
     ) -> av.VideoFrame:
         """Decode H264 Frame to raw image.
         Return AV Frame.
@@ -100,12 +109,18 @@ class AVReceiver(abc.ABC):
         try:
             frames = codec_ctx.decode(packet)
         except av.error.InvalidDataError as error:
-            _LOGGER.error("Error decoding video frame: %s", error)
+            if report_error is None:
+                _LOGGER.error("Error decoding video frame: %s", error)
+            else:
+                report_error("vídeo", error)
         if not frames:
             return None
         frame = frames[0]
         if frame.is_corrupt:
-            _LOGGER.error("Corrupt Frame: %s", frame)
+            if report_error is None:
+                _LOGGER.error("Corrupt Frame: %s", frame)
+            else:
+                report_error("vídeo", "quadro corrompido")
             return None
         # _LOGGER.debug(
         #     "Frame: Key:%s, Interlaced:%s Pict:%s",
@@ -176,6 +191,16 @@ class AVReceiver(abc.ABC):
         self._audio_decoder = None
         self._audio_resampler = None
         self._audio_config = {}
+        self._decode_failures = {}
+
+    def _report_decode_error(self, media_type, error):
+        now = time.monotonic()
+        last, count = self._decode_failures.get(media_type, (-DECODE_REPORT_INTERVAL, 0))
+        count += 1
+        if now - last >= DECODE_REPORT_INTERVAL:
+            _LOGGER.warning("Decodificador de %s descartou %d quadro(s): %s", media_type, count, error)
+            last, count = now, 0
+        self._decode_failures[media_type] = last, count
 
     def _set_session(self, session: Session):
         self._session = session
@@ -226,7 +251,7 @@ class AVReceiver(abc.ABC):
         if not self._video_decoder:
             _LOGGER.warning("Video decoder not created.")
             return None
-        frame = AVReceiver.video_frame(buf, self._video_decoder, self.video_format)
+        frame = AVReceiver.video_frame(buf, self._video_decoder, self.video_format, self._report_decode_error)
         return frame
 
     def decode_audio_frame(self, buf: bytes) -> av.AudioFrame:
@@ -234,7 +259,7 @@ class AVReceiver(abc.ABC):
         if not self._audio_config or not self._audio_decoder:
             _LOGGER.warning("Audio config not received")
             return None
-        frame = AVReceiver.audio_frame(buf, self._audio_decoder, self._audio_resampler)
+        frame = AVReceiver.audio_frame(buf, self._audio_decoder, self._audio_resampler, self._report_decode_error)
         return frame
 
     def handle_video_data(self, buf: bytes):
@@ -283,11 +308,16 @@ class AVReceiver(abc.ABC):
 
     def close(self):
         """Close Receiver."""
-        if self._video_decoder is not None:
-            self._video_decoder.close()
-        if self._audio_decoder is not None:
-            self._audio_decoder.close()
+        for media_type, (_, count) in self._decode_failures.items():
+            if count:
+                _LOGGER.warning("Decodificador de %s descartou mais %d quadro(s) antes do encerramento.", media_type, count)
+        self._decode_failures.clear()
+        decoders = self._video_decoder, self._audio_decoder
         self._video_decoder = self._audio_decoder = None
+        for decoder in decoders:
+            close = getattr(decoder, 'close', None)
+            if close is not None:
+                close()
 
     @property
     def video_format(self):

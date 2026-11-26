@@ -129,7 +129,7 @@ def _check(cfg, args) -> int:
 
     body = {'target': {'route': args.route, 'host': args.host, 'platform_code': args.platform, 'console_identifier': args.check}}
     t = target_from(cfg, 'local-check', body)
-    link = DirectLink() if args.mode == 'direct' else ChiakiLink(cfg.chiaki_path)
+    link = DirectLink() if args.mode == 'direct' else ChiakiLink(cfg.chiaki_path, hide_window=cfg.chiaki_hide_window)
     print(f'Console {t.identifier} · modo {"Remote Play direto" if args.mode == "direct" else "chiaki-ng"} · rota {t.route} · '
           f'endereço {t.host or "(PSN)"}')
     r = ConsoleRuntime(cfg, Deps(link=link))

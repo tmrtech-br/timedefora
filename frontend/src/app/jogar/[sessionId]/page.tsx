@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarPlus, Gamepad2, Headphones, Keyboard, ListOrdered, Maximize, Power, Unplug, X } from 'lucide-react';
 import ConsoleVideo, { type VideoStats } from '@/components/ConsoleVideo';
+import { sendWebRtcControl } from '@/lib/webrtc-controls';
 import { CustomizeLink, KeyLegend } from '@/components/KeyBindings';
 import RequireAuth from '@/components/RequireAuth';
 import SupportPanel from '@/components/SupportPanel';
@@ -73,6 +74,7 @@ function Player() {
   useEffect(() => { try { setToken(sessionStorage.getItem(`lp_input_${sessionId}`)); } catch { setToken(null); } }, [sessionId]);
   const send = useCallback(async (command: InputCommand) => {
     if (!token) return;
+    if (sendWebRtcControl(sessionId, command)) { setInputStatus('ativo'); return; }
     const res = await fetch(`/api/sessions/${sessionId}/input`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Input-Token': token, 'X-CSRF-Token': csrfToken() }, body: JSON.stringify({ command }) });
     if (res.status === 400) {
       const body = await res.json().catch(() => ({}));

@@ -6,7 +6,8 @@ import { Alert } from '@/components/ui';
 import { isStaff, useAuth } from '@/lib/auth';
 
 const SECTIONS: [string, string, string][] = [
-  ['', 'Visão geral', 'operator'], ['consoles', 'Consoles e conexão', 'operator'], ['jogos', 'Jogos', 'operator'],
+  ['', 'Visão geral', 'operator'], ['consoles', 'Consoles e conexão', 'operator'],
+  ['contas-psn', 'Contas PSN', 'admin'], ['jogos', 'Jogos', 'operator'],
   ['agenda', 'Vínculos e calendário', 'operator'], ['agentes', 'Agentes e dispositivos', 'operator'], ['precos', 'Preços e cupons', 'operator'],
   ['filas', 'Filas', 'operator'], ['reservas', 'Reservas', 'operator'], ['sessoes', 'Sessões e incidentes', 'operator'],
   ['transmissoes', 'Transmissões', 'operator'], ['financeiro', 'Financeiro e relatórios', 'admin'], ['usuarios', 'Usuários e permissões', 'operator'],

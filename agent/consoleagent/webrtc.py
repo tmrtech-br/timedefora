@@ -160,13 +160,15 @@ def set_bitrate(max_kbps: int) -> None:
 class WebRtcHub:
     """Conexões WebRTC ativas: console_id → (session_id, conexão, faixas)."""
 
-    def __init__(self, ice_servers: list | None = None, max_width: int = 1280, audio: bool = True, max_kbps: int = 6000):
+    def __init__(self, ice_servers: list | None = None, max_width: int = 1280, audio: bool = True,
+                 max_kbps: int = 6000, *, experimental_h264_passthrough: bool = False):
         self.ice = ice_servers or DEFAULT_ICE
         self.max_width, self.audio = max_width, audio
+        self.experimental_h264_passthrough = experimental_h264_passthrough
         self.peers: dict[str, dict] = {}
         set_bitrate(max_kbps)
 
-    async def answer(self, console_id: str, session_id: str, offer: dict, link) -> tuple[dict, str]:
+    async def answer(self, console_id: str, session_id: str, offer: dict, link, on_input=None) -> tuple[dict, str]:
         """link: video_frame() para a imagem e audio_track() (áudio do próprio console) ou None (saída de som do PC)."""
         _require()
         from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription
@@ -174,8 +176,20 @@ class WebRtcHub:
         await self.close(console_id)                            # não bloqueia: o fechamento da anterior roda em segundo plano
         servers = [RTCIceServer(urls=s.get('urls'), username=s.get('username'), credential=s.get('credential')) for s in self.ice]
         pc = RTCPeerConnection(RTCConfiguration(iceServers=servers))
-        entry = {'session_id': session_id, 'pc': pc, 'video': None, 'audio': None}
+        entry = {'session_id': session_id, 'pc': pc, 'video': None, 'audio': None, 'control': None}
         self.peers[console_id] = entry
+        if on_input is not None:
+            from remoteplay.media.webrtc_control import ControlChannel
+            entry['control'] = ControlChannel(on_input).start()
+            @pc.on('datachannel')
+            def _datachannel(channel):
+                if channel.label != 'locaplay-controls':
+                    channel.close()
+                    return
+                @channel.on('message')
+                def _message(payload):
+                    if self.peers.get(console_id) is entry:
+                        entry['control'].submit(payload)
 
         @pc.on('connectionstatechange')
         async def _state():
@@ -194,8 +208,20 @@ class WebRtcHub:
                 raise RuntimeError(f'tempo esgotado em "{name}" ({limit:.0f}s)') from None
 
         await step('ler a oferta do navegador', pc.setRemoteDescription(RTCSessionDescription(sdp=offer['sdp'], type=offer['type'])), 10)
-        entry['video'] = make_video_track(link.video_frame, self.max_width)
-        pc.addTrack(entry['video'])
+        # Por padrão, codifique os quadros decodificados com o codec negociado
+        # pelo navegador e deixe o encoder gerar os quadros-chave da sessão.
+        encoded = None
+        if self.experimental_h264_passthrough and hasattr(link, 'encoded_video_track'):
+            encoded = link.encoded_video_track()
+        entry['video'] = encoded or make_video_track(link.video_frame, self.max_width)
+        video_sender = pc.addTrack(entry['video'])
+        if encoded is not None:
+            from aiortc import RTCRtpSender
+            transceiver = next(t for t in pc.getTransceivers() if t.sender is video_sender)
+            h264 = [c for c in RTCRtpSender.getCapabilities('video').codecs if c.mimeType.lower() == 'video/h264']
+            if not h264:
+                raise WebRtcUnavailable('O navegador/agente não suporta o codec H.264 para repasse direto.')
+            transceiver.setCodecPreferences(h264)
         note = 'vídeo'
         if self.audio:
             a = link.audio_track() or make_audio_track()
@@ -215,6 +241,8 @@ class WebRtcHub:
         if not e or (session_id and e['session_id'] != session_id):
             return
         self.peers.pop(console_id, None)
+        if e.get('control') is not None:
+            asyncio.create_task(e['control'].stop())
         for t in (e['video'], e['audio']):
             if t is not None:
                 try:

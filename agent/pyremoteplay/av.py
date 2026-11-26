@@ -179,6 +179,8 @@ class AVStream:
         self._frame_bad_order = False
         self._last_complete = 0
         self._missing = []
+        self._pending_frames = {}
+        self._flushed_frame = None
 
         if self._type not in [AVStream.TYPE_VIDEO, AVStream.TYPE_AUDIO]:
             raise ValueError("Invalid Type")
@@ -295,7 +297,31 @@ class AVStream:
                     _LOGGER.warning("FEC Failed")
 
     def handle(self, packet: AVPacket):
-        """Handle Packet."""
+        """Assemble out-of-order UDP units before feeding the frame decoder."""
+        index = packet.frame_index
+        if self._flushed_frame is not None:
+            advance = (index - self._flushed_frame) & 0xffff
+            if not 0 < advance < 0x8000:
+                return
+        if not 0 <= packet.unit_index < packet.frame_length <= 2048:
+            return
+        self._pending_frames.setdefault(index, {}).setdefault(packet.unit_index, packet)
+        while self._pending_frames:
+            oldest = min(self._pending_frames, key=lambda frame: (frame - index + 0x8000) & 0xffff)
+            units = self._pending_frames[oldest]
+            sample = next(iter(units.values()))
+            source = sample.frame_length_src
+            complete = 0 < source <= sample.frame_length and all(unit in units for unit in range(source))
+            newest_delta = max((frame - oldest) & 0xffff for frame in self._pending_frames)
+            if not complete and newest_delta < 2 and len(units) < sample.frame_length:
+                break
+            self._pending_frames.pop(oldest)
+            self._flushed_frame = oldest
+            for unit, fragment in sorted(units.items()):
+                if not complete or unit < source:
+                    self._handle_ordered(fragment)
+
+    def _handle_ordered(self, packet: AVPacket):
         if self._received > 65535:
             self._received = 0
         self._received += 1

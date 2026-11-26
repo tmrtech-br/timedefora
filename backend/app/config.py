@@ -51,6 +51,7 @@ class Settings:
     google_client_secret: str = field(default_factory=lambda: os.getenv('GOOGLE_CLIENT_SECRET', ''))
     # Worker de agendamento embutido (avisos, expiração de holds e sessões)
     run_worker: bool = field(default_factory=lambda: _bool('RUN_WORKER', True))
+    psn_chiaki_import_enabled: bool = field(default_factory=lambda: _bool('PSN_CHIAKI_IMPORT_ENABLED', False))
     worker_interval_seconds: int = field(default_factory=lambda: int(os.getenv('WORKER_INTERVAL_SECONDS', '15')))
     # Permite vender jogos is_demo sem licença comercial (somente desenvolvimento)
     allow_demo_sales: bool = field(default_factory=lambda: _bool('ALLOW_DEMO_SALES', True))

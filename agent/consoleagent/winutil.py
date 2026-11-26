@@ -84,6 +84,27 @@ def focus(w: Window) -> bool:
     return ok
 
 
+def move_offscreen(w: Window) -> tuple[int, int] | None:
+    """Tira a janela da área visível (à direita de todos os monitores) sem minimizar: o Windows continua
+    compondo o conteúdo, então PrintWindow segue capturando. Devolve a posição original (para reveal)."""
+    if not IS_WIN or not w:
+        return None
+    rc = wintypes.RECT()
+    if not _user32.GetWindowRect(w.hwnd, ctypes.byref(rc)):
+        return None
+    x = _user32.GetSystemMetrics(76) + _user32.GetSystemMetrics(78) + 200     # SM_XVIRTUALSCREEN + SM_CXVIRTUALSCREEN
+    if rc.left >= x - 200:
+        return None                                                             # já está fora da tela
+    # SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+    _user32.SetWindowPos(w.hwnd, 0, x, rc.top, 0, 0, 0x0001 | 0x0004 | 0x0010)
+    return rc.left, rc.top
+
+
+def move_to(w: Window, pos: tuple[int, int]) -> None:
+    if IS_WIN and w and pos:
+        _user32.SetWindowPos(w.hwnd, 0, pos[0], pos[1], 0, 0, 0x0001 | 0x0004 | 0x0010)
+
+
 def press_key(name: str, hold: float = 0.08) -> None:
     if not IS_WIN:
         raise OSError('Envio de teclas só existe no Windows.')

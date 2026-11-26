@@ -32,6 +32,8 @@ class AgentConfig:
     consoles: dict = field(default_factory=dict)
     wake_timeout_seconds: float = 60.0
     stream_timeout_seconds: float = 60.0
+    psn_connect_attempts: int = 3              # rota PSN: tentativas (a 1ª costuma falhar com o console em repouso)
+    chiaki_hide_window: bool = True            # janela do chiaki-ng fora da tela e fora da barra de tarefas
     stop_chiaki_after_session: bool = False    # padrão: mantém a conexão para o próximo jogador
     require_game_script: bool = False          # True: sem roteiro de abertura do jogo a preparação falha
     control_test_button: str = ''              # botão "inofensivo" apertado no teste de controles (vazio = teste não aprova)
@@ -39,6 +41,7 @@ class AgentConfig:
     ice_servers: list = field(default_factory=lambda: [{'urls': 'stun:stun.l.google.com:19302'}])
     video_max_width: int = 1280                # largura máxima enviada (menos = menos banda e CPU)
     video_max_kbps: int = 6000                 # teto da taxa de vídeo ao navegador (o navegador regula abaixo disso)
+    experimental_h264_passthrough: bool = False
     stream_audio: bool = True                  # áudio da saída de som do PC (biblioteca soundcard)
     extra: dict = field(default_factory=dict)
 

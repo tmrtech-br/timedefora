@@ -23,4 +23,6 @@ def console_ref(conn, console_id) -> ConsoleRef:
                       capture_device_identifier=row['capture_ident'] if row else None,
                       control_adapter_identifier=row['control_ident'] if row else None,
                       settings={k: row[k] for k in ('resolution', 'fps', 'codec', 'bitrate_kbps', 'low_latency', 'audio_enabled',
-                                                       'network_route', 'public_host', 'public_port', 'console_identifier')} if row else {})
+                                                       'network_route', 'public_host', 'public_port', 'console_identifier',
+                                                        'psn_account_id', 'psn_device_uid', 'standby_after_session',
+                                                        'keep_awake_minutes')} if row else {})

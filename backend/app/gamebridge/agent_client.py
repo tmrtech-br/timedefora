@@ -5,6 +5,7 @@ Este módulo só fala o protocolo do agente; nenhuma biblioteca de terceiros
 (Chiaki, drivers de captura) é importada pela API central.
 """
 import httpx
+from fastapi.encoders import jsonable_encoder
 
 from .contract import (AdapterError, AdapterResult, ConsoleRef, ConsoleStreamingAdapter, StreamMetrics, StreamState,
                        validate_command)
@@ -31,13 +32,16 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
                 'console_identifier': s.get('console_identifier'),
                 # qualidade pedida ao console (usada pelo Remote Play direto)
                 'resolution': s.get('resolution'), 'fps': s.get('fps'), 'codec': s.get('codec'),
-                'bitrate_kbps': s.get('bitrate_kbps')}
+                'bitrate_kbps': s.get('bitrate_kbps'), 'psn_account_id': str(s.get('psn_account_id') or ''),
+                'psn_device_uid': s.get('psn_device_uid'), 'standby_after_session': s.get('standby_after_session', True),
+                'keep_awake_minutes': s.get('keep_awake_minutes', 15)}
 
     def _call(self, ref: ConsoleRef, action: str, payload: dict | None = None, timeout: float | None = None) -> dict:
         self._check(ref)
         url = f"{ref.agent_endpoint.rstrip('/')}/v1/consoles/{ref.console_id}/{action}"
         try:
-            r = httpx.post(url, json={'method': self.method, 'target': self._target(ref), **(payload or {})},
+            body = jsonable_encoder({'method': self.method, 'target': self._target(ref), **(payload or {})})
+            r = httpx.post(url, json=body,
                            headers={'Authorization': f'Bearer {ref.agent_token}'}, timeout=timeout or self.timeout)
         except httpx.TimeoutException:
             raise AdapterError('agent_unreachable', 'O console demorou para responder (pode estar reconectando). Tente de novo em alguns segundos.')
@@ -121,6 +125,26 @@ class DirectRemotePlayAdapter(AgentDelegatingAdapter):
         if ((ref.settings or {}).get('network_route') or 'lan') != 'lan':
             raise AdapterError('not_configured', 'O Remote Play direto funciona só na rede local do agente.')
         super()._check(ref)
+
+
+class NativePsnOrLanRemotePlayAdapter(AgentDelegatingAdapter):
+    """New method; currently reuses the existing real LAN DirectLink.
+    Internet PSN is explicitly refused until the independent transport is validated.
+    """
+    method = 'remote_play_native'
+    label = 'Remote Play nativo'
+
+    def _check(self, ref):
+        if ref.platform_code not in ('PS4', 'PS5'):
+            raise AdapterError('unsupported_platform', 'Remote Play funciona apenas em PS4/PS5.')
+        super()._check(ref)
+
+    def _call(self, ref, action, payload=None, timeout=None):
+        if (action != 'health' and ref.platform_code != 'PS4'
+                and (ref.settings or {}).get('network_route') == 'internet_psn'):
+            raise AdapterError('not_implemented',
+                'O transporte nativo via PSN está disponível para PS4.')
+        return super()._call(ref, action, payload, timeout)
 
 
 class HdmiCaptureAdapter(AgentDelegatingAdapter):

@@ -18,3 +18,4 @@ frontend/e2e/screenshots/
 agent/config.json
 agent/logs/
 agent/data/
+/agent/data/

@@ -662,6 +662,19 @@ class Session:
             self._start_stream()
         return True
 
+    async def start_negotiated_stream(self, transport, peer, cipher, session_id):
+        """Start media after control and UDP negotiation were performed by the caller."""
+        self._type = TYPE_PS4
+        self._cipher = cipher
+        self._session_id = session_id
+        self._stop_event = asyncio.Event()
+        self._state = Session.State.RUNNING
+        self.events.on("av_ready", self._init_av_handler)
+        self._stream = RPStream(self, asyncio.Event(), mtu=1200)
+        if self.receiver:
+            self._stream.add_receiver(self.receiver)
+        await self._stream.async_connect(transport, peer)
+
     def stop(self):
         """Stop Session."""
         if self.state == Session.State.STOP:

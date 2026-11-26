@@ -42,10 +42,33 @@ class LinkError(Exception):
 class ChiakiLink:
     kind = 'chiaki'
 
-    def __init__(self, path: str, make_pad=VirtualPad, frame_fn=media.frame, audio_fn=media.audio_peak):
+    HIDE_FAILS = 8          # capturas ruins seguidas, transmitindo e fora da tela = PrintWindow não funciona aqui
+
+    def __init__(self, path: str, make_pad=VirtualPad, frame_fn=media.frame, audio_fn=media.audio_peak,
+                 hide_window: bool = False):
         self.driver = ChiakiDriver(path)
         self._make_pad, self._frame, self._audio = make_pad, frame_fn, audio_fn
         self._win, self._win_at = None, 0.0
+        self.hide_window = hide_window
+        self._hidden: tuple | None = None          # (pid, posição original) da janela tirada da tela
+        self._hide_fails = 0
+        self._hide_broken = False                  # a captura fora da tela falhou neste PC: janela fica visível
+
+    def _maybe_hide(self) -> None:
+        pid = self.driver.pid
+        if not (self.hide_window and pid and not self._hide_broken) or (self._hidden and self._hidden[0] == pid):
+            return
+        w = winutil.main_window(pid)
+        if w:
+            pos = winutil.move_offscreen(w)
+            self._hidden, self._hide_fails = (pid, pos), 0
+
+    def _reveal(self, why: str) -> None:
+        pid = self.driver.pid
+        if self._hidden and self._hidden[0] == pid and self._hidden[1]:
+            winutil.move_to(winutil.main_window(pid), self._hidden[1])
+        self._hidden, self._hide_broken = None, True
+        log.warning('janela do chiaki-ng de volta à tela: %s', why)
 
     path = property(lambda self: self.driver.path)
     available = property(lambda self: self.driver.available)
@@ -62,21 +85,41 @@ class ChiakiLink:
     def regist_key(self, t) -> str:
         return t.regist_key
 
-    def start(self, t, sleep=time.sleep) -> None:
+    def start(self, t, sleep=time.sleep) -> str:
         if t.direct:
             self.driver.start_direct(t.nickname, t.host, t.passcode, t.profile)
-        else:
-            self.driver.start_psn_gui(t.psn_gui_steps, t.profile, sleep=sleep)
+            return ''
+        return self.driver.start_psn_gui(t.nickname, t.psn_gui_steps, t.profile, t.platform, sleep=sleep)
 
     def stop(self) -> None:
         self.driver.stop()
 
+    def stream_hint(self) -> str:
+        return self.driver.session_hint()
+
+    def stalled(self, seconds: float) -> bool:
+        """Modo PSN: o chiaki-ng está aberto há `seconds` e nem começou uma sessão (ficou no menu/espera)."""
+        d = self.driver
+        return (getattr(d, 'mode', None) == 'psn_gui' and d.started_at is not None
+                and time.monotonic() - d.started_at > seconds and d.session_state() is None)
+
     def frame(self) -> media.Frame:
-        return self._frame(self.driver.pid)
+        # Modo PSN: a janela mostra o menu do chiaki-ng mesmo sem console — só vale imagem com a sessão transmitindo.
+        self._maybe_hide()
+        if getattr(self.driver, 'mode', None) == 'psn_gui' and self.driver.running and not self.driver.streaming:
+            return media.Frame(False, f'Sem transmissão: {self.driver.session_hint()}.')
+        f = self._frame(self.driver.pid)
+        if self._hidden and self.driver.streaming:
+            self._hide_fails = 0 if f.ok else self._hide_fails + 1
+            if self._hide_fails >= self.HIDE_FAILS:
+                self._reveal(f'a captura com a janela fora da tela não funcionou ({f.message})')
+                f = self._frame(self.driver.pid)
+        return f
 
     def video_frame(self):
         now = time.monotonic()
         if now - self._win_at > 1.0:                 # posição da janela 1×/s
+            self._maybe_hide()
             self._win, self._win_at = winutil.main_window(self.driver.pid), now
         if not self._win:
             return None
@@ -363,6 +406,12 @@ class DirectLink:
             self.receiver = None
 
     # ------------------------------------------------------------ mídia
+    def encoded_video_track(self):
+        if self.receiver and self.device and self.device.session:
+            if str(getattr(self.device.session, 'codec', '')).lower() == 'h264':
+                return self.receiver.encoded.make_track()
+        return None
+
     def video_frame(self):
         return self.receiver.latest_video if self.receiver else None
 
@@ -411,12 +460,111 @@ def _luma(frame):
     return np.asarray(arr, dtype='float32').mean(axis=2)
 
 
+class PsnLink(DirectLink):
+    """Sessão PS4 pela PSN com sockets próprios, mantidos até desconectar."""
+
+    path = 'Remote Play do PS4 pela PSN'
+
+    def __init__(self):
+        super().__init__()
+        self._connection = None
+        self._session = None
+        self._controller = None
+
+    def start(self, t, sleep=time.sleep):
+        self.stop()
+        if t.platform != 'PS4' or not t.psn_account_id:
+            raise LinkError('Selecione uma conta PSN vinculada para este PS4.')
+        _, _, AVReceiver = _rp()
+        self.receiver = _make_receiver(AVReceiver)
+        self.error = ''
+        try:
+            self._run(self._connect_remote(t), 80)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self.stop()
+            raise LinkError(str(exc) or 'A conexão com o PS4 pela PSN expirou.') from exc
+
+    async def _connect_remote(self, target):
+        import httpx
+        from pyremoteplay.controller import Controller
+        from remoteplay.psn.accounts import PsnAccountStore
+        from remoteplay.psn.connection import open_ps4_connection, reserve_ps4_account
+        from remoteplay.psn.oauth import request_token
+
+        ready = asyncio.Event()
+
+        def progress(stage, message, identifier=None):
+            self.error = message
+
+        async def run():
+            try:
+                with reserve_ps4_account(target.psn_account_id):
+                    async with httpx.AsyncClient(follow_redirects=False) as client:
+                        store = PsnAccountStore(Path(__file__).resolve().parent.parent / 'data' / 'psn_accounts.json.dpapi')
+                        token = await store.access_token(
+                            target.psn_account_id, lambda refresh: request_token(client, refresh_token=refresh),
+                        )
+                        async with open_ps4_connection(
+                            client, token, self.receiver, progress, fps=target.fps,
+                        ) as session:
+                            self._session = session
+                            self._controller = Controller(session)
+                            self._controller.start()
+                            self.error = ''
+                            ready.set()
+                            await session.stop_event.wait()
+            finally:
+                if self._controller is not None:
+                    self._controller.stop()
+                self._controller = self._session = None
+
+        self._connection = asyncio.create_task(run())
+        waiting = asyncio.create_task(ready.wait())
+        try:
+            async with asyncio.timeout(70):
+                done, _ = await asyncio.wait((waiting, self._connection), return_when=asyncio.FIRST_COMPLETED)
+                if self._connection in done:
+                    await self._connection
+                    raise LinkError('A mídia do PS4 encerrou durante a conexão.')
+        except BaseException:
+            await self._stop_remote()
+            raise
+        finally:
+            waiting.cancel()
+            await asyncio.gather(waiting, return_exceptions=True)
+
+    async def _stop_remote(self):
+        connection, self._connection = self._connection, None
+        if connection is not None:
+            connection.cancel()
+            await asyncio.gather(connection, return_exceptions=True)
+
+    @property
+    def running(self):
+        return bool(self._session and not self._session.is_stopped and self.receiver
+                    and time.monotonic() - self.receiver.last_video_at <= self.STALE_SECONDS)
+
+    def stop(self):
+        if self._connection is not None:
+            self._run(self._stop_remote(), 8)
+        if self.receiver is not None:
+            self.receiver.close()
+            self.receiver = None
+
+    def new_pad(self):
+        if self._controller is None:
+            raise GamepadUnavailable('Conecte ao PS4 pela PSN antes de usar o controle.')
+        return DirectPad(self._controller)
+
+
 def _make_receiver(AVReceiver):
     class FrameReceiver(AVReceiver):
         """Guarda o último quadro de vídeo (yuv420p, pronto para o WebRTC) e os quadros de áudio recentes."""
 
         def __init__(self):
             super().__init__()
+            from remoteplay.media.encoded_h264 import EncodedH264Buffer
+            self.encoded = EncodedH264Buffer()
             self.video_format = 'yuv420p'
             self.latest_video = None
             self.video_frames = 0
@@ -424,6 +572,11 @@ def _make_receiver(AVReceiver):
             self.created_at = time.monotonic()
             self._audio = deque(maxlen=50)
             self._lock = threading.Lock()
+
+        def handle_video_data(self, buf):
+            if getattr(self._session, 'codec', '') == 'h264':
+                self.encoded.push(buf)
+            super().handle_video_data(buf)
 
         def handle_video(self, frame):
             self.latest_video = frame

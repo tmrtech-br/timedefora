@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, RefreshCw, Volume2, VolumeX } from 'lucide-react';
 import { csrfToken } from '@/lib/api';
+import { registerWebRtcControls } from '@/lib/webrtc-controls';
 
 export type VideoStats = { fps: number | null; bitrate_kbps: number | null; rtt_ms: number | null; jitter_ms: number | null; packet_loss_pct: number | null };
 type Phase = 'connecting' | 'retrying' | 'live' | 'failed';
@@ -39,12 +40,15 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
   useEffect(() => {
     let closed = false;
     const pc = { current: null as RTCPeerConnection | null };
+    let unregisterControl: (() => void) | null = null;
     (async () => {
       setPhase('connecting'); setError('');
       try {
         const cfg = await call('webrtc-config');
         const conn = new RTCPeerConnection({ iceServers: cfg.ice_servers || [] });
         pc.current = conn; pcRef.current = conn;
+        const control = conn.createDataChannel('locaplay-controls', { ordered: false, maxRetransmits: 0 });
+        unregisterControl = registerWebRtcControls(sessionId, control);
         conn.addTransceiver('video', { direction: 'recvonly' });
         conn.addTransceiver('audio', { direction: 'recvonly' });
         const stream = new MediaStream();
@@ -74,7 +78,7 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
         retryLater('Não conseguimos ligar a imagem do console agora. A equipe pode ajudar pelo botão Suporte.');
       }
     })();
-    return () => { closed = true; pc.current?.close(); pcRef.current = null; last.current = null; };
+    return () => { closed = true; unregisterControl?.(); pc.current?.close(); pcRef.current = null; last.current = null; };
   }, [call, attempt, retryLater]);
 
   // Métricas reais do navegador, a cada 2 s.

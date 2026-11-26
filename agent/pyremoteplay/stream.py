@@ -111,6 +111,7 @@ class RPStream:
         self._tag_remote = 0
         self._key_pos = 0
         self._protocol = None
+        self._negotiated_transport = False
         self._stop_event = stop_event
         self._worker = None
         self._cb_stop = cb_stop
@@ -140,11 +141,17 @@ class RPStream:
         self._worker.start()
         self._send_init()
 
-    async def async_connect(self):
+    async def async_connect(self, transport=None, peer=None):
         """Connect Async."""
-        _, self._protocol = await self._session.loop.create_datagram_endpoint(
-            lambda: RPStream.Protocol(self), local_addr=("0.0.0.0", 0)
-        )
+        if transport is None:
+            _, self._protocol = await self._session.loop.create_datagram_endpoint(
+                lambda: RPStream.Protocol(self), local_addr=("0.0.0.0", 0)
+            )
+        else:
+            self._negotiated_transport = True
+            self._host, self._port = peer
+            self._protocol = RPStream.Protocol(self)
+            self._protocol.connection_made(transport)
         self._send_init()
 
     def run_av(self):
@@ -260,7 +267,7 @@ class RPStream:
                 else:
                     self._test.recv_mtu(msg)
         else:
-            if not self._av_handler.has_receiver:
+            if not self._av_handler.has_receiver or self._negotiated_transport:
                 self._handle_later(msg)
             else:
                 # Run in Executor if processing av.
@@ -301,7 +308,8 @@ class RPStream:
 
     def _recv_cookie_ack(self):
         """Handle Cookie Ack"""
-        self._send_big()
+        if self._cipher is None:
+            self._send_big()
 
     def _recv_data(self, packet: Packet):
         """Handle Data."""
@@ -330,7 +338,8 @@ class RPStream:
         if not self._is_test:
             version = 12 if self._session.type == TYPE_PS5 else 9
             _LOGGER.debug("Using Version: %s", version)
-            self._ecdh = StreamECDH()
+            if self._ecdh is None:
+                self._ecdh = StreamECDH()
             launch_spec = self._format_launch_spec(self._ecdh.handshake_key)
             encrypted_key = bytes(4)
             ecdh_pub_key = self._ecdh.public_key

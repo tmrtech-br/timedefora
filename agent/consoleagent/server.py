@@ -19,8 +19,9 @@ from fastapi.responses import JSONResponse
 from . import VERSION, discovery
 from .config import AgentConfig
 from .gamepad import GamepadUnavailable
-from .links import ChiakiLink, DirectLink
+from .links import ChiakiLink, DirectLink, PsnLink
 from .runtime import ConsoleRuntime, Deps, Target, target_from
+from .psn_routes import create_psn_router
 from .webrtc import WebRtcHub, WebRtcUnavailable, set_bitrate
 
 log = logging.getLogger('consoleagent')
@@ -41,7 +42,7 @@ def _has(module: str) -> bool:
         return False
 
 
-DIRECT_METHOD = 'remote_play_direct'
+DIRECT_METHODS = {'remote_play_direct', 'remote_play_native'}
 
 
 def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, deps: Deps | None = None) -> FastAPI:
@@ -51,18 +52,31 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
     expected = f'Bearer {cfg.api_to_agent_token}'.encode()
     runtimes: dict[str, ConsoleRuntime] = {}
     kinds: dict[str, str] = {}
-    hub = WebRtcHub(cfg.ice_servers, int(cfg.video_max_width), bool(cfg.stream_audio), int(cfg.video_max_kbps))
+    hub = WebRtcHub(
+        cfg.ice_servers, int(cfg.video_max_width), bool(cfg.stream_audio), int(cfg.video_max_kbps),
+        experimental_h264_passthrough=cfg.experimental_h264_passthrough,
+    )
     app.state.webrtc = hub
     discover = deps.discover if deps else discover_fn
 
-    def rt(console_id: str, method: str | None = None) -> ConsoleRuntime:
-        kind = 'direct' if method == DIRECT_METHOD else 'chiaki' if method else kinds.get(console_id, 'chiaki')
+    def rt(console_id: str, body: dict) -> ConsoleRuntime:
+        method = body.get('method')
+        route = (body.get('target') or {}).get('route')
+        if method == 'remote_play_native' and route == 'internet_psn':
+            kind = 'psn'
+        else:
+            kind = 'direct' if method in DIRECT_METHODS else 'chiaki' if method else kinds.get(console_id, 'chiaki')
         r = runtimes.get(console_id)
         if r is not None and (deps is not None or kinds.get(console_id) == kind or not method):
             return r
         if r is not None:                                     # método do console mudou no painel: troca o link
             r.disconnect()
-        link = DirectLink() if kind == 'direct' else ChiakiLink(cfg.chiaki_path)
+        if kind == 'psn':
+            link = PsnLink()
+        elif kind == 'direct':
+            link = DirectLink()
+        else:
+            link = ChiakiLink(cfg.chiaki_path, hide_window=cfg.chiaki_hide_window)
         runtimes[console_id] = ConsoleRuntime(cfg, deps or Deps(link=link, discover=discover_fn))
         kinds[console_id] = kind
         return runtimes[console_id]
@@ -89,6 +103,12 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
         if action != 'input':                    # comandos do jogador são muitos: não poluir o log
             log.info('comando %s para console %s', action, console_id)
         sid = str(body.get('session_id') or '')
+        if body.get('method') == 'remote_play_native' and (body.get('target') or {}).get('route') == 'internet_psn':
+            target = body['target']
+            if action != 'health' and target.get('platform_code', 'PS4') != 'PS4':
+                return _error(501, 'psn_transport_pending', 'O transporte nativo via PSN está disponível para PS4.')
+            if action in ('discover', 'pair', 'connect', 'console/prepare') and not target.get('psn_account_id'):
+                return _error(422, 'psn_account_required', 'Vincule uma conta PSN ao PS4 antes de conectar.')
         if action == 'stream/webrtc':
             return await _webrtc(console_id, sid, body.get('offer') or {}, body)
         # As ações podem esperar (capturas de tela, preparação): fora do laço assíncrono do servidor.
@@ -100,7 +120,7 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
         return res
 
     async def _webrtc(console_id: str, sid: str, offer: dict, body: dict):
-        r = rt(console_id, body.get('method'))
+        r = rt(console_id, body)
         if not sid or sid != r.session_id:
             return _error(403, 'input_revoked', 'Vídeo só para a sessão ativa neste console.')
         if not r.streaming:
@@ -114,7 +134,7 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
         if isinstance(mk, (int, float)) and 500 <= mk <= 20000:
             set_bitrate(int(mk))
         try:
-            answer, msg = await hub.answer(console_id, sid, offer, r.link)
+            answer, msg = await hub.answer(console_id, sid, offer, r.link, on_input=lambda cmd: r.input(sid, cmd))
         except WebRtcUnavailable as e:
             return _result(False, str(e), 'degraded')
         except Exception as e:  # nunca derrubar o agente por falha de negociação
@@ -124,17 +144,21 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
 
     def handle(console_id: str, action: str, body: dict):
         t = target_from(cfg, console_id, body)
-        r = rt(console_id, body.get('method'))
+        r = rt(console_id, body)
         sid = str(body.get('session_id') or '')
 
         if action == 'health':
             return _health(cfg, r)
         if action == 'discover':
+            if isinstance(r.link, PsnLink):
+                return _job(r.start_job(t, 'connect'))
             return _discover(cfg, body, t, r, discover)
         if action == 'metrics':
             fps = hub.fps(console_id)            # quadros reais enviados ao navegador (medidos), senão ausente
             return {'metrics': {'fps': fps} if fps is not None else {}}
         if action == 'pair':
+            if isinstance(r.link, PsnLink):
+                return _job(r.start_job(t, 'connect'))
             ok, msg = r.link.pair(t, str(body.get('code') or ''))
             return _result(ok, msg, 'idle' if ok else 'unavailable')
         if action in ('connect', 'console/prepare'):
@@ -175,6 +199,7 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             return _test_controls(cfg, r)
         return _error(404, 'unknown_action', f'Ação desconhecida: {action}')
 
+    app.include_router(create_psn_router(cfg.api_to_agent_token, discover=discover))
     return app
 
 
@@ -184,8 +209,9 @@ def _health(cfg: AgentConfig, r: ConsoleRuntime) -> dict:
     direct = DirectLink()
     direct_ok = direct.available
     chiaki_ok = ChiakiLink(cfg.chiaki_path).available
+    mode = 'Remote Play pela PSN' if isinstance(link, PsnLink) else ('Remote Play direto' if link.kind == 'direct' else 'chiaki-ng')
     parts = [f'ConsoleAgent {VERSION} online',
-             f'modo deste console: {"Remote Play direto" if link.kind == "direct" else "chiaki-ng"}',
+             f'modo deste console: {mode}',
              'Remote Play direto: ' + ('disponível' if direct_ok else direct.unavailable_reason),
              'chiaki-ng encontrado' if chiaki_ok else f'chiaki-ng NÃO encontrado em {cfg.chiaki_path}',
              'vídeo no navegador: ' + ('ok' if _has('aiortc') else 'aiortc NÃO instalado')]
@@ -194,6 +220,10 @@ def _health(cfg: AgentConfig, r: ConsoleRuntime) -> dict:
                   'medição de áudio: ' + ('ok' if _has('pycaw') else 'pycaw NÃO instalado')]
     if not cfg.consoles:
         parts.append('nenhum console em "consoles" no config.json')
+    j = r.job
+    if j:   # andamento da última conexão/preparação (diagnóstico sem disparar nova conexão)
+        parts.append(f'última conexão: {j.state} há {int(time.monotonic() - j.started)}s — {j.step}'
+                     + (f': {j.message}' if j.message else ''))
     return _result(True, '. '.join(parts) + '.', 'streaming' if r.streaming else None,
                    {'agent_version': VERSION, 'mode': link.kind, 'direct_available': direct_ok, 'chiaki_found': chiaki_ok,
                     'vgamepad': _has('vgamepad'), 'aiortc': _has('aiortc'), 'pycaw': _has('pycaw'),

@@ -174,7 +174,6 @@ def _parse_redirect_url(redirect_url):
     if len(code) <= 1:
         _LOGGER.error("Code is too short")
         return None
-    _LOGGER.debug("Got Auth Code: %s", code)
     return code
 
 

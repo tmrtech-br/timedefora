@@ -21,6 +21,8 @@ from .links import LinkError
 
 log = logging.getLogger('consoleagent.runtime')
 DIRECT_ROUTES = ('lan', 'internet_port_forward')
+PSN_NO_SESSION_SECONDS = 45      # chiaki-ng aberto sem sessão nenhuma após isso = tentativa perdida
+PSN_RETRY_GAP_SECONDS = 15
 
 
 @dataclass
@@ -37,6 +39,7 @@ class Target:
     psn_gui_steps: list = field(default_factory=list)
     games: dict = field(default_factory=dict)
     psn_user: str = ''              # Remote Play direto: conta PSN usada (vazio = a registrada no console)
+    psn_account_id: str = ''
     mac: str = ''
     resolution: str = '720p'
     fps: int = 30
@@ -67,6 +70,7 @@ def target_from(cfg: AgentConfig, console_id: str, body: dict) -> Target:
                   regist_key=str(entry.get('regist_key') or ''), passcode=str(entry.get('passcode') or ''),
                   profile=str(entry.get('profile') or ''), psn_gui_steps=list(entry.get('psn_gui_steps') or []),
                   games=dict(entry.get('games') or {}), psn_user=str(entry.get('psn_user') or ''),
+                  psn_account_id=str(t.get('psn_account_id') or settings.get('psn_account_id') or ''),
                   mac=str(entry.get('mac') or ''), resolution=str(t.get('resolution') or settings.get('resolution') or '720p'),
                   fps=fps, codec=str(t.get('codec') or settings.get('codec') or 'h264'))
 
@@ -192,25 +196,47 @@ class ConsoleRuntime:
         if link.kind == 'chiaki':
             j.step = 'criando o controle virtual'
             self.ensure_pad()                                      # o chiaki-ng precisa ver o controle ao abrir
-        j.step = 'conectando ao console'
-        link.start(t, self.d.sleep)
-        if link.kind != 'chiaki':
-            j.step = 'criando o controle'
-            self.ensure_pad()                                      # direto: o controle pertence à sessão
-
-        j.step = 'aguardando a imagem do console'
-        # Pela PSN a conexão (descoberta pela Sony + atravessar os roteadores) leva bem mais que na rede local.
-        wait = float(cfg.stream_timeout_seconds) * (2 if t.route == 'internet_psn' else 1)
-        deadline = time.monotonic() + wait
-        last = None
-        while time.monotonic() < deadline:
-            if not link.running:
-                raise Fail('A conexão com o console caiu antes de transmitir. ' + (link.log_tail() or 'Veja agent/logs.'))
-            last = link.frame()
-            if last.ok:
-                return ' '.join(x for x in [*notes, f'Conectado. {last.message}'] if x)
-            self.d.sleep(2)
-        raise Fail('Sem imagem do console dentro do prazo. ' + (last.message if last else ''))
+        # Pela PSN a conexão (descoberta pela Sony + atravessar os roteadores) leva bem mais que na rede local, e a
+        # primeira tentativa costuma falhar quando o console está em repouso (ele acorda durante ela): tenta de novo.
+        psn = t.route == 'internet_psn'
+        attempts = max(1, int(cfg.psn_connect_attempts)) if psn else 1
+        wait = float(cfg.stream_timeout_seconds) * (2 if psn else 1)
+        why = ''
+        for attempt in range(1, attempts + 1):
+            j.step = 'conectando ao console' + (f' (tentativa {attempt} de {attempts})' if attempts > 1 else '')
+            started = link.start(t, self.d.sleep)
+            if started:
+                notes.append(started)
+            if link.kind != 'chiaki':
+                j.step = 'criando o controle'
+                self.ensure_pad()                                  # direto: o controle pertence à sessão
+            j.step = 'aguardando a imagem do console' + (f' (tentativa {attempt} de {attempts})' if attempts > 1 else '')
+            deadline = time.monotonic() + wait
+            last = None
+            while time.monotonic() < deadline:
+                if not link.running:
+                    why = 'A conexão com o console caiu antes de transmitir. ' + (
+                        (link.stream_hint() if psn and hasattr(link, 'stream_hint') else '') or link.log_tail() or 'Veja agent/logs.')
+                    break
+                if psn and getattr(link, 'stalled', None) and link.stalled(PSN_NO_SESSION_SECONDS):
+                    why = (f'O chiaki-ng não iniciou a conexão em {PSN_NO_SESSION_SECONDS} s (ficou no menu ou em '
+                           '"Waiting for console"). Confira no chiaki-ng se "Main PS4 Console" aparece na lista da PSN.')
+                    break
+                last = link.frame()
+                if last.ok:
+                    if attempt > 1:
+                        notes.append(f'Conectou na tentativa {attempt}.')
+                    return ' '.join(x for x in [*notes, f'Conectado. {last.message}'] if x)
+                self.d.sleep(2)
+            else:
+                why = 'Sem imagem do console dentro do prazo. ' + (last.message if last else '')
+            if attempt < attempts:
+                log.info('rota PSN: tentativa %s falhou (%s); tentando de novo', attempt, why)
+                link.stop()
+                # A PSN leva alguns segundos para apagar a sessão anterior; reabrir logo dá "Holepunch session was
+                # deleted on PSN server" / "Failed to create session".
+                self.d.sleep(PSN_RETRY_GAP_SECONDS)
+        raise Fail(why)
 
     def _wake(self, t: Target, j: Job) -> str:
         j.step = 'procurando o console'

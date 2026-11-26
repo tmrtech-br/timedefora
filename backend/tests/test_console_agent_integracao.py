@@ -7,6 +7,7 @@ from pathlib import Path
 
 import uvicorn
 
+from app.core.db import insert, tx
 from conftest import Api, admin_api, at
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'agent'))
@@ -51,6 +52,19 @@ def test_api_fala_com_agente_real_e_heartbeat_marca_online(freeze):
         t = api.post(f"/admin/consoles/{c['id']}/tests/connection").json()
         # Parte 2: o agente tenta conectar de verdade; sem chiaki-ng instalado, falha com o motivo real (nunca simula)
         assert t['result'] == 'failed' and 'chiaki-ng não encontrado' in t['message'] and t['simulated'] is False
+
+        with tx() as conn:
+            account = insert(conn, 'psn_accounts', {'agent_id': tokens['id'], 'label': 'PSN teste', 'status': 'linked'})
+        r = api.put(f"/admin/consoles/{c['id']}/connection", json={
+            'method': 'remote_play_native', 'network_route': 'internet_psn',
+            'agent_id': tokens['id'], 'psn_account_id': str(account['id']),
+        })
+        assert r.status_code == 200, r.text
+        result = api.post(f"/admin/consoles/{c['id']}/tests/heartbeat").json()
+        assert result['result'] == 'passed' and 'Remote Play pela PSN' in result['message']
+        assert result['simulated'] is False
+        result = api.post(f"/admin/consoles/{c['id']}/tests/connection").json()
+        assert result['result'] == 'failed' and 'Conta PSN indisponível' in result['message']
     finally:
         server.should_exit = True
         th.join(5)

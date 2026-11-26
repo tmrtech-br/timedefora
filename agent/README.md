@@ -15,7 +15,7 @@ Programa que roda no **PC ao lado do console** (ou num PC com acesso a ele) e fa
 | Heartbeat, autenticação nos dois sentidos, descoberta do console (Parte 1) | ✅ validado com o PC real |
 | **Acordar** o console em repouso (pacote WAKEUP do Remote Play, com a chave de registro) | ✅ implementado · ⏳ validar com o PS4-118 |
 | **Conectar** pelo chiaki-ng — rotas `lan` e `internet_port_forward` (linha de comando) | ✅ implementado · ⏳ validar |
-| **Conectar** pela rota `internet_psn` (abre a interface do chiaki-ng e executa um roteiro de teclas) | 🧪 experimental · ⏳ calibrar o roteiro |
+| **Conectar** pela rota `internet_psn` (abre a interface do chiaki-ng já mandando conectar ao console do cadastro; até `psn_connect_attempts` tentativas) | 🧪 experimental · ⏳ validar |
 | **Controle virtual DS4** para o jogador (botão PS e touchpad bloqueados) | ✅ implementado · ⏳ validar |
 | **Preparação** antes da sessão: acordar + conectar + roteiro para abrir o jogo | ✅ implementado · ⏳ validar |
 | **Testes do painel**: imagem (captura real da janela), áudio (pico real) e controles (a tela precisa reagir) | ✅ implementado · ⏳ validar |
@@ -40,6 +40,16 @@ comando do jogador 2 ─► API ─► agente ─► sessão nº2 ─► só o c
 - Biblioteca **pyremoteplay** incorporada em `agent/pyremoteplay` (GPL-3.0, cópia modificada — ver `NOTICE.md`).
 
 Primeira configuração (uma vez por PC e uma vez por console):
+### Diagnóstico do PS4 principal pela PSN
+
+No painel **Contas PSN**, vincule e valide a conta no ConsoleAgent e clique em **Diagnosticar PS4 via PSN**. Para validar a rota pela internet, use redes distintas para o PS4 e o agente. Deixe o PS4 ligado ou em repouso com acesso à rede habilitado, ative o Uso remoto e configure-o como PS4 principal da conta.
+
+O diagnóstico abre uma sessão temporária na Sony, solicita a entrada do PS4 principal e aguarda a notificação com o DUID. A resposta indica a etapa que falhou ou mostra o DUID recebido. O agente solicita o encerramento da sessão temporária ao terminar. Esse diagnóstico pode acordar o PS4 em repouso.
+
+A troca de candidatos UDP, o pareamento remoto e a transmissão ainda precisam ser integrados ao transporte PSN. Os botões de conexão e pareamento pela rota nativa via internet continuam bloqueados.
+
+### Configuração da conta e dos consoles
+
 1. **Conta PSN** (uma vez por PC; a mesma conta logada nos consoles):
    `..\backend\.venv\Scripts\python -m consoleagent --psn-login` → abra o link, faça login, cole o endereço final.
 2. **Registrar cada console** com o PIN (console LIGADO: Configurações → Configurações da Conexão de Uso Remoto →
@@ -61,7 +71,9 @@ A rota é escolhida no painel (**Consoles e conexão → rota de rede**):
 |---|---|---|
 | `lan` | PC do agente na **mesma casa** do console (modelo de produção, menor atraso) | acorda pelo IP local, `chiaki stream <apelido> <IP>` |
 | `internet_port_forward` | PC em outra casa e **acesso ao roteador** do console | igual, usando IP público/DDNS. Liberar no roteador do console: **UDP 987, TCP 997, TCP/UDP 9295–9297** (PS4). Não funciona com CGNAT. |
-| `internet_psn` | PC em outra casa, **sem mexer no roteador** | abre o chiaki-ng gráfico e aperta as teclas de `psn_gui_steps` para escolher o console em *Remote Connection via PSN*. Exige PS4 como **console principal** da conta PSN e o chiaki-ng logado na PSN. Frágil: se a tela do chiaki-ng mudar, recalibre. |
+| `internet_psn` | PC em outra casa, **sem mexer no roteador** | **PS4:** a PSN só mostra o console principal da conta, com nome fixo *Main PS4 Console* (nunca o apelido), então a conexão automática do chiaki-ng é desligada nesta abertura e o agente escolhe o console na lista: espera a lista da PSN carregar, ↑ (dá a volta até o último item, que é a entrada da PSN) e Enter — padrão `["wait:12", "up", "enter"]`, sobreponível em `psn_gui_steps`. **PS5:** usa a conexão automática nativa pelo apelido. A configuração do usuário é restaurada logo depois. A transmissão só conta quando o log de sessão do chiaki-ng (`%APPDATA%\Chiaki\Chiaki\log`) mostra o vídeo chegando — o menu do chiaki-ng aberto **não** é conexão; sem sessão em 45 s a tentativa é encerrada. A 1ª tentativa costuma falhar com o console em repouso (ele acorda durante ela), por isso o agente tenta de novo (`psn_connect_attempts`, padrão 3, com 15 s de intervalo para a PSN apagar a sessão anterior). O painel repete o teste de conexão sozinho enquanto estiver em andamento. Exige PS4 como **console principal** da conta PSN e o chiaki-ng logado na PSN. |
+
+**Janela oculta:** com `chiaki_hide_window` (padrão `true`) a janela do chiaki-ng é movida para fora da área visível (não é minimizada, para a captura continuar funcionando). Se a captura falhar com a janela fora da tela, o agente a traz de volta sozinho e registra o aviso no log.
 
 ## Instalação (Windows)
 
@@ -85,7 +97,6 @@ confere ViGEmBus, controle virtual, chiaki-ng e `config.json`, e lista **o que a
        "nickname": "PS4-118",
        "regist_key": "2ebf539d",
        "passcode": "",
-       "psn_gui_steps": ["wait:3", "down", "enter"],
        "games": { "slug-do-jogo": ["ps", "wait:2", "dpad_right", "cross"] }
      }
    }
