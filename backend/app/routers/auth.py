@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 from ..config import settings
 from ..core.deps import Principal, client_ip, current_user, optional_user
 from ..core.errors import AppError
+from ..core.db import tx
 from ..services import auth, google_oauth
+from ..services.settings_store import require_enabled
 from .common import clear_session_cookies, set_session_cookies
 
 router = APIRouter(prefix='/auth', tags=['auth'])
@@ -44,6 +46,8 @@ class ResetIn(BaseModel):
 
 @router.post('/register', status_code=201)
 def register(body: RegisterIn, request: Request, response: Response):
+    with tx() as conn:
+        require_enabled(conn, 'signup_enabled', 'Novos cadastros estão desativados no momento.')
     user, token = auth.register(body.model_dump(), client_ip(request), request.headers.get('user-agent', ''))
     set_session_cookies(response, token)
     return {'id': str(user['id']), 'status': user['status'],
@@ -100,6 +104,8 @@ def google_start(intent: str = 'login', p: Principal | None = Depends(optional_u
         raise AppError(400, 'invalid_intent', 'Intenção inválida.')
     if intent == 'link' and not p:
         raise AppError(401, 'auth_required', 'Entre para vincular sua conta Google.')
+    with tx() as conn:
+        require_enabled(conn, 'google_login_enabled', 'O login com Google está desativado no momento.')
     return RedirectResponse(google_oauth.start(intent, p.user_id if p else None), status_code=302)
 
 

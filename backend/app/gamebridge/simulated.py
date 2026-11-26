@@ -18,9 +18,15 @@ class SimulatedAdapter(ConsoleStreamingAdapter):
         self._revoked: set[str] = set()
         self.inputs: list[tuple[str, dict]] = []    # histórico para testes contratuais
         self.fail_health: set[str] = set()          # consoles com falha injetada (testes)
+        self.fail_prepare: set[str] = set()         # consoles que "não ficam prontos" (testes)
 
     def _r(self, msg: str, state=None, **data) -> AdapterResult:
         return AdapterResult(ok=True, simulated=True, message=msg, state=state, data=data)
+
+    def prepare_console(self, ref, game):
+        if ref.console_id in self.fail_prepare:
+            raise AdapterError('prepare_failed', 'Falha injetada: o console simulado não abriu o jogo.')
+        return self._r(f"Console preparado: {game.get('title', 'jogo')} aberto (SIMULADO).", StreamState.IDLE)
 
     def discover_console(self, ref):
         return self._r('Console simulado encontrado.', console_identifier=f'SIM-{ref.console_id[:8]}')

@@ -7,6 +7,7 @@ export type GameCard = {
 export type Me = {
   id: string; full_name: string; username: string; email: string; status: string; avatar_url: string | null;
   email_verified: boolean; roles: string[]; mfa_enabled: boolean; mfa_verified: boolean; has_password: boolean;
+  permission_overrides?: Record<string, boolean>;
   unread_notifications: number; marketing_opt_in: boolean; created_at: string;
 };
 export type QueueItem = { position: number; status: string; username: string; minutes: number; estimated_start_at: string; estimated_end_at: string; is_me: boolean };

@@ -1,0 +1,31 @@
+{
+  "api_url": "http://127.0.0.1:8000",
+  "agent_token": "COLE_AQUI_o_token_agente_para_API",
+  "api_to_agent_token": "COLE_AQUI_o_token_API_para_agente",
+  "listen_host": "127.0.0.1",
+  "listen_port": 8765,
+  "heartbeat_seconds": 30,
+  "discovery_timeout_seconds": 2.0,
+  "chiaki_path": "C:\\Program Files\\chiaki-ng\\chiaki.exe",
+  "wake_timeout_seconds": 60,
+  "stream_timeout_seconds": 60,
+  "stop_chiaki_after_session": false,
+  "require_game_script": false,
+  "control_test_button": "",
+  "ice_servers": [{ "urls": "stun:stun.l.google.com:19302" }],
+  "video_max_width": 1280,
+  "video_max_kbps": 6000,
+  "stream_audio": true,
+  "consoles": {
+    "PS4-118": {
+      "nickname": "PS4-118",
+      "regist_key": "",
+      "passcode": "",
+      "profile": "",
+      "psn_gui_steps": [],
+      "games": {
+        "slug-do-jogo": ["ps", "wait:2", "dpad_right", "cross"]
+      }
+    }
+  }
+}

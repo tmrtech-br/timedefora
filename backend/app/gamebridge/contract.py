@@ -110,6 +110,14 @@ class ConsoleStreamingAdapter(ABC):
     def test_controls(self, ref: ConsoleRef) -> AdapterResult:
         raise AdapterError('not_implemented', 'Teste de controles não implementado para este método.')
 
+    def webrtc_offer(self, ref: ConsoleRef, session_id: str, offer: dict, max_kbps: int | None = None) -> AdapterResult:
+        """Vídeo/áudio do console para o navegador: recebe a oferta SDP e devolve a resposta em data {'sdp','type'}."""
+        raise AdapterError('not_implemented', 'Vídeo no navegador não disponível para este método de conexão.')
+
+    def prepare_console(self, ref: ConsoleRef, game: dict) -> AdapterResult:
+        """Antes da sessão: acordar o console e garantir o jogo da reserva aberto (game: id, slug, title)."""
+        raise AdapterError('not_implemented', 'Preparação automática do console não implementada para este método.')
+
 
 ALLOWED_COMMANDS = {
     'button': {'cross', 'circle', 'square', 'triangle', 'l1', 'r1', 'l2', 'r2', 'l3', 'r3',

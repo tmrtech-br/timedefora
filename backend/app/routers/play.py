@@ -9,14 +9,24 @@ from pydantic import BaseModel, Field
 from ..config import settings
 from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx
-from ..core.deps import Principal, client_ip, current_user, verified_user
-from ..core.errors import AppError, bad_request, conflict, not_found
+from ..core.deps import Principal, client_ip, current_user as authenticated_user, verified_user as verified_account
+from ..core.errors import AppError, bad_request, conflict, forbidden, not_found
 from ..services import notifications, payments, scheduling, sessions
 from ..services.payment_providers import verify_mp_signature
-from ..services.settings_store import get_settings
+from ..services.settings_store import get_settings, require_enabled
 from .common import jsonable
 
 router = APIRouter(tags=['jogador'])
+
+
+def current_user(p: Principal = Depends(authenticated_user)) -> Principal:
+    if 'owner' in p.roles and 'client' not in p.roles:
+        raise forbidden('O papel de locatário é necessário para acessar esta ação.')
+    return p
+
+
+def verified_user(p: Principal = Depends(current_user)) -> Principal:
+    return verified_account(p)
 
 
 class ReservationIn(BaseModel):
@@ -220,6 +230,23 @@ def session_input(sid: uuid.UUID, body: InputIn, x_input_token: str = Header(def
     return sessions.send_input(sid, x_input_token, body.command)
 
 
+@router.get('/sessions/{sid}/webrtc-config')
+def session_webrtc_config(sid: uuid.UUID, x_input_token: str = Header(default='')):
+    """Servidores STUN/TURN para o navegador do jogador (exige o token de controle da sessão)."""
+    with tx() as conn:
+        sessions._token_session(conn, sid, x_input_token)
+    return {'ice_servers': settings.webrtc_ice_servers}
+
+
+class WebRtcOfferIn(BaseModel):
+    offer: dict
+
+
+@router.post('/sessions/{sid}/webrtc')
+def session_webrtc(sid: uuid.UUID, body: WebRtcOfferIn, x_input_token: str = Header(default='')):
+    return sessions.webrtc_offer(sid, x_input_token, body.offer)
+
+
 @router.get('/sessions/{sid}')
 def session_state(sid: uuid.UUID, p: Principal = Depends(current_user)):
     return sessions.session_state(p, sid)
@@ -262,13 +289,15 @@ class MessageIn(BaseModel):
 @router.get('/support/tickets')
 def my_tickets(p: Principal = Depends(current_user)):
     with tx() as conn:
-        return jsonable(all_(conn, 'select id, subject, category, status, priority, created_at, updated_at from support_tickets where user_id=%s order by updated_at desc', (p.user_id,)))
+        return jsonable(all_(conn, 'select id, subject, category, status, priority, reservation_id, created_at, updated_at from support_tickets where user_id=%s order by updated_at desc', (p.user_id,)))
 
 
 @router.post('/support/tickets', status_code=201)
 def open_ticket(body: TicketIn, p: Principal = Depends(current_user)):
     if body.category not in ('geral', 'pagamento', 'sessao', 'conta', 'reembolso', 'tecnico'):
         raise bad_request('invalid_category', 'Categoria inválida.')
+    with tx() as conn:
+        require_enabled(conn, 'support_tickets_enabled', 'A abertura de novos chamados está desativada no momento.')
     security.rate_limit(f'ticket:{p.user_id}', 5, 3600)
     with tx() as conn:
         if body.reservation_id and not one(conn, 'select 1 from reservations where id=%s and user_id=%s', (body.reservation_id, p.user_id)):

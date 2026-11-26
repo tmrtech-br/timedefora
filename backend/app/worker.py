@@ -11,8 +11,9 @@ from datetime import timedelta
 from .config import settings
 from .core import timeutil
 from .core.db import get_pool, insert, tx
+from .diagnostic_worker import DiagnosticWorker
 from .gamebridge import AdapterError, get_adapter
-from .services import notifications, payments, scheduling, sessions
+from .services import notifications, payments, preparation, scheduling, sessions
 from .services.consoles import console_ref
 from .services.settings_store import get_settings
 
@@ -45,6 +46,24 @@ def _remind_before_start(conn, n) -> int:
     return count
 
 
+def _prepare_upcoming(conn, n) -> int:
+    """Prepara (acorda o console e abre o jogo) as reservas que começam em breve, uma por vez por console."""
+    rows = conn.execute("""select r.* from reservations r
+                           left join console_preparations p on p.reservation_id=r.id
+                           where r.status='confirmed' and r.starts_at <= %s and r.ends_at > %s
+                             and coalesce(p.status, 'pending')='pending'
+                           order by r.starts_at for update of r skip locked""", (n + preparation.lead(conn), n)).fetchall()
+    done = 0
+    for r in rows:
+        try:
+            with conn.transaction():
+                preparation.ensure(conn, r, n)
+            done += 1
+        except Exception:  # uma reserva com erro não pode travar as outras
+            log.exception('falha ao preparar reserva %s', r['id'])
+    return done
+
+
 def _start_due_sessions(conn, n) -> int:
     count = 0
     rows = conn.execute("""select r.*, g.title from reservations r join games g on g.id=r.game_id
@@ -55,6 +74,8 @@ def _start_due_sessions(conn, n) -> int:
                             (r['console_id'], r['id'])).fetchone()
         if busy:
             continue
+        if preparation.ensure(conn, r, n) != 'ready':
+            continue   # ainda preparando, ou falhou (reserva já foi para resolução e a equipe notificada)
         sessions.prepare_session(conn, r)
         notifications.notify(conn, str(r['user_id']), 'turn_ready', {'jogo': r['title'], 'duracao': f"{r['minutes']} minutos",
                                                                      'fim_previsto': timeutil.fmt_time(r['ends_at'])},
@@ -147,6 +168,8 @@ def tick() -> dict:
             with tx() as conn:
                 out['sessions_ended'] = _end_expired_sessions(conn, n)
             with tx() as conn:
+                out['consoles_prepared'] = _prepare_upcoming(conn, n)
+            with tx() as conn:
                 out['sessions_started'] = _start_due_sessions(conn, n)
             with tx() as conn:
                 consoles = conn.execute("""select distinct console_id from reservations where status in ('confirmed','active')
@@ -170,8 +193,10 @@ class WorkerThread(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True, name='locaplay-worker')
         self._stop = threading.Event()
+        self._diagnostics = DiagnosticWorker()
 
     def run(self):
+        self._diagnostics.start()
         while not self._stop.is_set():
             try:
                 tick()
@@ -181,11 +206,13 @@ class WorkerThread(threading.Thread):
 
     def stop(self):
         self._stop.set()
+        self._diagnostics.stop()
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     settings.validate()
+    DiagnosticWorker().start()
     while True:
         log.info('tick %s', tick())
         time.sleep(settings.worker_interval_seconds)

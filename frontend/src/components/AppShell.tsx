@@ -8,13 +8,17 @@ import {
 } from 'lucide-react';
 import { useAuth, isStaff } from '@/lib/auth';
 import { get } from '@/lib/api';
+import Toaster from '@/components/Toaster';
 
 function LogoIcon() {
-  // Ícone próprio (ingresso/fita) — identidade LocaPlay
+  // Ícone próprio (cartucho de videogame) — identidade LocaPlay
   return (
-    <svg className="logo-icon" viewBox="0 0 48 36" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" aria-hidden>
-      <path d="M8 6h32a4 4 0 0 1 4 4v4a4 4 0 0 0 0 8v4a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-4a4 4 0 0 0 0-8v-4a4 4 0 0 1 4-4Z" />
-      <circle cx="18" cy="18" r="4" /><circle cx="30" cy="18" r="4" /><path d="M14 11h20M14 25h20" strokeWidth="1.6" />
+    <svg className="logo-icon" viewBox="0 0 48 36" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" aria-hidden>
+      <path d="M14 2h20a3 3 0 0 1 3 3v22h-3v5H14v-5h-3V5a3 3 0 0 1 3-3Z" />
+      <path d="M16 6.5h16" strokeWidth="1.6" />
+      <rect x="15" y="11" width="18" height="12" rx="1.5" strokeWidth="1.8" />
+      <path d="M19.5 15v4M17.5 17h4" strokeWidth="1.6" />
+      <circle cx="27" cy="16" r=".6" fill="currentColor" /><circle cx="29.5" cy="18.5" r=".6" fill="currentColor" />
     </svg>
   );
 }
@@ -46,7 +50,7 @@ export function Header({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
   const { me } = useAuth();
   return (
     <header className="topbar">
-      <button className="icon-btn mobile-toggle" onClick={onMenu} aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'} aria-expanded={menuOpen}>
+      <button className="icon-btn mobile-toggle" onClick={onMenu} aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'} aria-expanded={menuOpen} aria-controls="player-sidebar">
         {menuOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
       <Link href="/" className="logo" aria-label="LocaPlay — página inicial">
@@ -86,14 +90,14 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
   const router = useRouter();
   const { me, logout } = useAuth();
   const link = (i: { href: string; label: string; icon: typeof Home; also?: string[] }) => (
-    <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''}>
+    <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''} aria-current={isActive(path, i.href) ? 'page' : undefined}>
       <i.icon aria-hidden />{i.label}
     </Link>
   );
   return (
-    <aside className={`sidebar ${open ? 'open' : ''}`} aria-label="Menu do jogador">
+    <aside id="player-sidebar" className={`sidebar ${open ? 'open' : ''}`} aria-label="Menu do jogador">
       <nav className="side-links">
-        <div className="mobile-only">{TOP.filter((t) => t.href !== '/jogos').map(link)}<div className="side-divider" /></div>
+        <div className="mobile-only">{TOP.filter((t) => t.href !== '/jogos').map(link)}{!me && link({ href: '/cadastrar', label: 'Cadastrar', icon: UserRoundPlus })}<div className="side-divider" /></div>
         {SIDE_MAIN.map(link)}
         <div className="side-divider" />
         {SIDE_ACCOUNT.map(link)}
@@ -105,11 +109,11 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
             {link({ href: '/favoritos', label: 'Favoritos', icon: Heart })}
             {link({ href: '/notificacoes', label: 'Notificações', icon: Bell })}
             {isStaff(me) && link({ href: '/admin', label: 'Painel administrativo', icon: ShieldHalf })}
+            {me.roles.includes('owner') && link({ href: '/proprietario', label: 'Portal do proprietário', icon: Monitor })}
             <a href="#sair" onClick={async (e) => { e.preventDefault(); await logout(); onNavigate(); router.push('/'); }}><LogOut aria-hidden />Sair</a>
           </div>
         )}
       </nav>
-      <div className="side-deco" aria-hidden />
     </aside>
   );
 }
@@ -147,6 +151,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const path = usePathname();
   useEffect(() => setOpen(false), [path]);
+  useEffect(() => {
+    if (!open) return;
+    function onEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        document.querySelector<HTMLButtonElement>('.mobile-toggle')?.focus();
+      }
+    }
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [open]);
   return (
     <>
       <a href="#conteudo" className="skip-link">Pular para o conteúdo</a>
@@ -154,7 +169,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <div className="shell">
         <Sidebar open={open} onNavigate={() => setOpen(false)} />
         <div className="main">
-          <main id="conteudo" className={path === '/' ? 'content' : 'content pad'}>{children}</main>
+          <main id="conteudo" tabIndex={-1} className={path === '/' ? 'content' : 'content pad'}>{children}</main>
+          <Toaster />
           <Footer />
         </div>
       </div>

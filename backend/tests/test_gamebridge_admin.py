@@ -64,7 +64,7 @@ def test_adaptadores_de_hardware_recusam_sem_configuracao():
 def test_servicos_de_negocio_nao_importam_adaptadores_concretos():
     root = Path(__file__).resolve().parents[1] / 'app'
     for f in list((root / 'services').glob('*.py')) + list((root / 'routers').glob('*.py')):
-        tree = ast.parse(f.read_text())
+        tree = ast.parse(f.read_text(encoding='utf-8'))
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom) and node.module:
                 assert not any(x in node.module for x in ('simulated', 'agent_client', 'chiaki')), f'{f.name} importa {node.module}'
@@ -203,3 +203,165 @@ def test_publicacao_bloqueada_no_banco_sem_validacao(world):
             conn.execute('update console_connection_configs set control_validated_at=null, validated_at=null')
             conn.execute('update consoles set is_published=false')
             conn.execute('update consoles set is_published=true')
+
+
+def test_rota_de_rede_remote_play_pela_internet(freeze):
+    """PS4 em outra rede: via PSN (sem portas) ou por portas abertas (exige IP público/DDNS)."""
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    c = _new_console(api, 'PS4-09', 'PS4')
+    ag = api.post('/admin/agents', json={'name': 'pc-remoto', 'host_name': 'pcr'}).json()
+    url = f"/admin/consoles/{c['id']}/connection"
+    base = {'method': 'remote_play_chiaki', 'agent_id': ag['id']}
+    r = api.put(url, json={**base, 'network_route': 'internet_port_forward'})
+    assert r.status_code == 422 and 'public_host' in r.json()['fields']
+    r = api.put(url, json={**base, 'network_route': 'internet_psn'})
+    assert r.status_code == 422 and 'console_identifier' in r.json()['fields']
+    r = api.put(url, json={**base, 'network_route': 'internet_port_forward', 'public_host': 'meuconsole.ddns.net', 'public_port': 9295,
+                           'discovery_mode': 'lan_discovery'})
+    assert r.status_code == 200, r.text
+    cfg = r.json()['connection']
+    assert cfg['network_route'] == 'internet_port_forward' and cfg['public_host'] == 'meuconsole.ddns.net'
+    assert cfg['discovery_mode'] == 'manual'           # descoberta na LAN não se aplica pela internet
+    r = api.put(url, json={**base, 'network_route': 'internet_psn', 'console_identifier': 'PS4-casa-vo'})
+    assert r.status_code == 200 and r.json()['connection']['public_host'] is None
+    r = api.put(url, json={'method': 'simulated', 'network_route': 'internet_psn'})
+    assert r.status_code == 422 and 'network_route' in r.json()['fields']
+
+
+def test_remote_play_direto_so_rede_local_com_ip_e_identificacao(freeze):
+    """Remote Play direto (vários consoles por PC): exige agente, IP local e identificação; não aceita internet."""
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    c = _new_console(api, 'PS4-31', 'PS4')
+    sw = _new_console(api, 'SW-31', 'SWITCH')
+    ag = api.post('/admin/agents', json={'name': 'pc-loja', 'host_name': 'pcl'}).json()
+    url = f"/admin/consoles/{c['id']}/connection"
+    base = {'method': 'remote_play_direct', 'agent_id': ag['id']}
+    r = api.put(url, json=base)
+    assert r.status_code == 422 and {'internal_host', 'console_identifier'} <= set(r.json()['fields'])
+    r = api.put(url, json={**base, 'internal_host': '192.168.0.31', 'console_identifier': 'PS4-31', 'network_route': 'internet_psn'})
+    assert r.status_code == 422 and 'rede local' in r.json()['fields']['network_route']
+    r = api.put(url, json={**base, 'internal_host': '192.168.0.31', 'console_identifier': 'PS4-31'})
+    assert r.status_code == 200, r.text
+    assert r.json()['connection']['method'] == 'remote_play_direct'                 # aceito pelo banco (migração 011)
+    r = api.put(f"/admin/consoles/{sw['id']}/connection", json={**base, 'internal_host': '192.168.0.32', 'console_identifier': 'SW-31'})
+    assert r.status_code == 422 and 'method' in r.json()['fields']                  # não aplicável a Switch
+
+
+def test_recusa_de_negocio_do_agente_nao_vira_erro_de_credencial(monkeypatch):
+    """403 'input_revoked' do agente = sessão não associada (recuperável); só 401 é credencial."""
+    import httpx
+
+    from app.gamebridge.agent_client import DirectRemotePlayAdapter
+    ref = ConsoleRef('c', 'PS4', 'remote_play_direct', 'http://127.0.0.1:9', 'tok', settings={'network_route': 'lan'})
+    replies = {'input_revoked': httpx.Response(403, json={'code': 'input_revoked', 'message': 'sessão'}),
+               'unauthorized': httpx.Response(401, json={'code': 'unauthorized', 'message': 'x'})}
+    for code, resp in replies.items():
+        monkeypatch.setattr(httpx, 'post', lambda *a, _r=resp, **k: _r)
+        with pytest.raises(AdapterError) as e:
+            DirectRemotePlayAdapter().webrtc_offer(ref, 's1', {'type': 'offer', 'sdp': 'v=0'})
+        assert e.value.code == ('input_revoked' if code == 'input_revoked' else 'agent_error')
+        assert ('credencial' in e.value.message) == (code == 'unauthorized')
+
+
+def test_limpar_historico_de_testes_mantem_validacoes(freeze):
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    c = _new_console(api, 'PS4-41', 'PS4')
+    ag = api.post('/admin/agents', json={'name': 'sim', 'host_name': 'sim', 'is_simulated': True}).json()
+    assert api.put(f"/admin/consoles/{c['id']}/connection", json={'method': 'simulated', 'agent_id': ag['id']}).status_code == 200
+    for t in ('heartbeat', 'discover'):
+        api.post(f"/admin/consoles/{c['id']}/tests/{t}")
+    before = api.get(f"/admin/consoles/{c['id']}").json()
+    assert len(before['tests']) == 2 and before['connection']['heartbeat_validated_at']
+    r = api.delete(f"/admin/consoles/{c['id']}/tests")
+    assert r.status_code == 200 and r.json()['removed'] == 2
+    after = api.get(f"/admin/consoles/{c['id']}").json()
+    assert after['tests'] == [] and after['connection']['heartbeat_validated_at'] == before['connection']['heartbeat_validated_at']
+    assert api.delete('/admin/consoles/00000000-0000-0000-0000-000000000000/tests').status_code == 404
+
+
+def test_excluir_console_bloqueia_com_reserva_e_libera_codigo(world, freeze):
+    freeze(at(2, 8, 0))
+    api, _ = admin_api()
+    cid = str(world['console']['id'])
+    user = login(make_user('excl_user'))
+    rid = reserve(user, world, 10).json()['id']
+    assert pay(user, rid).status_code == 200
+    r = api.delete(f'/admin/consoles/{cid}')
+    assert r.status_code == 409 and r.json()['code'] == 'has_reservations'
+    # Sem reservas: exclui e o código pode ser reutilizado
+    c = _new_console(api, 'PS4-77', 'PS4')
+    assert api.delete(f"/admin/consoles/{c['id']}").status_code == 200
+    assert api.delete(f"/admin/consoles/{c['id']}").status_code == 404
+    assert not any(x['id'] == c['id'] for x in api.get('/admin/consoles').json())
+    assert _new_console(api, 'PS4-77', 'PS4')['id'] != c['id']
+
+
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._b = status, body
+
+    def json(self):
+        return self._b
+
+
+def _agent_console(api, monkeypatch, replies):
+    """Console PS4 com Remote Play apontando para um agente local cujas respostas são controladas pelo teste."""
+    import app.gamebridge.agent_client as ac
+    ag = api.post('/admin/agents', json={'name': 'pc-local', 'host_name': 'pc', 'endpoint_url': 'http://127.0.0.1:8765'})
+    assert ag.status_code == 201, ag.text
+    c = _new_console(api, 'PS4-55', 'PS4')
+    r = api.put(f"/admin/consoles/{c['id']}/connection", json={'method': 'remote_play_chiaki', 'agent_id': ag.json()['id'],
+                                                              'internal_host': '192.168.0.20'})
+    assert r.status_code == 200, r.text
+    seen = []
+
+    def fake_post(url, json=None, headers=None, timeout=None):
+        action = url.split(f"/v1/consoles/{c['id']}/", 1)[1]
+        seen.append((action, headers.get('Authorization', '').startswith('Bearer ')))
+        return _Resp(*replies.get(action, (501, {'code': 'not_implemented', 'message': 'Parte 2'})))
+
+    monkeypatch.setattr(ac.httpx, 'post', fake_post)
+    return c, seen
+
+
+def test_agente_local_http_em_dev_e_https_em_producao(freeze, monkeypatch):
+    from app.config import settings as s
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    assert api.post('/admin/agents', json={'name': 'a1', 'host_name': 'h', 'endpoint_url': 'http://127.0.0.1:8765'}).status_code == 201
+    assert api.post('/admin/agents', json={'name': 'a2', 'host_name': 'h', 'endpoint_url': 'http://192.168.0.5:8765'}).status_code == 422
+    monkeypatch.setattr(s, 'env', 'production')
+    assert api.post('/admin/agents', json={'name': 'a3', 'host_name': 'h', 'endpoint_url': 'http://127.0.0.1:8765'}).status_code == 422
+
+
+def test_agente_real_descobre_e_parte2_fica_nao_disponivel(freeze, monkeypatch):
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    c, seen = _agent_console(api, monkeypatch, {
+        'discover': (200, {'ok': True, 'simulated': False, 'message': 'PS4-118 encontrado: ligado', 'state': 'idle', 'data': {}}),
+        'health': (200, {'ok': True, 'simulated': False, 'message': 'ConsoleAgent online', 'state': None, 'data': {}}),
+    })
+    t = api.post(f"/admin/consoles/{c['id']}/tests/discover").json()
+    assert t['result'] == 'passed' and 'PS4-118' in t['message'] and t['simulated'] is False
+    t = api.post(f"/admin/consoles/{c['id']}/tests/video_audio").json()
+    assert t['result'] == 'not_available' and 'Parte 2' in t['message']
+    t = api.post(f"/admin/consoles/{c['id']}/tests/heartbeat").json()
+    assert t['result'] == 'passed'
+    assert all(auth for _, auth in seen)
+    assert api.post(f"/admin/consoles/{c['id']}/publish").status_code == 409
+
+
+def test_resposta_simulada_de_agente_real_nao_valida_console(freeze, monkeypatch):
+    freeze(at(1, 10))
+    api, _ = admin_api()
+    fake_ok = (200, {'ok': True, 'simulated': True, 'message': 'fingindo', 'state': 'idle', 'data': {}})
+    c, _ = _agent_console(api, monkeypatch, {'test/video-audio': fake_ok, 'test/controls': fake_ok, 'health': fake_ok, 'connect': fake_ok})
+    for t in ('video_audio', 'controls', 'heartbeat', 'connection'):
+        r = api.post(f"/admin/consoles/{c['id']}/tests/{t}").json()
+        assert r['result'] == 'not_available' and r['simulated'] is True and 'SIMULADA' in r['message']
+    cfg = api.get(f"/admin/consoles/{c['id']}").json()['connection']
+    assert not any(cfg[k] for k in ('video_validated_at', 'audio_validated_at', 'control_validated_at', 'heartbeat_validated_at'))
+    assert api.post(f"/admin/consoles/{c['id']}/publish").status_code == 409

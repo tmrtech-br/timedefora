@@ -44,11 +44,17 @@ def me(p: Principal = Depends(current_user)):
     with tx() as conn:
         out = _profile(conn, p.user_id)
     out['mfa_verified'] = p.mfa_verified
+    out['permission_overrides'] = p.permissions
     out['unread_notifications'] = 0
     with tx() as conn:
         out['unread_notifications'] = one(conn, 'select count(*) n from notifications where user_id=%s and read_at is null',
                                           (p.user_id,))['n']
     return out
+
+
+@router.get('/permissions')
+def permissions(p: Principal = Depends(current_user)):
+    return {'roles': sorted(p.roles), 'overrides': p.permissions}
 
 
 class ProfileIn(BaseModel):
@@ -264,6 +270,56 @@ def put_prefs(body: PrefsIn, p: Principal = Depends(current_user)):
 
 
 # ------------------------------------------------------------ favoritos
+# ----------------------------------------------------------------- teclas personalizadas (teclado/mouse → controle)
+# Mesmas ações de frontend/src/lib/keymap.ts. Botões PS/Touchpad nunca são mapeáveis (bloqueados por segurança).
+BINDABLE = {'cross', 'circle', 'square', 'triangle', 'l1', 'r1', 'l2', 'r2', 'l3', 'r3', 'options', 'share',
+            'dpad_up', 'dpad_down', 'dpad_left', 'dpad_right',
+            'ls_up', 'ls_down', 'ls_left', 'ls_right', 'rs_up', 'rs_down', 'rs_left', 'rs_right'}
+KEY_CODE = re.compile(r'^(?:[A-Z][A-Za-z0-9]{1,23}|Mouse[0-4])$')     # KeyboardEvent.code ("KeyW", "ControlLeft") ou Mouse0–4
+
+
+class BindingsIn(BaseModel):
+    keys: dict[str, str] = Field(default_factory=dict)
+    mouse_look: bool = True
+    mouse_sensitivity: float = Field(default=1.0, ge=0.1, le=3.0)
+
+
+@router.get('/input-bindings')
+def get_bindings(p: Principal = Depends(current_user)):
+    """null em "keys" = o jogador ainda usa o padrão do site."""
+    with tx() as conn:
+        u = one(conn, 'select input_bindings from users where id=%s', (p.user_id,))
+    return u['input_bindings'] or {'keys': None, 'mouse_look': True, 'mouse_sensitivity': 1.0}
+
+
+@router.put('/input-bindings')
+def put_bindings(body: BindingsIn, p: Principal = Depends(current_user)):
+    errors = {}
+    for action, code in body.keys.items():
+        if action not in BINDABLE:
+            errors[f'keys.{action}'] = 'Ação desconhecida ou não mapeável.'
+        elif not KEY_CODE.match(code or ''):
+            errors[f'keys.{action}'] = 'Tecla inválida.'
+    used = [c for c in body.keys.values()]
+    dup = {c for c in used if used.count(c) > 1}
+    if dup:
+        errors['keys'] = 'A mesma tecla não pode fazer duas ações: ' + ', '.join(sorted(dup)) + '.'
+    if errors:
+        raise unprocessable('validation_error', 'Revise as teclas.', fields=errors)
+    from psycopg.types.json import Jsonb
+    data = body.model_dump()
+    with tx() as conn:
+        conn.execute('update users set input_bindings=%s where id=%s', (Jsonb(data), p.user_id))
+    return data
+
+
+@router.delete('/input-bindings')
+def reset_bindings(p: Principal = Depends(current_user)):
+    with tx() as conn:
+        conn.execute('update users set input_bindings=null where id=%s', (p.user_id,))
+    return {'keys': None, 'mouse_look': True, 'mouse_sensitivity': 1.0}
+
+
 @router.get('/favorites')
 def favorites(p: Principal = Depends(current_user)):
     with tx() as conn:

@@ -1,0 +1,103 @@
+"""Medições REAIS de imagem e áudio da janela do chiaki-ng (nada é estimado ou inventado).
+
+- Imagem: captura a área da janela e mede brilho médio e variação; tela preta/uniforme = sem vídeo.
+  Duas capturas seguidas medem se a imagem muda (movimento).
+- Áudio: lê o medidor de pico do Windows para a sessão de áudio do processo do chiaki-ng (biblioteca pycaw).
+"""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+
+from . import winutil
+
+BLACK_MEAN, FLAT_STD = 8.0, 3.0
+# Tela quase preta com poucos pixels claros (ex.: chiaki-ng ainda conectando, cursor/ícone) não é imagem do console.
+NEAR_BLACK_MEAN, NEAR_BLACK_STD = 12.0, 10.0
+
+
+def _is_black(mean: float, std: float) -> bool:
+    return mean < 4.0 or (mean < BLACK_MEAN and std < FLAT_STD) or (mean < NEAR_BLACK_MEAN and std < NEAR_BLACK_STD)
+
+
+@dataclass
+class Frame:
+    ok: bool
+    message: str
+    mean: float | None = None
+    std: float | None = None
+    size: tuple[int, int] | None = None
+    image: object = None
+
+    def to_dict(self) -> dict:
+        return {'ok': self.ok, 'mean': self.mean, 'std': self.std, 'size': self.size}
+
+
+def frame(pid: int | None) -> Frame:
+    w = winutil.main_window(pid)
+    if not w:
+        return Frame(False, 'Janela do chiaki-ng não encontrada (fechada ou minimizada).')
+    arr = winutil.capture_window(w)          # conteúdo da própria janela (não pega janelas por cima)
+    if arr is None:
+        return Frame(False, 'Captura indisponível: instale Pillow/numpy (pip install -r requirements.txt).')
+    from PIL import Image, ImageStat
+    g = Image.fromarray(arr).convert('L')
+    st = ImageStat.Stat(g)
+    mean, std = round(st.mean[0], 1), round(st.stddev[0], 1)
+    if _is_black(mean, std):
+        return Frame(False, f'Imagem preta ({w.size[0]}×{w.size[1]}): o console ainda não está transmitindo.', mean, std, w.size, g)
+    if std < FLAT_STD:
+        return Frame(False, f'Imagem uniforme ({w.size[0]}×{w.size[1]}, brilho {mean}): sem conteúdo do console.', mean, std, w.size, g)
+    return Frame(True, f'Imagem recebida ({w.size[0]}×{w.size[1]}, brilho {mean}, variação {std}).', mean, std, w.size, g)
+
+
+def frame_from_luma(luma, size: tuple[int, int]) -> Frame:
+    """Mesma regra de frame(), a partir do plano de brilho de um quadro decodificado (Remote Play direto)."""
+    import numpy as np
+    from PIL import Image
+    arr = np.asarray(luma, dtype='float32')
+    mean, std = round(float(arr.mean()), 1), round(float(arr.std()), 1)
+    img = Image.fromarray(np.clip(arr, 0, 255).astype('uint8'), 'L')
+    w, h = size
+    if _is_black(mean, std):
+        return Frame(False, f'Imagem preta ({w}×{h}): o console ainda não está transmitindo.', mean, std, size, img)
+    if std < FLAT_STD:
+        return Frame(False, f'Imagem uniforme ({w}×{h}, brilho {mean}): sem conteúdo do console.', mean, std, size, img)
+    return Frame(True, f'Imagem recebida do console ({w}×{h}, brilho {mean}, variação {std}).', mean, std, size, img)
+
+
+def motion(a: Frame, b: Frame) -> float | None:
+    """Diferença média entre duas capturas (0 = imagem parada)."""
+    if a.image is None or b.image is None or a.image.size != b.image.size:
+        return None
+    from PIL import ImageChops, ImageStat
+    return round(ImageStat.Stat(ImageChops.difference(a.image, b.image)).mean[0], 2)
+
+
+def audio_peak(pid: int | None, seconds: float = 1.5) -> tuple[float | None, str]:
+    """Maior pico de áudio (0–1) do processo no período. None = não foi possível medir."""
+    if not pid or not winutil.IS_WIN:
+        return None, 'Medição de áudio indisponível (processo não encontrado ou sistema não Windows).'
+    try:
+        import comtypes
+        from pycaw.pycaw import AudioUtilities, IAudioMeterInformation
+    except ImportError:
+        return None, 'Medição de áudio indisponível: instale o pycaw (pip install pycaw).'
+    comtypes.CoInitialize()
+    try:
+        meters = []
+        for s in AudioUtilities.GetAllSessions():
+            if s.Process and s.Process.pid == pid:
+                meters.append(s._ctl.QueryInterface(IAudioMeterInformation))
+        if not meters:
+            return 0.0, 'O chiaki-ng ainda não abriu uma saída de áudio.'
+        peak, end = 0.0, time.monotonic() + seconds
+        while time.monotonic() < end:
+            peak = max(peak, *(m.GetPeakValue() for m in meters))
+            time.sleep(0.05)
+        peak = round(float(peak), 3)
+        return peak, ('Áudio presente' if peak > 0.001 else 'Silêncio') + f' (pico {peak}).'
+    except Exception as e:
+        return None, f'Falha ao medir o áudio: {e}'
+    finally:
+        comtypes.CoUninitialize()

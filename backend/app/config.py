@@ -8,6 +8,20 @@ def _bool(name: str, default: bool) -> bool:
     return default if v is None else v.strip().lower() in ('1', 'true', 'yes', 'on')
 
 
+def _json_list(name: str, default: list) -> list:
+    import json
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        v = json.loads(raw)
+    except ValueError as e:
+        raise RuntimeError(f'{name} inválido: esperado JSON (lista de servidores ICE).') from e
+    if not isinstance(v, list):
+        raise RuntimeError(f'{name} inválido: esperado uma lista.')
+    return v
+
+
 @dataclass
 class Settings:
     env: str = field(default_factory=lambda: os.getenv('APP_ENV', 'development'))
@@ -37,10 +51,14 @@ class Settings:
     google_client_secret: str = field(default_factory=lambda: os.getenv('GOOGLE_CLIENT_SECRET', ''))
     # Worker de agendamento embutido (avisos, expiração de holds e sessões)
     run_worker: bool = field(default_factory=lambda: _bool('RUN_WORKER', True))
+    psn_chiaki_import_enabled: bool = field(default_factory=lambda: _bool('PSN_CHIAKI_IMPORT_ENABLED', False))
     worker_interval_seconds: int = field(default_factory=lambda: int(os.getenv('WORKER_INTERVAL_SECONDS', '15')))
     # Permite vender jogos is_demo sem licença comercial (somente desenvolvimento)
     allow_demo_sales: bool = field(default_factory=lambda: _bool('ALLOW_DEMO_SALES', True))
     require_admin_mfa: bool = field(default_factory=lambda: _bool('REQUIRE_ADMIN_MFA', True))
+    # Vídeo do console no navegador (WebRTC): servidores STUN/TURN entregues ao navegador do jogador (JSON no formato
+    # RTCIceServer[]). Em produção, inclua um TURN (ex.: coturn) para jogadores/agentes atrás de NAT restritivo.
+    webrtc_ice_servers: list = field(default_factory=lambda: _json_list('WEBRTC_ICE_SERVERS', [{'urls': 'stun:stun.l.google.com:19302'}]))
 
     @property
     def is_production(self) -> bool:

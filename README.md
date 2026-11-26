@@ -1,5 +1,13 @@
 # LocaPlay — locadora online de tempo de videogame
 
+## Convenções do painel
+
+- Use `ModalShell` para edição, visualização e confirmação. O diálogo nativo mantém o foco no modal. Clicar fora nunca fecha. Esc fica desativado por padrão e só pode ser habilitado explicitamente em telas sem alterações a preservar.
+- Use `ScrollableDataGrid` (também disponível como `DataTable`) para tabelas. O contêiner mede as dez primeiras linhas, mantém o cabeçalho fixo e permite rolagem interna vertical e horizontal.
+- Traduza as ações em `frontend/src/lib/permissionsLabels.ts`. Uma rota sem tradução conserva seu endereço como fallback. O backend decide a autorização.
+- O resumo financeiro gera o PDF no navegador, usando o período selecionado, sem biblioteca adicional. O arquivo inclui data de geração e paginação.
+- O modal de diagnóstico consulta o worker. Cancelar impede os próximos testes e descarta o resultado ainda não persistido. Uma chamada síncrona já enviada ao ConsoleAgent pode terminar no agente. Resultados concluídos antes do cancelamento ficam disponíveis até limpar o histórico.
+
 Plataforma web para alugar tempo em consoles físicos e jogar no navegador: catálogo, filas e reservas com
 regras de janela, pagamentos (Mercado Pago), avisos por e-mail, sessão exclusiva com controle revogado no
 servidor, transmissão pública para espectadores e painel administrativo completo. Banco: **PostgreSQL/Supabase**.
@@ -35,6 +43,15 @@ locaplay/
 
 ## Pré-requisitos
 Node 20+, Python 3.11+, PostgreSQL 15+ (ou Docker, ou um projeto Supabase).
+
+## Ambiente local em um comando (Windows/Linux)
+```bash
+python dev.py            # prepara o que faltar e sobe PostgreSQL (5433) + API (8000) + Next (3000); Ctrl+C encerra tudo
+python dev.py --setup    # só prepara (banco, .venv, npm, .env, migrations, seed)
+python dev.py --db       # sobe só o PostgreSQL (HeidiSQL/pgAdmin: 127.0.0.1:5433, usuário postgres, sem senha, banco locaplay)
+python dev.py --demo     # recria os dados demonstrativos (SIMULADOS)
+```
+Usa um cluster PostgreSQL próprio de desenvolvimento (fora do repositório, `LOCAPLAY_PGDATA`), encerra processos esquecidos nas portas 8000/3000 e gera `backend/.env` na primeira vez (a senha do admin aparece no terminal).
 
 ## Banco de dados
 **Supabase (recomendado):** siga `docs/SUPABASE.md` (cria o projeto, pega a connection string do *Session pooler* e roda as migrations).
@@ -101,3 +118,4 @@ cd frontend && npx playwright install chromium && E2E_ADMIN_EMAIL=... E2E_ADMIN_
 3. Hospedar API (Render/Railway/Fly) e frontend (Vercel) com HTTPS e `COOKIE_SECURE=true`.
 4. Desenvolver o ConsoleAgent e validar um PS4/PS5 próprio em rede privada (Fase A do adendo GameBridge).
 5. WebRTC (STUN/TURN) entre navegador e agente; revisão jurídica e licenças antes de vender.
+6. Controle virtual na tela para jogar pelo celular sem controle Bluetooth (sem PS/Touchpad/Share).

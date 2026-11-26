@@ -12,8 +12,9 @@ from ..core import security, timeutil
 from ..core.db import audit_event, insert, tx
 from ..core.errors import AppError, conflict, forbidden, not_found
 from ..gamebridge import AdapterError, get_adapter
-from . import notifications, scheduling
+from . import notifications, owner_settlements, preparation, scheduling
 from .consoles import console_ref
+from .settings_store import get_settings, require_enabled
 
 
 def _event(conn, session_id, kind: str, details: dict | None = None) -> None:
@@ -41,9 +42,23 @@ def join(user, reservation_id, input_device: str, ip: str, ua: str) -> dict:
         raise AppError(422, 'validation_error', 'Escolha teclado e mouse ou controle.')
     n = timeutil.now()
     with tx() as conn:
+        r0 = conn.execute('select user_id, starts_at, ends_at, status from reservations where id=%s', (reservation_id,)).fetchone()
+    if r0 and str(r0['user_id']) == user.user_id and r0['status'] == 'confirmed' and r0['starts_at'] <= n < r0['ends_at']:
+        # Console precisa estar pronto (acordado, jogo aberto). Transação própria: a falha fica registrada.
+        state = preparation.ensure_now(reservation_id)
+        if state == 'pending':
+            raise AppError(409, 'console_preparing', 'Estamos preparando o console para você. Tente novamente em alguns segundos.')
+        if state == 'failed':
+            raise AppError(409, 'console_unavailable', 'O console não ficou pronto por um problema técnico. Seu tempo não foi '
+                           'consumido: a equipe foi avisada e vai remarcar ou reembolsar sua reserva.')
+    with tx() as conn:
+        if input_device == 'keyboard_mouse':
+            require_enabled(conn, 'keyboard_mouse_enabled', 'Jogar com teclado e mouse está desativado no momento. Use um controle.')
         r = conn.execute('select * from reservations where id=%s for update', (reservation_id,)).fetchone()
         if not r or str(r['user_id']) != user.user_id:
             raise not_found('Reserva não encontrada.')
+        if r['status'] == 'needs_resolution':
+            raise AppError(409, 'console_unavailable', r['resolution_notes'] or 'Reserva em resolução pela equipe.')
         if r['status'] not in ('confirmed', 'active'):
             raise forbidden('Reserva sem pagamento confirmado ou já encerrada.', code='reservation_not_active')
         if n < r['starts_at']:
@@ -97,13 +112,52 @@ def _token_session(conn, session_id, token: str) -> dict:
     return t
 
 
-def send_input(session_id, token: str, command: dict) -> dict:
-    security.rate_limit(f'input:{session_id}', 1200, 60)  # ~20 comandos/s
+def webrtc_offer(session_id, token: str, offer: dict) -> dict:
+    """Vídeo do console no navegador: só quem tem o token de controle válido da sessão recebe a transmissão."""
+    if not isinstance(offer, dict) or offer.get('type') != 'offer' or not isinstance(offer.get('sdp'), str) or len(offer['sdp']) > 20000:
+        raise AppError(400, 'invalid_offer', 'Oferta de vídeo inválida.')
+    security.rate_limit(f'webrtc:{session_id}', 20, 60)
     with tx() as conn:
         t = _token_session(conn, session_id, token)
         ref = console_ref(conn, t['console_id'])
+        max_kbps = int(get_settings(conn).get('player_video_max_kbps') or 4000)   # Parâmetros do painel
+    adapter = get_adapter(ref.method)
     try:
-        res = get_adapter(ref.method).send_input(ref, str(session_id), command)
+        try:
+            res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']}, max_kbps)
+        except AdapterError as e:
+            if e.code != 'input_revoked':
+                raise
+            # O agente perdeu a associação com a sessão (reinício, queda da conexão com o console…). O token acabou
+            # de ser validado aqui — a API é a autoridade —, então reativa a sessão no agente e tenta uma vez mais.
+            adapter.start_stream(ref, str(session_id))
+            res = adapter.webrtc_offer(ref, str(session_id), {'type': 'offer', 'sdp': offer['sdp']}, max_kbps)
+    except AdapterError as e:
+        status = 501 if e.code == 'not_implemented' else 503
+        raise AppError(status, 'video_unavailable', e.message)
+    answer = (res.data or {}).get('answer') or {}
+    if not res.ok or answer.get('type') != 'answer' or not answer.get('sdp'):
+        raise AppError(503, 'video_unavailable', res.message or 'O agente do console não conseguiu iniciar o vídeo.')
+    return {'answer': {'type': 'answer', 'sdp': answer['sdp']}, 'message': res.message}
+
+
+def send_input(session_id, token: str, command: dict) -> dict:
+    security.rate_limit(f'input:{session_id}', 3600, 60)  # ~60 comandos/s (botões + analógicos)
+    with tx() as conn:
+        t = _token_session(conn, session_id, token)
+        if str((command or {}).get('name', '')).lower() == 'share' and not get_settings(conn).get('share_button_enabled', False):
+            raise AppError(400, 'blocked_command', 'O botão Share está bloqueado nesta plataforma.')
+        ref = console_ref(conn, t['console_id'])
+    adapter = get_adapter(ref.method)
+    try:
+        try:
+            res = adapter.send_input(ref, str(session_id), command)
+        except AdapterError as e:
+            if e.code != 'input_revoked':
+                raise
+            # Token válido aqui (autoridade é a API): o agente só perdeu a associação — reativa e reenvia uma vez.
+            adapter.start_stream(ref, str(session_id))
+            res = adapter.send_input(ref, str(session_id), command)
     except AdapterError as e:
         status = 400 if e.code in ('invalid_command', 'blocked_command') else 403
         raise AppError(status, e.code, e.message)
@@ -126,6 +180,7 @@ def end_session(conn, s: dict, reason: str, status: str = 'ended') -> None:
     new_res_status = 'no_show' if reason == 'no_show' else 'completed'
     conn.execute('update reservations set status=%s where id=%s and status in (%s,%s)', (new_res_status, s['reservation_id'], 'active', 'confirmed'))
     _event(conn, s['id'], 'ended', {'reason': reason})
+    owner_settlements.refresh(conn, s['reservation_id'])
     ref = console_ref(conn, s['console_id'])
     try:
         a = get_adapter(ref.method)
@@ -162,6 +217,11 @@ def disconnect(user, session_id) -> None:
         conn.execute("update session_input_tokens set revoked_at=%s, revoke_reason='disconnected' where session_id=%s and revoked_at is null",
                      (timeutil.now(), session_id))
         _event(conn, session_id, 'disconnected')
+        ref = console_ref(conn, s['console_id'])
+    try:
+        get_adapter(ref.method).revoke_input(ref, str(session_id))   # agente corta controle e vídeo desta sessão
+    except AdapterError:
+        pass  # token já revogado no banco: o servidor continua sendo a autoridade
 
 
 def session_state(user, session_id) -> dict:
@@ -179,7 +239,7 @@ def session_state(user, session_id) -> dict:
     except AdapterError:
         metrics = None
     return {'id': str(s['id']), 'status': s['status'], 'game': s['title'], 'slug': s['slug'], 'console': s['console_name'],
-            'reservation_code': s['code'], 'contract_starts_at': s['contract_starts_at'].isoformat(),
+            'reservation_code': s['code'], 'reservation_id': str(s['reservation_id']), 'contract_starts_at': s['contract_starts_at'].isoformat(),
             'contract_ends_at': s['contract_ends_at'].isoformat(), 'server_time': n.isoformat(),
             'remaining_seconds': max(0, int((s['contract_ends_at'] - n).total_seconds())) if s['status'] in ('ready', 'active') else 0,
             'input_device': s['input_device'], 'simulated': adapter.simulated, 'metrics': metrics, 'end_reason': s['end_reason']}

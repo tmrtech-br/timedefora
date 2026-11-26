@@ -1,11 +1,13 @@
 'use client';
 import { useState } from 'react';
+import KeyBindingsEditor from '@/components/KeyBindings';
 import RequireAuth from '@/components/RequireAuth';
+import QrCode from '@/components/QrCode';
 import { Alert, Field, PageHeader } from '@/components/ui';
 import { ApiError, del, get, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
-import { dateTime } from '@/lib/format';
+import { DATA_REQUEST_STATUS, dateTime } from '@/lib/format';
 
 type Prefs = { email_queue_updates: boolean; email_reminders: boolean; email_marketing: boolean; in_app_enabled: boolean; reminder_minutes: number[] };
 type Sess = { id: string; ip: string; user_agent: string; created_at: string; last_seen_at: string; current: boolean };
@@ -37,7 +39,7 @@ function Config() {
   const p = prefs.data;
   return (
     <div className="stack">
-      <PageHeader title="Configurações" subtitle="Notificações, segurança e privacidade." />
+      <PageHeader title="Configurações" subtitle="Notificações, controles, segurança e privacidade." />
       {msg && <Alert kind={msg.k}>{msg.t}</Alert>}
       <div className="grid2">
         <section className="card stack">
@@ -66,12 +68,15 @@ function Config() {
           <p className="muted small">Obrigatória para operadores e administradores; recomendada para todos.</p>
           {me.mfa_enabled ? <>
             <Alert kind="ok">Ativa.</Alert>
-            <Field label="Código atual para desativar"><input value={code} onChange={(e) => setCode(e.target.value)} /></Field>
+            <Field label="Código atual para desativar"><input maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} /></Field>
             <button className="btn danger" onClick={() => run(async () => { await post('/me/mfa/disable', { code }); setCode(''); await refresh(); }, 'Autenticação em dois fatores desativada.')}>Desativar</button>
           </> : !mfa ? <button className="btn primary" onClick={() => run(async () => setMfa(await post('/me/mfa/setup')), 'Escaneie ou digite a chave no seu app autenticador.')}>Ativar</button> : <>
-            <p className="small">Adicione no aplicativo autenticador a chave: <code style={{ wordBreak: 'break-all' }}>{mfa.secret}</code></p>
-            <p className="small dim" style={{ wordBreak: 'break-all' }}>URI: {mfa.otpauth_uri}</p>
-            <Field label="Código de 6 dígitos"><input inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} /></Field>
+            <div className="mfa-qr">
+              <p className="small" style={{ margin: 0 }}>Escaneie o QR code com o aplicativo autenticador (Google Authenticator, Microsoft Authenticator, Authy…):</p>
+              <QrCode value={mfa.otpauth_uri} label="QR code para configurar o aplicativo autenticador" />
+              <p className="small" style={{ margin: 0 }}>Ou digite a chave manualmente:<br /><code style={{ wordBreak: 'break-all' }}>{mfa.secret}</code></p>
+            </div>
+            <Field label="Código de 6 dígitos"><input maxLength={6} inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} /></Field>
             <button className="btn primary" onClick={() => run(async () => { const r = await post<{ recovery_codes: string[] }>('/me/mfa/confirm', { code }); setRecovery(r.recovery_codes); setMfa(null); setCode(''); await refresh(); }, 'Autenticação em dois fatores ativada.')}>Confirmar</button>
           </>}
           {recovery.length > 0 && <Alert kind="warn"><span>Códigos de recuperação (guarde agora, não serão exibidos de novo): <code>{recovery.join('  ')}</code></span></Alert>}
@@ -84,16 +89,17 @@ function Config() {
           ))}
         </section>
       </div>
+      <KeyBindingsEditor />
       <section className="card stack">
         <h2>Privacidade e dados (LGPD)</h2>
         <div className="row"><button className="btn" onClick={exportData}>Baixar meus dados (JSON)</button><a className="btn" href="/privacidade">Política de privacidade</a></div>
         <div className="row">
           <select className="btn" value={dr.request_type} onChange={(e) => setDr({ ...dr, request_type: e.target.value })} aria-label="Tipo de solicitação">
             {Object.entries(DR_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
-          <input className="btn" style={{ flex: 1, minWidth: 220 }} placeholder="Detalhes (opcional)" value={dr.details} onChange={(e) => setDr({ ...dr, details: e.target.value })} />
+          <input className="btn" style={{ flex: 1, minWidth: 220 }} placeholder="Detalhes (opcional)" maxLength={500} value={dr.details} onChange={(e) => setDr({ ...dr, details: e.target.value })} />
           <button className="btn primary" onClick={() => run(async () => { await post('/me/data-requests', dr); drs.reload(); }, 'Solicitação registrada.')}>Enviar solicitação</button>
         </div>
-        {drs.data?.map((d) => <div key={d.id} className="small">{DR_LABEL[d.request_type]} · {d.status} · {dateTime(d.created_at)} {d.resolution && `— ${d.resolution}`}</div>)}
+        {drs.data?.map((d) => <div key={d.id} className="small">{DR_LABEL[d.request_type]} · {DATA_REQUEST_STATUS[d.status] || d.status} · {dateTime(d.created_at)} {d.resolution && `— ${d.resolution}`}</div>)}
       </section>
     </div>
   );

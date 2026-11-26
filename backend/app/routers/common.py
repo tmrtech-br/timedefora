@@ -1,14 +1,20 @@
 """Utilitários de rotas: cookies de sessão, serialização."""
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import Response
 from psycopg.types.range import Range
+from pydantic import BaseModel, StringConstraints
 
 from ..config import settings
 from ..core.deps import CSRF_COOKIE, SESSION_COOKIE
 from ..core.security import new_token
+
+
+class DeleteIn(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 
 
 def set_session_cookies(resp: Response, token: str) -> None:

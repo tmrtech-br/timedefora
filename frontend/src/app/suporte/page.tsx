@@ -5,7 +5,8 @@ import { Alert, Empty, Field, PageHeader } from '@/components/ui';
 import { ApiError, post } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
-import { dateTime } from '@/lib/format';
+import { TICKET_CATEGORY, TICKET_STATUS, dateTime } from '@/lib/format';
+import { useFeatures } from '@/lib/features';
 
 type T = { id: string; subject: string; category: string; status: string; updated_at: string };
 const FAQ = [
@@ -17,6 +18,7 @@ const FAQ = [
 
 export default function Suporte() {
   const { me } = useAuth();
+  const features = useFeatures();
   const tickets = useApi<T[]>(me ? '/support/tickets' : null);
   const [f, setF] = useState({ subject: '', category: 'geral', message: '' });
   const [msg, setMsg] = useState<{ k: 'ok' | 'error'; t: string } | null>(null);
@@ -30,12 +32,12 @@ export default function Suporte() {
       <div className="grid2">
         <section className="card stack">
           <h2>Abrir chamado</h2>
-          {!me ? <p>Para abrir um chamado, <Link className="link-purple" href="/entrar?proximo=/suporte">entre na sua conta</Link>.</p> : <>
+          {features?.support_tickets_enabled === false ? <Alert kind="warn">A abertura de novos chamados está temporariamente desativada.</Alert> : !me ? <p>Para abrir um chamado, <Link className="link-purple" href="/entrar?proximo=/suporte">entre na sua conta</Link>.</p> : <>
             {msg && <Alert kind={msg.k}>{msg.t}</Alert>}
-            <Field label="Assunto"><input value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} maxLength={140} /></Field>
+            <Field label="Assunto" required><input value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} maxLength={140} /></Field>
             <Field label="Categoria"><select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })}>
               <option value="geral">Geral</option><option value="sessao">Sessão de jogo</option><option value="pagamento">Pagamento</option><option value="reembolso">Reembolso</option><option value="conta">Conta</option><option value="tecnico">Técnico</option></select></Field>
-            <Field label="Mensagem"><textarea value={f.message} onChange={(e) => setF({ ...f, message: e.target.value })} maxLength={5000} /></Field>
+            <Field label="Mensagem" required><textarea value={f.message} onChange={(e) => setF({ ...f, message: e.target.value })} maxLength={5000} /></Field>
             <button className="btn primary" disabled={f.subject.length < 3 || f.message.length < 3} onClick={open}>Enviar</button>
           </>}
         </section>
@@ -44,7 +46,7 @@ export default function Suporte() {
       {me && <section className="card"><h2>Meus chamados</h2>
         {!tickets.data?.length ? <Empty>Nenhum chamado.</Empty> : tickets.data.map((t) => (
           <div key={t.id} className="spread" style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
-            <Link className="link-purple" href={`/suporte/${t.id}`}>{t.subject}</Link><span className="small muted">{t.category} · {t.status} · {dateTime(t.updated_at)}</span></div>))}
+            <Link className="link-purple" href={`/suporte/${t.id}`}>{t.subject}</Link><span className="small muted">{TICKET_CATEGORY[t.category] || t.category} · {TICKET_STATUS[t.status] || t.status} · {dateTime(t.updated_at)}</span></div>))}
       </section>}
     </div>
   );

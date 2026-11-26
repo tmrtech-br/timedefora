@@ -49,4 +49,4 @@ export const get = <T,>(p: string) => api<T>(p);
 export const post = <T,>(p: string, json?: unknown) => api<T>(p, { method: 'POST', json: json ?? {} });
 export const put = <T,>(p: string, json?: unknown) => api<T>(p, { method: 'PUT', json: json ?? {} });
 export const patch = <T,>(p: string, json?: unknown) => api<T>(p, { method: 'PATCH', json: json ?? {} });
-export const del = <T,>(p: string) => api<T>(p, { method: 'DELETE' });
+export const del = <T,>(p: string, json?: unknown) => api<T>(p, { method: 'DELETE', json });

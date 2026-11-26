@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from ..core import timeutil
 from . import scheduling
-from .settings_store import get_settings
+from .settings_store import disabled_platforms, get_settings
 
 STATUS_LABEL = {'available': 'Disponível', 'in_use': 'Em uso', 'queue_open': 'Fila aberta', 'scheduled': 'Agendado',
                 'unavailable': 'Indisponível', 'maintenance': 'Manutenção', 'closed': 'Encerrado'}
@@ -85,8 +85,15 @@ def card(conn, g: dict) -> dict:
             'is_demo': g['is_demo'], **live}
 
 
+PLATFORM_ON = """(not exists (select 1 from game_platforms gp where gp.game_id=games.id)
+                   or exists (select 1 from game_platforms gp join platforms pl on pl.id=gp.platform_id
+                              where gp.game_id=games.id and not (pl.code = any(%s))))"""
+
+
 def published_games(conn) -> list[dict]:
-    return conn.execute("select * from games where status='published' and deleted_at is null order by featured_rank nulls last, title").fetchall()
+    """Jogos publicados, exceto os que só existem em plataformas desligadas nos Parâmetros."""
+    return conn.execute(f"select * from games where status='published' and deleted_at is null and {PLATFORM_ON} "
+                        "order by featured_rank nulls last, title", (disabled_platforms(conn),)).fetchall()
 
 
 def featured(conn, games: list[dict]) -> tuple[dict | None, str]:
