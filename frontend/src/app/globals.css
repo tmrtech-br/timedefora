@@ -234,12 +234,6 @@ html:has(.modal-shell[open]) { overflow: hidden; }
 .scrollable-grid { overflow: auto; }
 .scrollable-grid th { position: sticky; top: 0; z-index: 1; background: var(--panel, #231a38); }
 .modal-shell .table { min-width: max-content; }
-.accordion-trigger { display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left; }
-.accordion-body { min-width: 0; }
-.accordion-body[hidden] { display: none; }
-.accordion-body:not([hidden]) { animation: accordion-appear .18s ease-out; }
-@keyframes accordion-appear { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { .accordion-body:not([hidden]) { animation: none; } }
 .admin-nav { --menu-highlight-bg: rgba(142, 84, 208, .24); }
 .admin-nav a.menu-highlight:not(.on) { background: var(--menu-highlight-bg); }
 .queue-list { display: flex; flex-direction: column; gap: 6px; }

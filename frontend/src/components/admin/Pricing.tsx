@@ -1,5 +1,4 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useState } from 'react';
 import { Field, PageHeader } from '@/components/ui';
 import { patch, post } from '@/lib/api';
@@ -18,7 +17,7 @@ export default function Pricing() {
     <div className="stack">
       <PageHeader title="Preços, pacotes e cupons" subtitle="Preços resolvidos no servidor (jogo > console > plataforma > geral, e por faixa horária)." />
       {msg}
-      <CollapsibleCard title="Pacotes" className="card stack"><NewRecord title="Novo pacote">{(close) => <><div className="grid3">
+      <section className="card stack"><h2>Pacotes</h2><NewRecord title="Novo pacote">{(close) => <><div className="grid3">
         <Field label="Nome"><input value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} /></Field>
         <Field label="Minutos" hint="5 a 480"><input type="number" min={5} max={480} value={p.minutes} onChange={(e) => setP({ ...p, minutes: Number(e.target.value) })} /></Field>
         <Field label="Preço (R$)"><input maxLength={10} inputMode="decimal" value={p.price} onChange={(e) => setP({ ...p, price: e.target.value.replace(/[^\d.,]/g, '') })} /></Field>
@@ -42,8 +41,8 @@ export default function Pricing() {
         <DataTable rows={pk.data} error={pk.error?.message} cols={[['Nome', (r) => String(r.name)], ['Minutos', (r) => String(r.minutes)], ['Preço', (r) => money(Number(r.price_cents))],
           ['Escopo', (r) => [r.game_title, r.console_name, r.platform_code].filter(Boolean).join(' · ') || 'geral'], ['Faixa', (r) => (r.local_start_time ? `${r.local_start_time}–${r.local_end_time}` : '—')],
           ['Ativo', (r) => <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/packages/${r.id}`, { active: !r.active }); pk.reload(); })}>{r.active ? 'ativo (desativar)' : 'inativo (ativar)'}</button>]]} />
-      </CollapsibleCard>
-      <CollapsibleCard title="Cupons" className="card stack"><NewRecord title="Novo cupom">{(close) => <><div className="grid3">
+      </section>
+      <section className="card stack"><h2>Cupons</h2><NewRecord title="Novo cupom">{(close) => <><div className="grid3">
         <Field label="Código"><input maxLength={30} value={c.code} onChange={(e) => setC({ ...c, code: e.target.value.toUpperCase() })} /></Field>
         <Field label="Tipo"><select value={c.discount_type} onChange={(e) => setC({ ...c, discount_type: e.target.value })}><option value="percent">Percentual</option><option value="fixed">Valor fixo (centavos)</option></select></Field>
         <Field label="Valor" hint={c.discount_type === 'percent' ? '1 a 100 (%)' : 'em centavos'}><input type="number" min={1} max={c.discount_type === 'percent' ? 100 : undefined} value={c.discount_value} onChange={(e) => setC({ ...c, discount_value: Number(e.target.value) })} /></Field>
@@ -61,7 +60,7 @@ export default function Pricing() {
         <DataTable rows={cp.data} error={cp.error?.message} cols={[['Código', (r) => String(r.code)], ['Desconto', (r) => (r.discount_type === 'percent' ? `${r.discount_value}%` : money(Number(r.discount_value)))],
           ['Usos', (r) => `${r.used}/${r.max_redemptions ?? '∞'}`], ['Validade', (r) => dateTime(r.valid_until as string)],
           ['', (r) => <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/coupons/${r.id}`, { active: !r.active }); cp.reload(); })}>{r.active ? 'Desativar' : 'Ativar'}</button>]]} />
-      </CollapsibleCard>
+      </section>
     </div>
   );
 }

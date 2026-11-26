@@ -4,7 +4,6 @@
 
 - Use `ModalShell` para edição, visualização e confirmação. O diálogo nativo mantém o foco no modal. Clicar fora nunca fecha. Esc fica desativado por padrão e só pode ser habilitado explicitamente em telas sem alterações a preservar.
 - Use `ScrollableDataGrid` (também disponível como `DataTable`) para tabelas. O contêiner mede as dez primeiras linhas, mantém o cabeçalho fixo e permite rolagem interna vertical e horizontal.
-- Agrupe cards operacionais com `CardAccordion` e `CollapsibleCard`. Os cards começam fechados e apenas um abre por grupo. Indicadores de resumo continuam visíveis no topo.
 - Traduza as ações em `frontend/src/lib/permissionsLabels.ts`. Uma rota sem tradução conserva seu endereço como fallback. O backend decide a autorização.
 - O resumo financeiro gera o PDF no navegador, usando o período selecionado, sem biblioteca adicional. O arquivo inclui data de geração e paginação.
 - O modal de diagnóstico consulta o worker. Cancelar impede os próximos testes e descarta o resultado ainda não persistido. Uma chamada síncrona já enviada ao ConsoleAgent pode terminar no agente. Resultados concluídos antes do cancelamento ficam disponíveis até limpar o histórico.

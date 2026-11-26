@@ -1,5 +1,4 @@
 'use client';
-import { CardAccordion, CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { ProgressModal } from '@/components/admin/ProgressModal';
 import { useEffect, useState } from 'react';
 import { Eraser } from 'lucide-react';
@@ -7,7 +6,7 @@ import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, get, patch, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
-import { DataTable, NewRecord, useAction, useDelete } from './common';
+import { DataTable, NewRecord, useAction, useConfirm, useDelete } from './common';
 
 type Method = { method: string; label: string; status: string; applicable: boolean; operational: boolean; guide: string; needs: string[] };
 type Conn = Record<string, unknown> & { method: string; method_label?: string; connection_status: string; agent_id: string | null; psn_account_id?: string | null; validated_at: string | null;
@@ -65,6 +64,7 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
   const [statusReason, setStatusReason] = useState('');
   const [hours, setHours] = useState(c.hours || []);
   const { run, msg, busy } = useAction();
+  const [sure, confirmation] = useConfirm();
   const deletion = useDelete();
   useEffect(() => {
     if (!activeRun || !['completed', 'failed', 'cancelled'].includes(activeRun.status)) return;
@@ -124,6 +124,7 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
   const flag = (v: unknown) => (v ? <span className="pill green">validado</span> : <span className="pill red">não validado</span>);
   return (
     <div className="stack">
+      {confirmation}
       {msg}
       {deletion.dialog}
       <section className="card">
@@ -139,7 +140,7 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
         <button className="btn" style={{ marginTop: 10 }} disabled={busy} onClick={() => run(async () => { await patch(`/admin/consoles/${c.id}`, { ...basic, serial_number: basic.serial_number || null }); onChange(); }, 'Dados salvos.')}>Salvar dados</button>
       </section>
 
-      <CollapsibleCard title="Método de conexão e transmissão" className="card stack">
+      <section className="card stack"><h2>Método de conexão e transmissão</h2>
         
         <Field label="Método (obrigatório)"><select value={m} onChange={(e) => set('method', e.target.value)}>
           {methods?.map((x) => <option key={x.method} value={x.method} disabled={!x.applicable}>{x.label}{!x.applicable ? ' — não aplicável a esta plataforma' : ''}</option>)}</select></Field>
@@ -215,9 +216,9 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
           <button className="btn" disabled={busy || m === 'unconfigured'} onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/connection`, { method: 'unconfigured', reason: 'Desativado no painel' }); onChange(); }, 'Conexão desativada.')}>Desativar</button>
           {c.connection.psn_account_id && <button className="btn danger" disabled={busy} onClick={unlinkPsn}>Desvincular conta PSN</button>}
         </div>
-      </CollapsibleCard>
+      </section>
 
-      <CollapsibleCard title="Testes e diagnóstico" className="card stack">
+      <section className="card stack"><h2>Testes e diagnóstico</h2>
         
         <div className="row">Vídeo {flag(c.connection.video_validated_at)} Áudio {flag(c.connection.audio_validated_at)} Controle {flag(c.connection.control_validated_at)} Heartbeat {flag(c.connection.heartbeat_validated_at)}
           Conexão <StatusPill status={c.connection.connection_status} /></div>
@@ -284,10 +285,10 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
           ['Simulado', (r) => (r.simulated ? 'sim' : 'não')], ['Mensagem', (r) => String(r.message)], ['Quando', (r) => dateTime(String(r.run_at))]]} />
         <p className="small muted">Telemetria: {c.last_health ? `${c.last_health.status} · FPS ${c.last_health.fps ?? 'não disponível'} · RTT ${c.last_health.rtt_ms ?? 'não disponível'} · bitrate ${c.last_health.bitrate_kbps ?? 'não disponível'} · ${dateTime(String(c.last_health.checked_at))}${c.last_health.simulated ? ' (simulado)' : ''}` : 'sem amostras'}</p>
         <p className="small muted">Jogo vinculado agora: {c.current_assignment ? `${c.current_assignment.title} até ${dateTime(c.current_assignment.ends_at)}` : 'nenhum'} · Sessão ativa: {c.active_session ? 'sim' : 'não'} · Pareamento: {c.pairing?.status || '—'}</p>
-      </CollapsibleCard>
+      </section>
 
       <div className="grid2">
-        <CollapsibleCard title="Manutenção / status" className="card stack">
+        <section className="card stack"><h2>Manutenção / status</h2>
           
           <Field label="Justificativa"><input maxLength={500} value={statusReason} onChange={(e) => setStatusReason(e.target.value)} /></Field>
           <div className="row">
@@ -299,8 +300,8 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
             }}>Manutenção + reembolsar afetados</button>
             <button className="btn" disabled={busy || statusReason.length < 3} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'online', reason: statusReason }); onChange(); }, 'Retornou à operação.')}>Retornar à operação</button>
           </div>
-        </CollapsibleCard>
-        <CollapsibleCard title="Horário de funcionamento" className="card stack">
+        </section>
+        <section className="card stack"><h2>Horário de funcionamento</h2>
           
           {hours.map((h, i) => <div key={i} className="row">
             <select className="btn sm" value={h.weekday} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, weekday: Number(e.target.value) } : x))}>{DAYS.map((d, k) => <option key={k} value={k}>{d}</option>)}</select>
@@ -310,17 +311,17 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
           <div className="row"><button className="btn sm" onClick={() => setHours([...hours, { weekday: 1, opens_at: '08:00', closes_at: '22:00' }])}>Adicionar faixa</button>
             <button className="btn sm primary" onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/hours`, { hours }); onChange(); }, 'Horários salvos.')}>Salvar horários</button></div>
           <p className="small dim">Sem faixas = funcionamento limitado apenas pelos vínculos.</p>
-        </CollapsibleCard>
+        </section>
       </div>
-      {c.method_history && c.method_history.length > 0 && <CollapsibleCard title="Histórico de métodos (rollback)" className="card">
+      {c.method_history && c.method_history.length > 0 && <section className="card"><h2>Histórico de métodos (rollback)</h2>
         <DataTable rows={c.method_history as unknown as Record<string, unknown>[]} cols={[['De', (r) => String(r.from_method)], ['Para', (r) => String(r.to_method)], ['Motivo', (r) => String(r.reason)],
-          ['Quando', (r) => dateTime(String(r.created_at))], ['', (r) => <button className="btn sm" onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/connection/rollback/${r.id}`); onChange(); }, 'Configuração anterior restaurada (requer nova validação).')}>Restaurar</button>]]} /></CollapsibleCard>}
-      <CollapsibleCard title="Excluir console" className="card stack" style={{ borderColor: 'rgba(255, 75, 92, .45)' }}>
+          ['Quando', (r) => dateTime(String(r.created_at))], ['', (r) => <button className="btn sm" onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/connection/rollback/${r.id}`); onChange(); }, 'Configuração anterior restaurada (requer nova validação).')}>Restaurar</button>]]} /></section>}
+      <section className="card stack" style={{ borderColor: 'rgba(255, 75, 92, .45)' }}><h2>Excluir console</h2>
         
         <p className="small muted" style={{ margin: 0 }}>Remove o console da operação: despublica, arquiva os vínculos futuros e libera capturadora/controle. O histórico (reservas, sessões, auditoria) é mantido.
           Bloqueado se houver sessão ativa ou reservas futuras.</p>
         {onDelete && <div><button className="btn danger" onClick={onDelete}>Excluir este console</button></div>}
-      </CollapsibleCard>
+      </section>
     </div>
   );
 }
@@ -354,7 +355,7 @@ export default function Consoles() {
         <input className="btn" placeholder="Nome (PS5 nº 05)" value={nc.name} onChange={(e) => setNc({ ...nc, name: e.target.value })} />
         <select className="btn" value={nc.platform_code} onChange={(e) => setNc({ ...nc, platform_code: e.target.value })}>{['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((p) => <option key={p}>{p}</option>)}</select>
         <button className="btn primary" onClick={() => run(async () => { const c = await post<AdminConsole>('/admin/consoles', nc); list.reload(); setSel(c.id); setNc({ code: '', name: '', platform_code: 'PS5' }); close(); }, 'Console criado como "não configurado".')}>Cadastrar</button></div>}</NewRecord>
-      <CollapsibleCard title="Consoles cadastrados" className="card"><DataTable rows={list.data as unknown as Record<string, unknown>[] | null} cols={[
+      <section className="card"><h2>Consoles cadastrados</h2><DataTable rows={list.data as unknown as Record<string, unknown>[] | null} cols={[
         ['Console', (r) => String(r.name)], ['Plataforma', (r) => String(r.platform_code)],
         ['Método', (r) => String((r.connection as Conn)?.method_label || '—')], ['Status', (r) => <StatusPill status={String(r.status)} />],
         ['Publicado', (r) => (r.is_published ? 'sim' : 'não')], ['Jogo agora', (r) => String((r.current_assignment as { title?: string })?.title || '—')],
@@ -362,14 +363,14 @@ export default function Consoles() {
           <button className="btn sm" onClick={() => run(async () => setViewing(await get<AdminConsole>(`/admin/consoles/${r.id}`)))}>Ver</button>
           <button className="btn sm" onClick={() => setSel(String(r.id))}>Editar</button>
           <button className="btn sm danger" onClick={() => askDelete({ id: String(r.id), code: String(r.code), name: String(r.name) })}>Excluir</button>
-        </div>]]} /></CollapsibleCard>
+        </div>]]} /></section>
       {viewing && <Modal title={viewing.name} onClose={() => setViewing(null)} allowEscape>
         <dl><dt>Código</dt><dd>{viewing.code}</dd><dt>Plataforma</dt><dd>{viewing.platform_code}</dd>
           <dt>Conexão</dt><dd>{viewing.connection.method_label ?? viewing.connection.method}</dd>
           <dt>Status</dt><dd><StatusPill status={viewing.status} /></dd></dl>
       </Modal>}
       {detail && detail.id === sel && !delC && <Modal title={`Editar ${detail.name}`} onClose={() => { setSel(null); setDetail(null); }}>
-        <CardAccordion><ConsoleEditor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onChange={() => { load(detail.id); list.reload(); }} onDelete={() => askDelete(detail)} /></CardAccordion>
+        <ConsoleEditor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onChange={() => { load(detail.id); list.reload(); }} onDelete={() => askDelete(detail)} />
       </Modal>}
       {delC && (
         <Modal title="Excluir console" onClose={() => setDelC(null)}>

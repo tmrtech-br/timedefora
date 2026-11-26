@@ -1,5 +1,4 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useState } from 'react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { patch, post } from '@/lib/api';
@@ -23,9 +22,9 @@ export function Queues() {
   return (
     <div className="stack">
       <PageHeader title="Filas" subtitle="Atualização automática a cada 5 segundos." />
-      {data?.map((c) => <CollapsibleCard title={String(c.name)} key={String(c.id)} className="card"><StatusPill status={String(c.status)} />
+      {data?.map((c) => <section key={String(c.id)} className="card"><h2>{String(c.name)}</h2><StatusPill status={String(c.status)} />
         <DataTable rows={c.queue} empty="Fila vazia." cols={[['#', (r) => String(r.position)], ['Jogador', (r) => String(r.username)], ['Situação', (r) => QUEUE_STATUS[String(r.status)]],
-          ['Previsão', (r) => `${time(String(r.estimated_start_at))}–${time(String(r.estimated_end_at))}`], ['Reserva', (r) => `${r.code} (${r.mode === 'queue' ? 'fila' : 'fixo'})`]]} /></CollapsibleCard>)}
+          ['Previsão', (r) => `${time(String(r.estimated_start_at))}–${time(String(r.estimated_end_at))}`], ['Reserva', (r) => `${r.code} (${r.mode === 'queue' ? 'fila' : 'fixo'})`]]} /></section>)}
     </div>
   );
 }
@@ -44,7 +43,7 @@ export function Reservations() {
       {msg}
       <div className="row"><select className="btn" value={status} onChange={(e) => setStatus(e.target.value)}><option value="">Todos os status</option>{Object.entries(RESERVATION_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
         <input className="btn" placeholder="Código ou usuário" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-      <CollapsibleCard title="Reservas" className="card"><DataTable rows={list.data} error={list.error?.message} cols={[['Código', (r) => String(r.code)], ['Jogador', (r) => String(r.username)], ['Jogo / console', (r) => `${r.game_title} · ${r.console_name}`],
+      <section className="card"><h2>Reservas</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Código', (r) => String(r.code)], ['Jogador', (r) => String(r.username)], ['Jogo / console', (r) => `${r.game_title} · ${r.console_name}`],
         ['Período', (r) => `${dateTime(String(r.starts_at))}–${time(String(r.ends_at))}`], ['Total', (r) => money(Number(r.total_cents))], ['Status', (r) => <StatusPill status={String(r.status)} map={RESERVATION_STATUS} />],
         ['Ações', (r) => ['pending_payment', 'confirmed', 'active', 'needs_resolution'].includes(String(r.status)) ? <div className="row">
           <button className="btn sm danger" onClick={async () => {
@@ -52,7 +51,7 @@ export function Reservations() {
               message: <>O pagamento de <b>{String(r.username)}</b> será <b>reembolsado</b> e o horário liberado. A justificativa fica na auditoria.</> });
             if (reason) run(async () => { await post(`/admin/reservations/${r.id}/cancel`, { reason, refund: true }); list.reload(); }, 'Cancelada e reembolsada.');
           }}>Cancelar</button>
-          {['confirmed', 'needs_resolution'].includes(String(r.status)) && <button className="btn sm" onClick={() => setResched({ id: String(r.id), start: '', reason: '' })}>Remarcar</button>}</div> : null]]} /></CollapsibleCard>
+          {['confirmed', 'needs_resolution'].includes(String(r.status)) && <button className="btn sm" onClick={() => setResched({ id: String(r.id), start: '', reason: '' })}>Remarcar</button>}</div> : null]]} /></section>
       {resched && <Modal title="Remarcar reserva" onClose={() => setResched(null)}>
         <div className="stack">{msg}
           <Field label="Novo horário"><input type="datetime-local" value={resched.start} onChange={(e) => setResched({ ...resched, start: e.target.value })} /></Field>
@@ -63,7 +62,7 @@ export function Reservations() {
           }, 'Remarcada.')}>Remarcar</button></div>
         </div>
       </Modal>}
-      <CollapsibleCard title="Solicitações de cancelamento" className="card">
+      <section className="card"><h2>Solicitações de cancelamento</h2>
         <DataTable rows={crs.data} error={crs.error?.message} empty="Nenhuma solicitação." cols={[['Reserva', (r) => String(r.code)], ['Jogador', (r) => String(r.username)], ['Início', (r) => dateTime(String(r.starts_at))],
           ['Motivo', (r) => String(r.reason)], ['Status', (r) => <StatusPill status={String(r.status)} map={CANCEL_REQUEST_STATUS} tone={({ requested: 'amber', approved: 'green', denied: 'red' } as Record<string, string>)[String(r.status)]} />], ['', (r) => r.status === 'requested' ? <div className="row">
             <button className="btn sm primary" onClick={async () => {
@@ -74,7 +73,7 @@ export function Reservations() {
             <button className="btn sm danger" onClick={async () => {
               const notes = await ask({ title: `Negar o cancelamento de ${r.code}?`, label: 'Motivo da negativa (o cliente verá)', danger: true, confirm: 'Negar' });
               if (notes) run(async () => { await post(`/admin/cancellation-requests/${r.id}/decide`, { approve: false, notes }); crs.reload(); }, 'Negada.');
-            }}>Negar</button></div> : String(r.decision_notes || '')]]} /></CollapsibleCard>
+            }}>Negar</button></div> : String(r.decision_notes || '')]]} /></section>
       {askDialog}
     </div>
   );
@@ -93,7 +92,7 @@ export function Sessions() {
     <div className="stack">
       <PageHeader title="Sessões ativas e incidentes" />
       {msg}
-      <CollapsibleCard title="Sess?es ativas" className="card"><DataTable rows={s.data} error={s.error?.message} empty="Nenhuma sessão ativa." cols={[['Jogador', (r) => String(r.username)], ['Jogo / console', (r) => `${r.title} · ${r.console_name}`],
+      <section className="card"><h2>Sess?es ativas</h2><DataTable rows={s.data} error={s.error?.message} empty="Nenhuma sessão ativa." cols={[['Jogador', (r) => String(r.username)], ['Jogo / console', (r) => `${r.title} · ${r.console_name}`],
         ['Término', (r) => time(String(r.contract_ends_at))], ['Entrada', (r) => INPUT_LABEL[String(r.input_device)] || '—'], ['Método', (r) => String(r.adapter_method)],
         ['', (r) => <div className="row">
           <button className="btn sm danger" onClick={async () => {
@@ -105,9 +104,9 @@ export function Sessions() {
             const reason = await ask({ title: 'Encerrar por falha operacional?', label: 'Descreva a falha', confirm: 'Encerrar e compensar', minLength: 5,
               message: 'A sessão é encerrada, um incidente é aberto e fica registrada compensação por reembolso ao cliente.' });
             if (reason) run(async () => { await post(`/admin/sessions/${r.id}/terminate`, { reason, compensation: 'refund' }); s.reload(); inc.reload(); }, 'Encerrada por falha; incidente aberto.');
-          }}>Falha → compensar</button></div>]]} /></CollapsibleCard>
+          }}>Falha → compensar</button></div>]]} /></section>
       {askDialog}
-      <CollapsibleCard title="Incidentes" className="card stack">
+      <section className="card stack"><h2>Incidentes</h2>
         <div className="row"><select className="btn" value={i.kind} onChange={(e) => setI({ ...i, kind: e.target.value })}><option value="console_failure">Falha de console</option><option value="stream_failure">Falha de stream</option><option value="agent_offline">Agente offline</option><option value="platform_delay">Atraso da plataforma</option><option value="other">Outro</option></select>
           <select className="btn" aria-label="Reserva afetada" value={i.reservationId} onChange={(e) => setI({ ...i, reservationId: e.target.value })}>
             <option value="">Sem reserva associada</option>
@@ -120,8 +119,8 @@ export function Sessions() {
           }, 'Incidente registrado.')}>Registrar</button></div>
         <DataTable rows={inc.data} error={inc.error?.message} empty="Nenhum incidente aberto." cols={[['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')], ['Descrição', (r) => String(r.description)],
           ['Desde', (r) => dateTime(String(r.started_at))], ['', (r) => <button className="btn sm" onClick={() => setRes({ id: String(r.id), label: String(r.description), compensation: 'none', notes: '', ownerRental: Boolean(r.owner_rental), fault: '', ownerCents: '' })}>Resolver</button>]]} />
-      </CollapsibleCard>
-      <CollapsibleCard title="Histórico de incidentes resolvidos" className="card stack">
+      </section>
+      <section className="card stack"><h2>Histórico de incidentes resolvidos</h2>
         <DataTable rows={resolved} empty="Nenhum incidente resolvido ainda." cols={[
           ['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')],
           ['Descrição', (r) => <span className="small" style={{ display: 'block', maxWidth: 360 }}>{String(r.description)}</span>],
@@ -129,7 +128,7 @@ export function Sessions() {
           ['Duração', (r) => minutesLabel(Math.max(1, Math.round((new Date(String(r.resolved_at)).getTime() - new Date(String(r.started_at)).getTime()) / 60000)))],
           ['Compensação', (r) => <span className={`pill ${r.compensation === 'refund' ? 'amber' : r.compensation && r.compensation !== 'none' ? 'purple' : ''}`}>{COMPENSATION[String(r.compensation || 'none')]?.label || String(r.compensation)}</span>],
           ['Observações', (r) => <span className="small muted" style={{ display: 'block', maxWidth: 280 }}>{String(r.compensation_notes || '—')}</span>]]} />
-      </CollapsibleCard>
+      </section>
       {res && (
         <Modal title="Resolver incidente" onClose={() => setRes(null)}>
           <div className="stack">
@@ -193,13 +192,13 @@ export function Channels() {
         <Field label="Jogo"><select value={f.game_id} onChange={(e) => setF({ ...f, game_id: e.target.value })}><option value="">—</option>{games?.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</select></Field>
         <label className="check"><input type="checkbox" checked={f.privacy_mask_enabled} onChange={(e) => setF({ ...f, privacy_mask_enabled: e.target.checked })} />Máscara/corte de telas sensíveis ativo</label></div>
         <button className="btn primary" onClick={() => run(async () => { await post('/admin/channels', { ...f, console_id: f.console_id || null, game_id: f.game_id || null, channel_name: f.channel_name || null, external_url: f.external_url || null }); ch.reload(); close(); }, 'Canal cadastrado.')}>Cadastrar</button></>}</NewRecord>
-      <CollapsibleCard title="Transmiss?es" className="card"><DataTable rows={ch.data} error={ch.error?.message} cols={[['Plataforma', (r) => PROVIDER_LABEL[String(r.provider)] || String(r.provider)], ['Canal', (r) => String(r.channel_name || r.external_url)], ['Console / jogo', (r) => [r.console_name, r.game_title].filter(Boolean).join(' · ')],
+      <section className="card"><h2>Transmiss?es</h2><DataTable rows={ch.data} error={ch.error?.message} cols={[['Plataforma', (r) => PROVIDER_LABEL[String(r.provider)] || String(r.provider)], ['Canal', (r) => String(r.channel_name || r.external_url)], ['Console / jogo', (r) => [r.console_name, r.game_title].filter(Boolean).join(' · ')],
         ['Aparece no site?', (r) => { const issues = (r.issues as string[]) || []; const shown = (r.shown_on as string[]) || [];
           return issues.length ? <div className="stack" style={{ gap: 4 }}>{shown.length > 0 && <span className="pill amber">parcial: {shown.join(', ')}</span>}
             {!shown.length && <span className="pill red">não aparece</span>}<ul className="small" style={{ margin: 0, paddingLeft: 16 }}>{issues.map((x) => <li key={x}>{x}</li>)}</ul></div>
             : <span className="pill green">sim — {shown.join(', ')}</span>; }],
         ['Status', (r) => <select className="btn sm" value={String(r.status)} onChange={(e) => run(async () => { await patch(`/admin/channels/${r.id}`, { status: e.target.value }); ch.reload(); })}><option value="offline">offline</option><option value="live">ao vivo</option><option value="disabled">desativado</option></select>],
-        ['', (r) => <button className="btn sm danger" onClick={() => deletion.remove(`/admin/channels/${r.id}`, 'Excluir canal?', (request) => run(async () => { await request(); ch.reload(); }, 'Removido.'))}>Excluir</button>]]} /></CollapsibleCard>
+        ['', (r) => <button className="btn sm danger" onClick={() => deletion.remove(`/admin/channels/${r.id}`, 'Excluir canal?', (request) => run(async () => { await request(); ch.reload(); }, 'Removido.'))}>Excluir</button>]]} /></section>
     </div>
   );
 }

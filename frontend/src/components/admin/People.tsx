@@ -1,5 +1,4 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useState } from 'react';
 import { Copy } from 'lucide-react';
 import { Alert, Field, Modal, PageHeader } from '@/components/ui';
@@ -114,11 +113,11 @@ export function Notifications() {
         {edit.channel === 'email' && <Field label="HTML"><textarea maxLength={50000} value={String(edit.body_html)} onChange={(e) => setEdit({ ...edit, body_html: e.target.value })} /></Field>}
         <div className="row"><button className="btn primary" onClick={() => run(async () => { await put(`/admin/notification-templates/${edit.id}`, { subject: edit.subject, body_text: edit.body_text, body_html: edit.body_html, active: edit.active }); setEdit(null); t.reload(); }, 'Template salvo.')}>Salvar</button>
           <button className="btn" onClick={() => setEdit(null)}>Cancelar</button></div></div></Modal>}
-      <CollapsibleCard title="Templates" className="card"><DataTable rows={t.data} error={t.error?.message} cols={[['Código', (r) => String(r.code)], ['Canal', (r) => String(r.channel)], ['Assunto', (r) => String(r.subject)], ['Versão', (r) => String(r.version)],
-        ['', (r) => <button className="btn sm" onClick={() => setEdit(r)}>Editar</button>]]} /></CollapsibleCard>
-      <CollapsibleCard title="Entregas de e-mail" className="card"><DataTable rows={d.data} error={d.error?.message} cols={[['Quando', (r) => dateTime(String(r.created_at))], ['Evento', (r) => String(r.event_code)], ['Para', (r) => String(r.to_address)],
+      <section className="card"><h2>Templates</h2><DataTable rows={t.data} error={t.error?.message} cols={[['Código', (r) => String(r.code)], ['Canal', (r) => String(r.channel)], ['Assunto', (r) => String(r.subject)], ['Versão', (r) => String(r.version)],
+        ['', (r) => <button className="btn sm" onClick={() => setEdit(r)}>Editar</button>]]} /></section>
+      <section className="card"><h2>Entregas de e-mail</h2><DataTable rows={d.data} error={d.error?.message} cols={[['Quando', (r) => dateTime(String(r.created_at))], ['Evento', (r) => String(r.event_code)], ['Para', (r) => String(r.to_address)],
         ['Status', (r) => String(r.status)], ['Tentativas', (r) => String(r.attempts)], ['Erro', (r) => String(r.last_error || '')],
-        ['', (r) => r.status === 'failed' ? <button className="btn sm" onClick={() => run(async () => { await post(`/admin/notification-deliveries/${r.id}/retry`); d.reload(); }, 'Reenvio solicitado.')}>Reenviar</button> : null]]} /></CollapsibleCard>
+        ['', (r) => r.status === 'failed' ? <button className="btn sm" onClick={() => run(async () => { await post(`/admin/notification-deliveries/${r.id}/retry`); d.reload(); }, 'Reenvio solicitado.')}>Reenviar</button> : null]]} /></section>
     </div>
   );
 }
@@ -132,10 +131,10 @@ export function Support() {
       <PageHeader title="Suporte" />
       {msg}
       <select className="btn" value={status} onChange={(e) => setStatus(e.target.value)}><option value="open">Abertos</option><option value="in_progress">Em andamento</option><option value="resolved">Resolvidos</option><option value="closed">Fechados</option><option value="">Todos</option></select>
-      <CollapsibleCard title="Chamados de suporte" className="card"><DataTable rows={list.data} error={list.error?.message} cols={[['Assunto', (r) => <a className="link-purple" href={`/suporte/${r.id}`}>{String(r.subject)}</a>], ['Usuário', (r) => String(r.username)], ['Categoria', (r) => String(r.category)],
+      <section className="card"><h2>Chamados de suporte</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Assunto', (r) => <a className="link-purple" href={`/suporte/${r.id}`}>{String(r.subject)}</a>], ['Usuário', (r) => String(r.username)], ['Categoria', (r) => String(r.category)],
         ['Prioridade', (r) => String(r.priority)], ['Atualizado', (r) => dateTime(String(r.updated_at))],
         ['Status', (r) => <select className="btn sm" value={String(r.status)} onChange={(e) => run(async () => { await patch(`/admin/support/tickets/${r.id}`, { status: e.target.value }); list.reload(); })}>
-          {['open', 'in_progress', 'resolved', 'closed'].map((s) => <option key={s}>{s}</option>)}</select>]]} /></CollapsibleCard>
+          {['open', 'in_progress', 'resolved', 'closed'].map((s) => <option key={s}>{s}</option>)}</select>]]} /></section>
     </div>
   );
 }
@@ -148,12 +147,12 @@ export function Lgpd() {
     <div className="stack">
       <PageHeader title="Solicitações LGPD" subtitle="Exclusão anonimiza dados pessoais e preserva registros financeiros obrigatórios." />
       {msg}
-      <CollapsibleCard title="Solicita??es LGPD" className="card"><DataTable rows={list.data} error={list.error?.message} cols={[['Usuário', (r) => String(r.username)], ['Tipo', (r) => String(r.request_type)], ['Detalhes', (r) => String(r.details)],
+      <section className="card"><h2>Solicita??es LGPD</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Usuário', (r) => String(r.username)], ['Tipo', (r) => String(r.request_type)], ['Detalhes', (r) => String(r.details)],
         ['Status', (r) => String(r.status)], ['Criada', (r) => dateTime(String(r.created_at))],
         ['', (r) => ['open', 'in_progress'].includes(String(r.status)) ? <div className="row">{(['in_progress', 'completed', 'rejected'] as const).map((s) => <button key={s} className="btn sm" onClick={async () => {
           const resolution = await ask({ title: `Solicitação LGPD: ${DR_STATUS_PT[s]}`, label: 'Registro da resolução', confirm: DR_STATUS_PT[s], danger: s === 'rejected' });
           if (resolution) run(async () => { await post(`/admin/data-requests/${r.id}/resolve`, { status: s, resolution }); list.reload(); }, 'Atualizado.');
-        }}>{DR_STATUS_PT[s]}</button>)}</div> : String(r.resolution || '')]]} /></CollapsibleCard>
+        }}>{DR_STATUS_PT[s]}</button>)}</div> : String(r.resolution || '')]]} /></section>
       {askDialog}
     </div>
   );
@@ -170,11 +169,11 @@ export function Audit() {
       <PageHeader title="Auditoria" subtitle="Toda inserção, alteração e exclusão (trigger no banco) e ações de negócio. Registros imutáveis; segredos mascarados." />
       <div className="row"><input className="btn" placeholder="Tabela (ex.: reservations)" value={table} onChange={(e) => setTable(e.target.value)} />
         <input className="btn" placeholder="ID do registro" value={record} onChange={(e) => setRecord(e.target.value)} /></div>
-      <CollapsibleCard title="Eventos de auditoria" className="card"><DataTable rows={list.data} error={list.error?.message} cols={[['Quando', (r) => dateTime(String(r.occurred_at))], ['Origem', (r) => String(r.source)], ['Ação', (r) => String(r.action)],
+      <section className="card"><h2>Eventos de auditoria</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Quando', (r) => dateTime(String(r.occurred_at))], ['Origem', (r) => String(r.source)], ['Ação', (r) => String(r.action)],
         ['Tabela / registro', (r) => `${r.table_name || '—'} · ${String(r.record_id || '').slice(0, 8)}`], ['Ator', (r) => String(r.actor_username || 'sistema')],
         ['Campos', (r) => ((r.changed_fields as string[]) || []).join(', ')], ['Motivo', (r) => String(r.reason || '')],
         ['Detalhes', (r) => <button className="btn sm" onClick={() => { setCopied(false); setDetail({ title: `${r.action} · ${r.table_name || '—'} · ${dateTime(String(r.occurred_at))}`,
-          json: JSON.stringify({ antes: r.old_data, depois: r.new_data, ...((r.details as object) || {}) }, null, 2) }); }}>Ver detalhes</button>]]} /></CollapsibleCard>
+          json: JSON.stringify({ antes: r.old_data, depois: r.new_data, ...((r.details as object) || {}) }, null, 2) }); }}>Ver detalhes</button>]]} /></section>
       {detail && (
         <Modal title="Detalhes do registro de auditoria" onClose={() => setDetail(null)}>
           <div className="stack">
@@ -235,21 +234,21 @@ export function Settings() {
       <PageHeader title="Configurações operacionais" subtitle="Alterações auditadas. Itens críticos exigem superadministrador." />
       {msg}
       <Alert kind="info"><span>Liga/desliga de funções, plataformas e regras de agenda ficam em <a className="link-purple" href="/admin/parametros">Parâmetros</a>. Aqui ficam os ajustes avançados.</span></Alert>
-      <CollapsibleCard title="Configura??es" className="card"><DataTable rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
+      <section className="card"><h2>Configura??es</h2><DataTable rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
         ['O que é', (r) => <span className="small muted" style={{ display: 'block', maxWidth: 380 }}>{SETTING_HELP[String(r.k)] || 'Ajuste avançado do sistema.'}</span>],
         ['Valor', (r) => <input className="btn sm" style={{ width: 260, maxWidth: '100%' }} value={vals[String(r.k)] ?? (Array.isArray(r.v) ? (r.v as number[]).join(',') : String(r.v))} onChange={(e) => setVals({ ...vals, [String(r.k)]: e.target.value })} />],
         ['', (r) => <button className="btn sm" disabled={vals[String(r.k)] === undefined} onClick={async () => {
           const reason = await ask({ title: `Alterar "${String(r.k)}"?`, label: 'Motivo da alteração', minLength: 1, confirm: 'Salvar',
             message: <>Novo valor: <code>{vals[String(r.k)]}</code>. A alteração vale na hora e fica na auditoria.</> });
           if (reason !== null) run(async () => { await put(`/admin/settings/${r.k}`, { value: parse(String(r.k), vals[String(r.k)]), reason }); s.reload(); }, 'Configuração salva.');
-        }}>Salvar</button>]]} /></CollapsibleCard>
+        }}>Salvar</button>]]} /></section>
       {askDialog}
-      <CollapsibleCard title="Políticas (termos, privacidade, cancelamento)" className="card stack">
+      <section className="card stack"><h2>Políticas (termos, privacidade, cancelamento)</h2>
         <div className="grid3"><Field label="Tipo"><select value={p.kind} onChange={(e) => setP({ ...p, kind: e.target.value })}><option value="terms">Termos</option><option value="privacy">Privacidade</option><option value="cancellation">Cancelamento</option></select></Field>
           <Field label="Versão"><input maxLength={20} value={p.version} onChange={(e) => setP({ ...p, version: e.target.value })} /></Field><Field label="Título"><input maxLength={200} value={p.title} onChange={(e) => setP({ ...p, title: e.target.value })} /></Field></div>
         <Field label="Texto"><textarea maxLength={50000} style={{ minHeight: 160 }} value={p.body} onChange={(e) => setP({ ...p, body: e.target.value })} /></Field>
         <button className="btn primary" onClick={() => run(async () => { await post('/admin/policies', p); pol.reload(); }, 'Nova versão publicada.')}>Publicar nova versão</button>
-        <DataTable rows={pol.data} error={pol.error?.message} cols={[['Tipo', (r) => String(r.kind)], ['Versão', (r) => String(r.version)], ['Atual', (r) => (r.is_current ? 'sim' : 'não')], ['Publicada', (r) => dateTime(r.published_at as string)]]} /></CollapsibleCard>
+        <DataTable rows={pol.data} error={pol.error?.message} cols={[['Tipo', (r) => String(r.kind)], ['Versão', (r) => String(r.version)], ['Atual', (r) => (r.is_current ? 'sim' : 'não')], ['Publicada', (r) => dateTime(r.published_at as string)]]} /></section>
     </div>
   );
 }

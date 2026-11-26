@@ -1,5 +1,4 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useMemo, useState } from 'react';
 import { Alert, Field, Modal, PageHeader } from '@/components/ui';
 import { put } from '@/lib/api';
@@ -79,7 +78,7 @@ export default function Params() {
       {msg}
 
       <div className="grid2" style={{ alignItems: 'start' }}>
-      <CollapsibleCard title="Plataformas e consoles" className="card stack">
+      <section className="card stack"><h2>Plataformas e consoles</h2>
         <p className="small muted" style={{ margin: 0 }}>Desligar uma plataforma tira da venda todos os consoles dela e esconde do catálogo os jogos que só existem nela. Reservas já pagas continuam valendo.</p>
         <div className="params">
           {Object.entries(byFamily).map(([fam, list]) => {
@@ -104,9 +103,9 @@ export default function Params() {
               </div>);
           })}
         </div>
-      </CollapsibleCard>
+      </section>
 
-      <CollapsibleCard title="Funções" className="card stack">
+      <section className="card stack"><h2>Funções</h2>
         <div className="params">
           {TOGGLES.map((t) => {
             const raw = Boolean(v[t.key]);
@@ -121,9 +120,9 @@ export default function Params() {
               </div>);
           })}
         </div>
-      </CollapsibleCard>
+      </section>
 
-      <CollapsibleCard title="Regras de agenda e limites" className="card stack">
+      <section className="card stack"><h2>Regras de agenda e limites</h2>
         <div className="params">
           {NUMBERS.filter((n) => n.key in v).map((n) => {
             const cur = String(v[n.key]);
@@ -142,7 +141,7 @@ export default function Params() {
               </div>);
           })}
         </div>
-      </CollapsibleCard>
+      </section>
       </div>
 
       {pausedReason !== null && (

@@ -1,5 +1,4 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { ErrorBox, PageHeader } from '@/components/ui';
 import { DataTable } from '@/components/admin/common';
 import { useApi } from '@/lib/hooks';
@@ -21,10 +20,10 @@ export default function Overview() {
       <ErrorBox error={error} onRetry={reload} />
       <div className="kpis">{K.map(([k, l, m]) => <div key={k} className="card kpi"><span>{l}</span><strong>{data ? (m ? money(data.kpis[k]) : data.kpis[k]) : '…'}</strong></div>)}</div>
       <div className="grid2">
-        <CollapsibleCard title="Utilização por console (mês, minutos)" className="card"><DataTable rows={data?.utilization_month || null} cols={[['Console', (r) => r.name], ['Minutos', (r) => r.minutes]]} /></CollapsibleCard>
-        <CollapsibleCard title="Jogos (mês)" className="card"><DataTable rows={data?.top_games_month || null} cols={[['Jogo', (r) => r.title], ['Reservas', (r) => r.reservations], ['Receita', (r) => money(r.revenue_cents)]]} /></CollapsibleCard>
+        <section className="card"><h2>Utilização por console (mês, minutos)</h2><DataTable rows={data?.utilization_month || null} cols={[['Console', (r) => r.name], ['Minutos', (r) => r.minutes]]} /></section>
+        <section className="card"><h2>Jogos (mês)</h2><DataTable rows={data?.top_games_month || null} cols={[['Jogo', (r) => r.title], ['Reservas', (r) => r.reservations], ['Receita', (r) => money(r.revenue_cents)]]} /></section>
       </div>
-      <CollapsibleCard title="Alertas e incidentes abertos" className="card"><DataTable rows={data?.alerts || null} empty="Nenhum alerta." cols={[['Tipo', (r) => r.kind], ['Descrição', (r) => r.description], ['Desde', (r) => dateTime(r.started_at)]]} /></CollapsibleCard>
+      <section className="card"><h2>Alertas e incidentes abertos</h2><DataTable rows={data?.alerts || null} empty="Nenhum alerta." cols={[['Tipo', (r) => r.kind], ['Descrição', (r) => r.description], ['Desde', (r) => dateTime(r.started_at)]]} /></section>
     </div>
   );
 }

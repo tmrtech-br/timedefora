@@ -1,5 +1,4 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useMemo, useState } from 'react';
 import { Field, Modal, PageHeader } from '@/components/ui';
 import { patch, post } from '@/lib/api';
@@ -169,7 +168,7 @@ export default function Agenda() {
         </div>
       </section>
 
-      <CollapsibleCard title="Próximos vínculos" className="card stack">
+      <section className="card stack"><h2>Próximos vínculos</h2>
         <div className="spread">
           <select className="btn sm" value={listConsole} onChange={(e) => { setListConsole(e.target.value); setShowDays(3); }} aria-label="Filtrar por console">
             <option value="">Todos os consoles</option>{consoles?.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
@@ -185,7 +184,7 @@ export default function Agenda() {
             </div>],
           ]} />
         {groups.length > showDays && <div><button className="btn sm" onClick={() => setShowDays(showDays + 3)}>Mostrar mais dias ({groups.length - showDays} restantes)</button></div>}
-      </CollapsibleCard>
+      </section>
 
       {dlg && (
         <Modal title={dlg.kind === 'end' ? 'Alterar fim do vínculo' : 'Cancelar vínculo'} onClose={() => setDlg(null)}>

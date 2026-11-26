@@ -4,7 +4,6 @@ import { usePathname } from 'next/navigation';
 import RequireAuth from '@/components/RequireAuth';
 import { Alert } from '@/components/ui';
 import { isStaff, useAuth } from '@/lib/auth';
-import { CardAccordion } from '@/components/admin/CollapsibleCard';
 
 const SECTIONS: [string, string, string][] = [
   ['', 'Visão geral', 'operator'], ['consoles', 'Consoles e conexão', 'operator'],
@@ -42,7 +41,7 @@ function Guard({ children }: { children: React.ReactNode }) {
         })}
       </nav>
       <div style={{ minWidth: 0 }}>{denied ? <Alert kind="error">Você não tem acesso a esta seção.</Alert> :
-        <CardAccordion key={current}>{children}</CardAccordion>}</div>
+        children}</div>
     </div>
   );
 }

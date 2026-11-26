@@ -1,5 +1,4 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useState } from 'react';
 import { Alert, Field, PageHeader, StatusPill } from '@/components/ui';
 import { post } from '@/lib/api';
@@ -26,7 +25,7 @@ export default function Agents() {
       {msg}
       {deletion.dialog}
       {secret && <Alert kind="warn"><span>Tokens gerados (exibidos uma única vez): agente→API <code>{secret.agent_token}</code> · API→agente <code>{secret.api_to_agent_token}</code></span></Alert>}
-      <CollapsibleCard title="Agentes" className="card stack"><NewRecord title="Novo agente">{(close) => <><div className="grid3">
+      <section className="card stack"><h2>Agentes</h2><NewRecord title="Novo agente">{(close) => <><div className="grid3">
         <Field label="Nome"><input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value })} /></Field>
         <Field label="Host"><input maxLength={253} value={a.host_name} onChange={(e) => setA({ ...a, host_name: e.target.value })} /></Field>
         <Field label="Endpoint HTTPS do agente" hint="Em desenvolvimento, com o agente no mesmo PC: http://127.0.0.1:8765"><input maxLength={500} value={a.endpoint_url} onChange={(e) => setA({ ...a, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
@@ -39,8 +38,8 @@ export default function Agents() {
           setSecret(await post('/admin/agents', { ...a, endpoint_url: a.endpoint_url || null })); agents.reload(); close(); }, 'Agente cadastrado.')}>Cadastrar</button></>}</NewRecord>
         <DataTable rows={agents.data} error={agents.error?.message} cols={[['Nome', (r) => String(r.name)], ['Host', (r) => String(r.host_name)], ['Status', (r) => <StatusPill status={String(r.status)} map={AGENT_STATUS} tone={({ online: 'green', offline: 'red', degraded: 'amber', unknown: '' } as Record<string, string>)[String(r.status)]} />], ['Simulado', (r) => (r.is_simulated ? 'sim' : 'não')],
           ['Último heartbeat', (r) => dateTime(r.last_heartbeat_at as string)], ['', (r) => <button className="btn sm" onClick={() => run(async () => setSecret(await post(`/admin/agents/${r.id}/rotate-credentials`)), 'Credenciais rotacionadas.')}>Rotacionar tokens</button>]]} />
-      </CollapsibleCard>
-      <CollapsibleCard title="Capturadoras HDMI" className="card stack">
+      </section>
+      <section className="card stack"><h2>Capturadoras HDMI</h2>
         <p className="small muted">Cada console precisa de uma entrada de captura independente. Saída HDMI de notebook não é capturadora. Respeite HDCP/DRM.</p>
         <NewRecord title="Nova capturadora">{(close) => <><div className="grid3"><Field label="Agente"><select value={c.agent_id} onChange={(e) => setC({ ...c, agent_id: e.target.value })}><option value="">Selecione</option>{agentOpts}</select></Field>
           <Field label="Fabricante"><input value={c.manufacturer} onChange={(e) => setC({ ...c, manufacturer: e.target.value })} /></Field>
@@ -56,8 +55,8 @@ export default function Agents() {
           await post('/admin/capture-devices', c); caps.reload(); close(); }, 'Capturadora cadastrada.')}>Cadastrar</button></>}</NewRecord>
         <DataTable rows={caps.data} error={caps.error?.message} cols={[['Agente', (r) => String(r.agent_name)], ['Dispositivo', (r) => `${r.manufacturer} ${r.model}`], ['ID / entrada', (r) => `${r.device_identifier} · ${r.input_port}`],
           ['Em uso', (r) => (r.used_by_console ? 'sim' : 'não')], ['', (r) => <button className="btn sm danger" onClick={() => deletion.remove(`/admin/capture-devices/${r.id}`, 'Excluir capturadora?', (request) => run(async () => { await request(); caps.reload(); }, 'Removida.'))}>Excluir</button>]]} />
-      </CollapsibleCard>
-      <CollapsibleCard title="Adaptadores de controle" className="card stack">
+      </section>
+      <section className="card stack"><h2>Adaptadores de controle</h2>
         <NewRecord title="Novo adaptador">{(close) => <><div className="grid3"><Field label="Agente"><select value={k.agent_id} onChange={(e) => setK({ ...k, agent_id: e.target.value })}><option value="">Selecione</option>{agentOpts}</select></Field>
           <Field label="Tipo"><select value={k.adapter_type} onChange={(e) => setK({ ...k, adapter_type: e.target.value })}><option value="usb_controller_interface">Interface USB</option><option value="bluetooth_controller_interface">Interface Bluetooth</option><option value="remote_play_input">Entrada via Remote Play</option><option value="other">Outro</option></select></Field>
           <Field label="Identificador"><input value={k.identifier} onChange={(e) => setK({ ...k, identifier: e.target.value })} /></Field>
@@ -69,7 +68,7 @@ export default function Agents() {
         <DataTable rows={ctls.data} error={ctls.error?.message} cols={[['Agente', (r) => String(r.agent_name)], ['Tipo', (r) => String(r.adapter_type)], ['Identificador', (r) => String(r.identifier)],
           ['Autorizado', (r) => (r.authorized ? 'sim' : 'não')], ['Em uso', (r) => (r.used_by_console ? 'sim' : 'não')],
           ['', (r) => <button className="btn sm danger" onClick={() => deletion.remove(`/admin/control-adapters/${r.id}`, 'Excluir adaptador?', (request) => run(async () => { await request(); ctls.reload(); }, 'Removido.'))}>Excluir</button>]]} />
-      </CollapsibleCard>
+      </section>
     </div>
   );
 }

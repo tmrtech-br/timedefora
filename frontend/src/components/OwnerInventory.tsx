@@ -1,5 +1,4 @@
 'use client';
-import { AccordionLink, CardAccordion, CollapsibleCard } from '@/components/admin/CollapsibleCard';
 
 import { useEffect, useState } from 'react';
 import { Alert, Field, Modal } from '@/components/ui';
@@ -81,10 +80,10 @@ export default function OwnerInventory() {
     if (accounts.error) console.error('Falha ao carregar contas PSN do proprietário', { status: accounts.error.status, code: accounts.error.code });
   }, [accounts.error]);
 
-  return <CardAccordion><div className="admin-grid">
+  return <div className="admin-grid">
     <nav className="admin-nav" aria-label="Menu do proprietário">
-      <AccordionLink target="dashboard">Dashboard</AccordionLink><AccordionLink target="consoles">Consoles</AccordionLink><AccordionLink target="contas-psn">Contas PSN</AccordionLink>
-      <AccordionLink target="jogos">Jogos</AccordionLink><AccordionLink target="disponibilidade">Disponibilidade</AccordionLink><AccordionLink target="recebimento">Recebimento</AccordionLink>
+      <a href="#dashboard">Dashboard</a><a href="#consoles">Consoles</a><a href="#contas-psn">Contas PSN</a>
+      <a href="#jogos">Jogos</a><a href="#disponibilidade">Disponibilidade</a><a href="#recebimento">Recebimento</a>
     </nav>
     <div className="stack">
       {msg}{error && <Alert kind="error">{error.message}</Alert>}
@@ -94,15 +93,15 @@ export default function OwnerInventory() {
         <div className="card kpi"><span>Recebido</span><strong>{money(dashboard.data.totals.paid_cents)}</strong></div>
         <div className="card kpi"><span>Pendente</span><strong>{money(dashboard.data.totals.pending_cents)}</strong></div>
       </div>}
-      <CollapsibleCard title="Dashboard" className="card" id="dashboard">
+      <section className="card" id="dashboard"><h2>Dashboard</h2>
         <div className="grid2">
           <div className="stack"><h3>Sessões recentes</h3><DataTable rows={dashboard.data?.history ?? null} error={dashboard.error?.message}
             cols={[[ 'Console', (r) => r.name ], ['Encerrada em', (r) => dateTime(r.ended_at)]]} /></div>
           <div className="stack"><h3>Histórico de repasses</h3><DataTable rows={settlements.data} error={settlements.error?.message}
             cols={[[ 'Valor', (r) => money(r.owner_cents) ], ['Situação', (r) => SETTLEMENT_STATUS[r.status] ?? r.status], ['Desde', (r) => dateTime(r.updated_at)]]} /></div>
         </div>
-      </CollapsibleCard>
-      <CollapsibleCard title="Consoles" className="card stack" id="consoles">
+      </section>
+      <section className="card stack" id="consoles"><h2>Consoles</h2>
         
         <form className="stack" onSubmit={(event) => {
           event.preventDefault();
@@ -149,8 +148,8 @@ export default function OwnerInventory() {
               .map((account) => <option key={account.id} value={account.id}>{account.label}</option>)}
           </select>
         </Field>}
-      </CollapsibleCard>
-      <CollapsibleCard title="Contas PSN" className="card stack" id="contas-psn">
+      </section>
+      <section className="card stack" id="contas-psn"><h2>Contas PSN</h2>
         
         <NewRecord title="Nova conta PSN">{(close) => <form className="stack" onSubmit={(event) => {
           event.preventDefault();
@@ -212,8 +211,8 @@ export default function OwnerInventory() {
           <Field label="URL após autenticar"><input type="url" required autoComplete="off" value={redirectUrl} onChange={(e) => setRedirectUrl(e.target.value)} /></Field>
           <div><button className="btn primary" disabled={busy}>Concluir vínculo</button></div>
         </form></Modal>}
-      </CollapsibleCard>
-      <CollapsibleCard title="Jogos e janelas" className="card stack" id="jogos">
+      </section>
+      <section className="card stack" id="jogos"><h2>Jogos e janelas</h2>
         
         {!current && <p>Selecione um console para vincular jogos.</p>}
         {current && games.data && <>
@@ -250,19 +249,19 @@ export default function OwnerInventory() {
           </form>}
           <DataTable rows={games.data.assignments} cols={[[ 'Jogo', (item) => item.title ], ['Início', (item) => dateTime(item.starts_at)], ['Fim', (item) => dateTime(item.ends_at)]]} />
         </>}
-      </CollapsibleCard>
-      <CollapsibleCard title="Disponibilidade" className="card stack" id="disponibilidade">
+      </section>
+      <section className="card stack" id="disponibilidade"><h2>Disponibilidade</h2>
         
         {current && !rate.loading && !rate.error && <Rates key={current.id} consoleId={current.id} value={rate.data} locked={current.is_published} onSaved={rate.reload} />}
         {!current && <p>Selecione um console para configurar a duração e a tarifa.</p>}
-      </CollapsibleCard>
-      <CollapsibleCard title="Recebimento" className="card stack" id="recebimento">
+      </section>
+      <section className="card stack" id="recebimento"><h2>Recebimento</h2>
         
         {destination.data && <p>{destination.data.kind === 'pix' ? 'PIX' : 'Conta bancária'} · {destination.data.masked}</p>}
         <PayoutForm onSaved={destination.reload} />
-      </CollapsibleCard>
+      </section>
     </div>
-  </div></CardAccordion>;
+  </div>;
 }
 
 function PayoutForm({ onSaved }: { onSaved: () => void }) {

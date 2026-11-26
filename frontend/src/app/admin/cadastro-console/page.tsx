@@ -1,5 +1,4 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 
 import { useState } from 'react';
 import { Alert, Field, PageHeader } from '@/components/ui';
@@ -37,7 +36,7 @@ export default function ConsoleOnboarding() {
       <PageHeader title="Cadastro de console" subtitle="Configure, vincule jogos, teste e publique no mesmo painel." />
       {msg}
       {error && <Alert kind="error">{error.message}</Alert>}
-      <CollapsibleCard title="Rascunho do console" className="card stack">
+      <section className="card stack"><h2>Rascunho do console</h2>
         <Field label="Retomar cadastro"><select value={selected} onChange={(event) => {
           setSelected(event.target.value);
           setWindow(EMPTY_WINDOW);
@@ -67,9 +66,9 @@ export default function ConsoleOnboarding() {
           </div>
           <div><button className="btn primary" disabled={busy}>Criar rascunho</button></div>
         </form>}
-      </CollapsibleCard>
+      </section>
       {current && <>
-        {current.owner_user_id && !current.is_published && <CollapsibleCard title="Agente autorizado para o proprietário" className="card stack">
+        {current.owner_user_id && !current.is_published && <section className="card stack"><h2>Agente autorizado para o proprietário</h2>
           
           <Field label="Agente"><select disabled={busy} value={current.owner_onboarding_agent_id ?? ''} onChange={(event) => {
             const agent_id = event.target.value;
@@ -82,12 +81,12 @@ export default function ConsoleOnboarding() {
             <option value="">Selecione</option>
             {agents.data?.filter((agent) => !agent.is_simulated).map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
           </select></Field>
-        </CollapsibleCard>}
-        {['PS4', 'PS5'].includes(current.platform_code) && <CollapsibleCard title="Gerenciar contas PSN">
+        </section>}
+        {['PS4', 'PS5'].includes(current.platform_code) && <section className="card stack"><h2>Gerenciar contas PSN</h2>
           <PsnAccounts key={current.id} initialPlatform={current.platform_code} onAccountsChanged={() => setPsnRevision((value) => value + 1)} />
-        </CollapsibleCard>}
+        </section>}
         <ConsoleEditor key={`${current.id}:${psnRevision}`} c={current} onChange={refresh} onboarding />
-        <CollapsibleCard title="Vínculos e calendário" className="card stack">
+        <section className="card stack"><h2>Vínculos e calendário</h2>
           
           <form className="stack" onSubmit={(event) => {
             event.preventDefault();
@@ -114,8 +113,8 @@ export default function ConsoleOnboarding() {
           </form>
           <DataTable rows={assignments.data} error={assignments.error?.message} empty="Nenhum vínculo na agenda."
             cols={[[ 'Jogo', (item) => item.game_title ], ['Início', (item) => dateTime(item.starts_at)], ['Fim', (item) => dateTime(item.ends_at)]]} />
-        </CollapsibleCard>
-        <CollapsibleCard title="Publicação" className="card stack">
+        </section>
+        <section className="card stack"><h2>Publicação</h2>
           
           {current.is_published ? <p>Console publicado.</p> : <div>
             <button className="btn primary" disabled={busy} onClick={() => run(async () => {
@@ -123,7 +122,7 @@ export default function ConsoleOnboarding() {
               refresh();
             }, 'Console publicado.')}>Publicar console</button>
           </div>}
-        </CollapsibleCard>
+        </section>
       </>}
     </div>
   );
