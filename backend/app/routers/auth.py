@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from ..config import settings
 from ..core.deps import Principal, client_ip, current_user, optional_user
-from ..core.errors import AppError
+from ..core.errors import AppError, forbidden
 from ..core.db import tx
 from ..services import auth, google_oauth
 from ..services.settings_store import require_enabled
@@ -94,6 +94,8 @@ def reset(body: ResetIn):
 
 @router.post('/mfa/verify')
 def mfa_verify(body: CodeIn, p: Principal = Depends(current_user)):
+    if not p.is_staff:
+        raise forbidden('Verificação em duas etapas reservada à equipe administrativa.')
     auth.mfa_verify_session(p.user_id, p.session_id, body.code)
     return {'ok': True}
 

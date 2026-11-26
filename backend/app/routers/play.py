@@ -31,7 +31,7 @@ def verified_user(p: Principal = Depends(current_user)) -> Principal:
 
 class ReservationIn(BaseModel):
     game_id: uuid.UUID
-    minutes: int = Field(ge=1, le=480)
+    minutes: int = Field(ge=1, le=scheduling.MAX_RESERVATION_MINUTES)
     mode: str = 'queue'
     start_at: datetime | None = None
     coupon_code: str | None = Field(default=None, max_length=30)
@@ -105,7 +105,14 @@ def get_reservation(rid: uuid.UUID, p: Principal = Depends(current_user)):
             raise not_found('Reserva não encontrada.')
         v = _reservation_view(conn, r)
         v['public_queue'] = scheduling.public_queue(conn, r['console_id'], p.user_id)
-        cp = one(conn, "select title, body from policy_documents where kind='cancellation' and is_current")
+        cp = one(conn, '''
+            select d.title, d.body, d.version from policy_documents d
+            join policy_acceptances a on a.policy_id=d.id
+            where a.reservation_id=%s and a.user_id=%s and d.kind='cancellation'
+            order by a.accepted_at desc limit 1
+        ''', (rid, r['user_id']))
+        if not cp:
+            cp = one(conn, "select title, body, version from policy_documents where kind='cancellation' and is_current")
         v['cancellation_policy'] = jsonable(cp)
         return v
 

@@ -586,3 +586,34 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 .table-wrap.max10 { max-height: 560px; overflow-y: auto; padding-block-start: 0; }
 .table-wrap.max10 .table { border-collapse: separate; border-spacing: 0; }
 .table-wrap.max10 thead { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+
+.favorites-row { display: grid; grid-template-columns: repeat(6, minmax(132px, 1fr)); gap: 12px; overflow-x: auto; }
+
+.date-filter { position: relative; }
+.date-calendar { position: absolute; z-index: 5; inset-inline-end: 0; top: 100%; width: min(278px, 90vw); box-shadow: 0 6px 20px #0008; background: var(--bg2); }
+.date-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; text-align: center; margin-block: 10px; }
+.date-days button { min-width: 0; padding-inline: 0; }
+
+.policy-dialog { width: min(680px, calc(100% - 28px)); color: inherit; background: var(--bg2); max-height: calc(100dvh - 28px); }
+html:has(.policy-dialog[open]) { overflow: hidden; }
+.policy-dialog::backdrop { background: #000b; }
+.policy-document { overflow-y: auto; max-height: min(42vh, 24rem); white-space: pre-line; line-height: 1.65; padding: 12px; border: 1px solid var(--line2); margin-block: 12px; }
+.policy-dialog .check { margin-block: 12px; }
+.checkout-total { border-top: 1px solid var(--line2); padding-top: 14px; margin-top: 12px; }
+
+.admin-metric { display: grid; grid-template-columns: minmax(2rem, auto) minmax(40px, 1fr); align-items: center; gap: 8px; }
+.admin-metric meter { width: 100%; accent-color: var(--purple); }
+.admin-diagnostic-progress { width: 100%; height: 18px; accent-color: var(--purple); }
+
+.console-section summary { cursor: pointer; }
+.console-section summary .pill { float: inline-end; }
+.console-section-content { margin-top: 14px; }
+.console-fields { grid-column: 1 / -1; align-items: start; border: 0; margin: 0; padding: 0; min-width: 0; }
+.console-fields:disabled { opacity: .65; }
+
+.modal-shell.modal-compact { width: min(680px, calc(100vw - 32px)); }
+.field-label { display: flex; gap: 6px; align-items: center; }
+.field-help { position: relative; display: inline-flex; }
+.field-help button { border: 1px solid currentColor; border-radius: 50%; width: 17px; height: 17px; padding: 0; background: transparent; color: var(--purple); font-size: 11px; cursor: help; }
+.field-help [role='tooltip'] { display: none; position: absolute; z-index: 6; bottom: calc(100% + 4px); inset-inline-end: -60px; width: min(210px, 64vw); color: inherit; background: var(--bg2); box-shadow: 0 3px 16px #000a; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: normal; }
+.field-help:hover [role='tooltip'], .field-help:focus-within [role='tooltip'] { display: block; }

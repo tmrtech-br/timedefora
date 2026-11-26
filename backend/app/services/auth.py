@@ -7,6 +7,7 @@ import pyotp
 from ..config import settings
 from ..core import security, timeutil
 from ..core.db import audit_event, get_pool, insert, tx
+from ..core.deps import STAFF_ROLES
 from ..core.errors import AppError, bad_request, conflict, unprocessable
 from ..core.usernames import username_problem
 from . import notifications
@@ -170,8 +171,13 @@ def login(email: str, password: str, ip: str, ua: str) -> tuple[dict, str, bool]
         else:
             conn.execute('update users set failed_login_count=0, locked_until=null, last_login_at=%s where id=%s', (n, user['id']))
             token = create_session(conn, str(user['id']), ip, ua)
-            mfa = conn.execute('select 1 from mfa_factors where user_id=%s and confirmed_at is not null and disabled_at is null',
-                               (user['id'],)).fetchone() is not None
+            mfa = conn.execute('''
+                select 1 from mfa_factors f
+                join role_assignments ra on ra.user_id=f.user_id and ra.revoked_at is null
+                join roles r on r.id=ra.role_id and r.code=any(%s)
+                where f.user_id=%s and f.confirmed_at is not null and f.disabled_at is null
+                limit 1
+            ''', (sorted(STAFF_ROLES), user['id'])).fetchone() is not None
             known = conn.execute('select 1 from auth_sessions where user_id=%s and ip=%s and created_at < %s limit 1',
                                  (user['id'], ip, n)).fetchone()
             if not known:

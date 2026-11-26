@@ -24,6 +24,7 @@ const TOGGLES: { key: string; title: string; desc: string; invert?: boolean }[] 
 ];
 
 const NUMBERS: { key: string; title: string; unit: string; min: number; max: number }[] = [
+  { key: 'booking_rate_cents_per_minute', title: 'Preço por minuto dos consoles da plataforma (0 mantém os pacotes)', unit: 'centavos', min: 0, max: 49000 },
   { key: 'hold_minutes', title: 'Tempo para pagar a reserva', unit: 'min', min: 1, max: 60 },
   { key: 'setup_minutes', title: 'Intervalo de preparação entre jogadores', unit: 'min', min: 0, max: 30 },
   { key: 'scheduled_lead_minutes', title: 'Antecedência mínima do horário marcado', unit: 'min', min: 0, max: 1440 },

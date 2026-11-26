@@ -11,7 +11,7 @@ export function ProgressModal({ tests, status, error, onCancel }: {
     <div className="stack">
       <p role="status">{status}</p>
       {error && <Alert kind="error">{error}</Alert>}
-      <progress aria-label="Progresso do diagnóstico" value={complete} max={Math.max(1, tests.length)} />
+      <progress className="admin-diagnostic-progress" aria-label="Progresso do diagnóstico" value={complete} max={Math.max(1, tests.length)} />
       <ul className="stack">{tests.map((test) => <li className="spread" key={test.id}>
         <span>{test.label}</span><span className="pill">{test.state}</span>
       </li>)}</ul>

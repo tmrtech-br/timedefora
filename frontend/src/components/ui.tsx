@@ -50,7 +50,7 @@ type ControlProps = { type?: string; value?: unknown; maxLength?: number; onBlur
  * - Inputs de texto recebem `maxLength` padrão de 50 (textarea: 2000) e exibem o contador "n/máx".
  * - `required`: ao sair do campo vazio, mostra "Preencha este campo." (o servidor também valida).
  */
-export function Field({ label, error, children, hint, required }: { label: string; error?: string; children: React.ReactNode; hint?: string; required?: boolean }) {
+export function Field({ label, error, children, hint, help, required }: { label: string; error?: string; children: React.ReactNode; hint?: string; help?: string; required?: boolean }) {
   const id = useId();
   const [touched, setTouched] = useState(false);
   const el = isValidElement<ControlProps>(children) ? children : null;
@@ -72,7 +72,10 @@ export function Field({ label, error, children, hint, required }: { label: strin
   const near = max && value !== null && value.length >= max * 0.9;
   return (
     <div className={`field ${shownError ? 'invalid' : ''}`}>
-      <label htmlFor={id}>{label}{required && <span className="req" aria-hidden> *</span>}</label>
+      <div className="field-label">
+        <label htmlFor={id}>{label}{required && <span className="req" aria-hidden> *</span>}</label>
+        {help && <FieldHelp text={help} />}
+      </div>
       {control}
       <div className="field-foot">
         <span>
@@ -83,6 +86,14 @@ export function Field({ label, error, children, hint, required }: { label: strin
       </div>
     </div>
   );
+}
+
+export function FieldHelp({ text }: { text: string }) {
+  const id = useId();
+  return <span className="field-help">
+    <button type="button" aria-label="Ajuda sobre o campo" aria-describedby={id}>?</button>
+    <span id={id} role="tooltip">{text}</span>
+  </span>;
 }
 
 const LABELS: Record<string, string> = {
@@ -98,8 +109,8 @@ export function StatusPill({ status, map, tone }: { status: string; map?: Record
   return <span className={`pill ${t}`}>{map?.[status] || LABELS[status] || status}</span>;
 }
 
-export function ModalShell({ title, onClose, children, allowEscape = false, closeLabel = 'Fechar', closeButtonClassName = 'sm', showCloseButton = true }: {
-  title: string; onClose: () => void; children: React.ReactNode; allowEscape?: boolean; closeLabel?: string; closeButtonClassName?: string; showCloseButton?: boolean;
+export function ModalShell({ title, onClose, children, allowEscape = false, closeLabel = 'Fechar', closeButtonClassName = 'sm', showCloseButton = true, compact = false }: {
+  title: string; onClose: () => void; children: React.ReactNode; allowEscape?: boolean; closeLabel?: string; closeButtonClassName?: string; showCloseButton?: boolean; compact?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -112,7 +123,7 @@ export function ModalShell({ title, onClose, children, allowEscape = false, clos
     };
   }, []);
   return (
-    <dialog ref={dialog} className="card modal modal-shell" aria-modal="true" aria-label={title} onCancel={(event) => {
+    <dialog ref={dialog} className={`card modal modal-shell${compact ? ' modal-compact' : ''}`} aria-modal="true" aria-label={title} onCancel={(event) => {
       // O backdrop nunca fecha o diálogo. Esc é opt-in para telas que não guardam alterações.
       event.preventDefault();
       if (allowEscape) onClose();

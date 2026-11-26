@@ -38,7 +38,7 @@ function LoginForm() {
     } finally { setBusy(false); }
   }
   return (
-    <AuthCard title="Entrar no timedefora" subtitle="Acesse sua conta para reservar e jogar.">
+    <AuthCard title={<>Entrar no timede<span style={{ color: "var(--purple)" }}>fora</span></>} subtitle="Acesse sua conta para reservar e jogar.">
       {error && <Alert kind="error">{error}</Alert>}
       <form className="stack" onSubmit={submit} noValidate>
         <Field label="E-mail"><input maxLength={254} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} /></Field>

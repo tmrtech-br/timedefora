@@ -66,6 +66,7 @@ export function Header({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
       <div className="account">
         {me ? (
           <>
+            <Link href="/favoritos" className="icon-btn" aria-label="Favoritos"><Heart size={18} /></Link>
             <Link href="/notificacoes" className="icon-btn" aria-label={`Notificações (${me.unread_notifications} não lidas)`}>
               <Bell size={18} />{me.unread_notifications > 0 && <span className="badge-dot">{me.unread_notifications}</span>}
             </Link>
@@ -108,8 +109,6 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
             <div className="side-divider" />
             {link({ href: '/jogos?disponibilidade=available', label: 'Disponíveis', icon: Zap })}
             {link({ href: '/pagamentos', label: 'Pagamentos', icon: Receipt })}
-            {link({ href: '/favoritos', label: 'Favoritos', icon: Heart })}
-            {link({ href: '/notificacoes', label: 'Notificações', icon: Bell })}
             {isStaff(me) && link({ href: '/admin', label: 'Painel administrativo', icon: ShieldHalf })}
             {me.roles.includes('owner') && link({ href: '/proprietario', label: 'Portal do proprietário', icon: Monitor })}
             <a href="#sair" onClick={async (e) => { e.preventDefault(); await logout(); onNavigate(); router.push('/'); }}><LogOut aria-hidden />Sair</a>

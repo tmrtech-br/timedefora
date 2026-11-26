@@ -1,5 +1,6 @@
 """Leitura de global_settings com valores padrão documentados."""
 DEFAULTS = {
+    'booking_rate_cents_per_minute': 0,       # 0 mantém os pacotes cadastrados
     'owner_share_bps': 3000,                  # percentual do proprietário em pontos-base
     'hold_minutes': 5,                        # expiração da reserva provisória
     'setup_minutes': 2,                       # preparação/limpeza entre jogadores

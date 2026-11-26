@@ -34,6 +34,9 @@ def game_live(conn, game: dict) -> dict:
         queue_size += q['waiting'] + q['playing']
         playing = playing or q['playing'] > 0
     offers = scheduling.offered_minutes(conn, game)
+    rate = get_settings(conn)['booking_rate_cents_per_minute']
+    if rate and any(c['owner_user_id'] is None for c in consoles):
+        offers = [{'minutes': 1, 'price_cents': rate}]
     wait = None
     start = None
     if consoles and offers:

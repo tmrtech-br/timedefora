@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from ..core import timeutil
 from ..core.db import all_, audit_event, insert, one, tx
 from ..core.deps import Principal, current_user, optional_user
-from ..core.errors import bad_request, conflict, not_found, unprocessable
+from ..core.errors import bad_request, conflict, forbidden, not_found, unprocessable
 from ..core.usernames import username_problem
 from ..services import auth
 from ..services.settings_store import require_enabled
@@ -153,17 +153,23 @@ def revoke_others(p: Principal = Depends(current_user)):
 
 @router.post('/mfa/setup')
 def mfa_setup(p: Principal = Depends(current_user)):
+    if not p.is_staff:
+        raise forbidden('Autenticação em duas etapas reservada à equipe administrativa.')
     return auth.mfa_setup(p.user_id, p.username)
 
 
 @router.post('/mfa/confirm')
 def mfa_confirm(body: CodeIn, p: Principal = Depends(current_user)):
+    if not p.is_staff:
+        raise forbidden('Autenticação em duas etapas reservada à equipe administrativa.')
     return {'recovery_codes': auth.mfa_confirm(p.user_id, p.session_id, body.code),
             'message': 'Guarde os códigos de recuperação em local seguro. Eles não serão exibidos novamente.'}
 
 
 @router.post('/mfa/disable')
 def mfa_disable(body: CodeIn, p: Principal = Depends(current_user)):
+    if not p.is_staff:
+        raise forbidden('Autenticação em duas etapas reservada à equipe administrativa.')
     auth.mfa_disable(p.user_id, body.code)
     return {'ok': True}
 

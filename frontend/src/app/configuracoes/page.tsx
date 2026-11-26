@@ -6,7 +6,7 @@ import QrCode from '@/components/QrCode';
 import { toast } from '@/components/Toaster';
 import { Alert, Empty, ErrorBox, Field, PageHeader, Skeleton } from '@/components/ui';
 import { ApiError, del, get, post, put } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { isStaff, useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
 import { DATA_REQUEST_STATUS, dateTime } from '@/lib/format';
 import styles from './settings.module.css';
@@ -81,9 +81,9 @@ function Config() {
             </fieldset>
           </>}
         </section>
-        <section className="card stack">
+        {isStaff(me) && <section className="card stack">
           <h2>Autenticação em dois fatores (TOTP)</h2>
-          <p className="muted small">Obrigatória para operadores e administradores; recomendada para todos.</p>
+          <p className="muted small">Protege o acesso ao painel administrativo.</p>
           {me.mfa_enabled ? <>
             <div><span className="pill green">Ativa</span></div>
             <Field label="Código atual para desativar"><input maxLength={20} value={code} onChange={(e) => setCode(e.target.value)} /></Field>
@@ -98,7 +98,7 @@ function Config() {
             <button className="btn primary" onClick={() => run(async () => { const r = await post<{ recovery_codes: string[] }>('/me/mfa/confirm', { code }); setRecovery(r.recovery_codes); setMfa(null); setCode(''); await refresh(); }, 'Autenticação em dois fatores ativada.')}>Confirmar</button>
           </>}
           {recovery.length > 0 && <Alert kind="warn" dismissible={false}><span>Códigos de recuperação (guarde agora, não serão exibidos de novo): <code>{recovery.join('  ')}</code></span></Alert>}
-        </section>
+        </section>}
         <section className="card stack">
           <h2>Privacidade e dados (LGPD)</h2>
           <div className="row"><button className="btn" onClick={exportData}>Baixar meus dados (JSON)</button><a className="btn" href="/privacidade">Política de privacidade</a></div>

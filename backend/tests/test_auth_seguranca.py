@@ -4,8 +4,8 @@ from datetime import timedelta
 
 import pyotp
 
-from app.core import timeutil
-from app.core.db import get_pool, one, tx
+from app.core import security, timeutil
+from app.core.db import get_pool, insert, one, tx
 from conftest import Api, admin_api, at, last_email, login, make_user, pay, reserve
 
 GOOD = {'full_name': 'Maria Silva', 'username': 'mariasilva', 'email': 'maria@teste.com', 'password': 'Jogar2026agora',
@@ -214,3 +214,16 @@ def test_auditoria_registra_insert_update_delete_com_ator_e_mascara(freeze):
     with pytest.raises(psycopg.errors.RaiseException):
         with get_pool().connection() as c:
             c.execute('delete from audit_logs')
+
+
+def test_cliente_com_mfa_legado_confirma_email_sem_totp():
+    user = make_user(username='cliente_legado', verified=False)
+    with tx() as conn:
+        insert(conn, 'mfa_factors', {'user_id': user['id'], 'totp_secret_enc': security.encrypt(pyotp.random_base32()),
+                                     'confirmed_at': timeutil.now()})
+    api = Api()
+    response = api.post('/auth/login', json={'email': user['email'], 'password': user['password']})
+    assert response.status_code == 200
+    assert response.json() == {'mfa_required': False, 'email_verified': False}
+    assert api.post('/me/mfa/setup').status_code == 403
+    assert api.post('/auth/mfa/verify', json={'code': '123456'}).status_code == 403

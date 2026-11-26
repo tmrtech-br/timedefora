@@ -1,4 +1,6 @@
 'use client';
+import DateFilter from '@/components/DateFilter';
+import { exportExcel, printReport } from './exportReport';
 import { useState } from 'react';
 import { Copy } from 'lucide-react';
 import { Alert, Field, Modal, PageHeader } from '@/components/ui';
@@ -164,18 +166,51 @@ export function Lgpd() {
   );
 }
 
+const AUDIT_FILTERS = { table_name: '', record_id: '', source: '', action: '', from: '', to: '' };
+const AUDIT_SOURCE: Record<string, string> = { db_trigger: 'Banco de dados', app: 'Aplicação' };
+
 export function Audit() {
-  const [table, setTable] = useState('');
-  const [record, setRecord] = useState('');
-  const list = useApi<R[]>(`/admin/audit?limit=300${table ? `&table_name=${table}` : ''}${record ? `&record_id=${record}` : ''}`);
+  const [draft, setDraft] = useState(AUDIT_FILTERS);
+  const [query, setQuery] = useState('');
+  const list = useApi<R[]>(`/admin/audit?limit=300${query}`);
+  const report = { title: 'Auditoria', headers: ['Quando', 'Origem', 'Ação', 'Tabela', 'Registro', 'Ator', 'Campos', 'Motivo'],
+    rows: (list.data ?? []).map((r) => [dateTime(String(r.occurred_at)), AUDIT_SOURCE[String(r.source)] ?? 'Outra',
+      String(r.action), String(r.table_name ?? ''), String(r.record_id ?? ''), String(r.actor_username || 'Sistema'),
+      ((r.changed_fields as string[]) || []).join(', '), String(r.reason ?? '')]) };
   const [detail, setDetail] = useState<{ title: string; json: string } | null>(null);
   const [copied, setCopied] = useState(false);
   return (
     <div className="stack">
-      <PageHeader title="Auditoria" subtitle="Toda inserção, alteração e exclusão (trigger no banco) e ações de negócio. Registros imutáveis; segredos mascarados." />
-      <div className="row"><input className="btn" placeholder="Tabela (ex.: reservations)" value={table} onChange={(e) => setTable(e.target.value)} />
-        <input className="btn" placeholder="ID do registro" value={record} onChange={(e) => setRecord(e.target.value)} /></div>
-      <section className="card"><h2>Eventos de auditoria</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Quando', (r) => dateTime(String(r.occurred_at))], ['Origem', (r) => String(r.source)], ['Ação', (r) => String(r.action)],
+      <PageHeader title="Auditoria" subtitle="Alterações no banco de dados e ações administrativas.">
+        <button className="btn" disabled={list.loading || Boolean(list.error) || !report.rows.length} onClick={() => exportExcel('auditoria', [report])}>Exportar para Excel</button>
+        <button className="btn" disabled={list.loading || Boolean(list.error) || !report.rows.length} onClick={() => {
+          if (!printReport(report)) toast('error', 'Permita a abertura da janela para salvar o relatório em PDF.');
+        }}>Salvar como PDF</button>
+      </PageHeader>
+      <form className="card stack" onSubmit={(e) => {
+        e.preventDefault();
+        const { from, to, ...fields } = draft;
+        const params = new URLSearchParams();
+        Object.entries(fields).forEach(([key, value]) => { if (value.trim()) params.set(key, value.trim()); });
+        if (from) params.set('date_from', from + 'T00:00:00-03:00');
+        if (to) params.set('date_to', new Date(Date.parse(to + 'T00:00:00-03:00') + 86400000).toISOString());
+        setQuery('&' + params.toString());
+      }}>
+        <div className="grid3">
+          <Field label="Tabela"><input value={draft.table_name} onChange={(e) => setDraft({ ...draft, table_name: e.target.value })} /></Field>
+          <Field label="ID do registro"><input value={draft.record_id} onChange={(e) => setDraft({ ...draft, record_id: e.target.value })} /></Field>
+          <Field label="Ação"><input value={draft.action} onChange={(e) => setDraft({ ...draft, action: e.target.value })} /></Field>
+          <Field label="Origem"><select value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })}>
+            <option value="">Todas</option>{Object.entries(AUDIT_SOURCE).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select></Field>
+          <DateFilter label="Data inicial" value={draft.from} max={draft.to} onChange={(from) => setDraft({ ...draft, from })} />
+          <DateFilter label="Data final" value={draft.to} min={draft.from} onChange={(to) => setDraft({ ...draft, to })} />
+        </div>
+        <div className="row"><button className="btn primary">Filtrar</button><button className="btn" type="button" onClick={() => {
+          setDraft(AUDIT_FILTERS); setQuery('');
+        }}>Limpar filtros</button></div>
+      </form>
+      <section className="card"><h2>Eventos de auditoria</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Quando', (r) => dateTime(String(r.occurred_at))], ['Origem', (r) => <span className="pill">{AUDIT_SOURCE[String(r.source)] ?? 'Outra'}</span>], ['Ação', (r) => String(r.action)],
         ['Tabela / registro', (r) => `${r.table_name || '—'} · ${String(r.record_id || '').slice(0, 8)}`], ['Ator', (r) => String(r.actor_username || 'sistema')],
         ['Campos', (r) => ((r.changed_fields as string[]) || []).join(', ')], ['Motivo', (r) => String(r.reason || '')],
         ['Detalhes', (r) => <button className="btn sm" onClick={() => { setCopied(false); setDetail({ title: `${r.action} · ${r.table_name || '—'} · ${dateTime(String(r.occurred_at))}`,

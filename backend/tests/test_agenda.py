@@ -229,3 +229,29 @@ def test_cancelamento_libera_e_antecipa_fila(world, freeze):
     b.post(f"/reservations/{rb['id']}/cancel", json={'reason': 'desisti'})
     with tx() as conn:
         assert one(conn, 'select starts_at from reservations where id=%s', (rc['id'],))['starts_at'] == at(2, 9, 0)  # 08:05–08:35 conflita com 08:30
+
+
+def test_reserva_por_minuto_usa_janela_e_tarifa_do_servidor(world, freeze):
+    start = at(26, 10, month=11)
+    end = at(30, 8, month=11)
+    freeze(at(26, 8, month=11))
+    with tx() as conn:
+        conn.execute("insert into global_settings(key, value) values ('booking_rate_cents_per_minute', '100')")
+        conn.execute('update console_game_assignments set starts_at=%s, ends_at=%s where id=%s',
+                     (start, end, world['assignment']['id']))
+
+    api = login(make_user())
+    detail = api.get('/catalog/games/gta-vi').json()
+    assert detail['availability']['consoles'][0]['last_free_minutes'] == 5640
+    one_minute = api.get('/catalog/games/gta-vi/quote', params={'minutes': 1}).json()
+    assert one_minute['price_cents'] == 100
+    quote = api.get('/catalog/games/gta-vi/quote', params={
+        'minutes': 5640, 'mode': 'scheduled', 'start_at': start.isoformat(),
+    }).json()
+    assert quote['available'] and quote['price_cents'] == 564000
+    assert dt(quote['ends_at']) == end
+
+    booking = reserve(api, world, 100, 'scheduled', start)
+    assert booking.status_code == 201, booking.text
+    assert booking.json()['total_cents'] == 10000
+    assert api.get(f"/reservations/{booking.json()['id']}").json()['cancellation_policy']['version']

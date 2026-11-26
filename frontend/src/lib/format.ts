@@ -3,6 +3,9 @@ const TZ = 'America/Fortaleza';
 export const money = (cents?: number | null) =>
   cents == null ? '—' : (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: cents % 100 ? 2 : 0 });
 
+const real = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+export const moneyWithCents = (cents?: number | null) => cents == null ? '—' : real.format(cents / 100);
+
 export const moneyShort = (cents?: number | null) => (cents == null ? '—' : `R$ ${(cents / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}`);
 
 export const dateTime = (iso?: string | null) =>

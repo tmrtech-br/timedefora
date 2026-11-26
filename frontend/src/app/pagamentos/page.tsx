@@ -3,6 +3,7 @@ import { useState, type FormEvent } from 'react';
 import RequireAuth from '@/components/RequireAuth';
 import { Empty, ErrorBox, PageHeader, Skeleton, StatusPill } from '@/components/ui';
 import { useApi } from '@/lib/hooks';
+import DateFilter from '@/components/DateFilter';
 import { dateTime, money, PAYMENT_STATUS } from '@/lib/format';
 import styles from './payments.module.css';
 
@@ -43,12 +44,8 @@ function Pagamentos() {
             {Object.entries(PAYMENT_STATUS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>
-        <label className="field">Data inicial
-          <input type="date" max={filters.date_to || undefined} value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} />
-        </label>
-        <label className="field">Data final
-          <input type="date" min={filters.date_from || undefined} value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} />
-        </label>
+        <DateFilter label="Data inicial" max={filters.date_to} value={filters.date_from} onChange={(value) => setFilters({ ...filters, date_from: value })} />
+        <DateFilter label="Data final" min={filters.date_from} value={filters.date_to} onChange={(value) => setFilters({ ...filters, date_to: value })} />
         <div className="row">
           <button className="btn primary" type="submit">Filtrar</button>
           <button className="btn" type="button" disabled={!query && !Object.values(filters).some(Boolean)} onClick={() => { setFilters(INITIAL); setQuery(''); }}>Limpar filtros</button>
