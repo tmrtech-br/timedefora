@@ -13,7 +13,7 @@ from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx
 from ..core.deps import Principal, verified_user
 from ..core.errors import conflict, forbidden, not_found, unprocessable
-from .common import jsonable
+from .common import DeleteIn, jsonable
 from . import admin, psn_accounts
 
 router = APIRouter(prefix='/owner', tags=['owner'])
@@ -115,7 +115,7 @@ def create_console(body: ConsoleIn, p: Principal = Depends(enrolled_owner)):
     return {key: row[key] for key in ('id', 'code', 'name', 'status', 'is_published', 'platform_code')}
 
 
-def owned_console(conn, console_id: UUID, owner_id: str, *, edit: bool = False):
+def owned_console(conn, console_id: UUID, owner_id: str, *, edit: bool = False, allow_published: bool = False):
     row = one(conn, '''
         select c.id, c.is_published, c.platform_id, coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id
         from consoles c join console_connection_configs cfg on cfg.console_id=c.id
@@ -123,7 +123,7 @@ def owned_console(conn, console_id: UUID, owner_id: str, *, edit: bool = False):
     ''' + (' for update of c, cfg' if edit else ''), (console_id, owner_id))
     if not row:
         raise not_found()
-    if edit and row['is_published']:
+    if edit and row['is_published'] and not allow_published:
         raise conflict('console_published', 'Solicite a despublicação do console para alterar o cadastro.')
     return row
 
@@ -200,7 +200,12 @@ def games(console_id: UUID, p: Principal = Depends(enrolled_owner)):
             from console_game_assignments a join games g on g.id=a.game_id
             where a.console_id=%s and a.status='active' and a.ends_at>%s order by a.starts_at
         ''', (console_id, timeutil.now()))
-    return jsonable({'games': catalog, 'assignments': assignments})
+        drafts = all_(conn, '''
+            select g.id, g.title from games g join game_platforms gp on gp.game_id=g.id
+            where gp.platform_id=%s and g.created_by=%s and g.status='draft' and g.deleted_at is null
+            order by g.title
+        ''', (console['platform_id'], p.user_id))
+    return jsonable({'games': catalog, 'assignments': assignments, 'drafts': drafts})
 
 
 class GameWindowIn(BaseModel):
@@ -215,6 +220,33 @@ def add_game(console_id: UUID, body: GameWindowIn, p: Principal = Depends(enroll
                                      p.user_id, p.user_id)
 
 
+class GameDraftIn(BaseModel):
+    title: str = Field(min_length=2, max_length=120)
+
+
+@router.post('/consoles/{console_id}/game-drafts', status_code=201)
+def create_game_draft(console_id: UUID, body: GameDraftIn, p: Principal = Depends(enrolled_owner)):
+    title = body.title.strip()
+    if len(title) < 2:
+        raise unprocessable('invalid_title', 'Informe o título do jogo.')
+    with tx(p.user_id) as conn:
+        console = owned_console(conn, console_id, p.user_id, edit=True)
+        platform = one(conn, 'select code from platforms where id=%s', (console['platform_id'],))
+        conn.execute('select pg_advisory_xact_lock(hashtext(%s))', (platform['code'] + ':' + title.lower(),))
+        if one(conn, '''
+            select 1 from games g join game_platforms gp on gp.game_id=g.id
+            where gp.platform_id=%s and lower(g.title)=lower(%s) and g.deleted_at is null
+              and (g.status='published' or g.created_by=%s)
+        ''', (console['platform_id'], title, p.user_id)):
+            raise conflict('game_exists', 'Já existe um jogo ou rascunho com esse título para a plataforma.')
+        row = insert(conn, 'games', {'title': title, 'slug': 'proprietario-' + security.new_token(12).lower().replace('_', '-'),
+                                     'status': 'draft', 'created_by': p.user_id, 'updated_by': p.user_id},
+                     returning='id, title, status')
+        insert(conn, 'game_platforms', {'game_id': row['id'], 'platform_id': console['platform_id']})
+        audit_event(conn, 'owner.game_draft_created', 'games', row['id'])
+    return jsonable(row)
+
+
 class RateIn(BaseModel):
     min_minutes: int = Field(ge=1, le=480)
     max_minutes: int = Field(ge=1, le=480)
@@ -227,7 +259,7 @@ def availability(console_id: UUID, p: Principal = Depends(enrolled_owner)):
     with tx() as conn:
         owned_console(conn, console_id, p.user_id)
         return one(conn, '''
-            select min_minutes, max_minutes, rate_unit, rate_cents
+            select min_minutes, max_minutes, rate_unit, rate_cents, paused
             from owner_console_rates where console_id=%s
         ''', (console_id,))
 
@@ -246,6 +278,32 @@ def save_availability(console_id: UUID, body: RateIn, p: Principal = Depends(enr
         ''', (console_id, body.min_minutes, body.max_minutes, body.rate_unit, body.rate_cents))
         audit_event(conn, 'owner.console_rate_changed', 'consoles', console_id)
     return body.model_dump()
+
+
+class PauseAvailabilityIn(BaseModel):
+    paused: StrictBool
+
+
+@router.patch('/consoles/{console_id}/availability')
+def pause_availability(console_id: UUID, body: PauseAvailabilityIn, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        owned_console(conn, console_id, p.user_id, edit=True, allow_published=True)
+        if not conn.execute('update owner_console_rates set paused=%s where console_id=%s',
+                            (body.paused, console_id)).rowcount:
+            raise not_found()
+        audit_event(conn, 'owner.console_availability_paused' if body.paused else 'owner.console_availability_resumed',
+                    'consoles', console_id)
+    return body.model_dump()
+
+
+@router.delete('/consoles/{console_id}/availability')
+def delete_availability(console_id: UUID, body: DeleteIn, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        owned_console(conn, console_id, p.user_id, edit=True)
+        if not conn.execute('delete from owner_console_rates where console_id=%s', (console_id,)).rowcount:
+            raise not_found()
+        audit_event(conn, 'owner.console_availability_deleted', 'consoles', console_id, reason=body.reason)
+    return {'ok': True}
 
 
 @router.get('/dashboard')

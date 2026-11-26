@@ -72,6 +72,9 @@ def eligible_consoles(conn, game_id, console_id=None, lock: bool = False) -> lis
            join console_connection_configs cfg on cfg.console_id=c.id
            where c.deleted_at is null and c.is_published and c.status='online' and cfg.validated_at is not null
              and cfg.method <> 'unconfigured'
+             and (c.owner_user_id is null or exists (
+                 select 1 from owner_console_rates rate where rate.console_id=c.id and not rate.paused
+             ))
              and exists (select 1 from console_game_assignments a where a.console_id=c.id and a.game_id=%s
                          and a.status='active' and a.ends_at > %s)
              and not exists (select 1 from platforms pl where pl.id=c.platform_id and pl.code = any(%s))"""
@@ -250,11 +253,11 @@ def resolve_package(conn, game: dict, console_id, platform_id, minutes: int, at:
     if not game['min_minutes'] <= minutes <= game['max_minutes']:
         return None
     rate = conn.execute('''
-        select c.owner_user_id, r.min_minutes, r.max_minutes, r.rate_unit, r.rate_cents
+        select c.owner_user_id, r.min_minutes, r.max_minutes, r.rate_unit, r.rate_cents, r.paused
         from consoles c left join owner_console_rates r on r.console_id=c.id where c.id=%s
     ''', (console_id,)).fetchone()
     if rate and rate['owner_user_id'] is not None:
-        if rate['min_minutes'] is None or not rate['min_minutes'] <= minutes <= rate['max_minutes']:
+        if rate['paused'] or rate['min_minutes'] is None or not rate['min_minutes'] <= minutes <= rate['max_minutes']:
             return None
         divisor = 60 if rate['rate_unit'] == 'hour' else 1
         return {'id': None, 'price_cents': max(1, (rate['rate_cents'] * minutes + divisor // 2) // divisor)}
@@ -283,7 +286,7 @@ def offered_minutes(conn, game: dict) -> list[dict]:
     offers = {r['minutes']: dict(r) for r in rows}
     owner_rates = conn.execute('''
         select min_minutes, max_minutes, rate_unit, rate_cents from owner_console_rates
-        where console_id=any(%s)
+        where not paused and console_id=any(%s)
     ''', ([console['id'] for console in eligible_consoles(conn, game['id'])],)).fetchall()
     for rate in owner_rates:
         low = max(game['min_minutes'], rate['min_minutes'])

@@ -1,6 +1,6 @@
 # Portal do proprietário
 
-Antes de iniciar a aplicação com esta versão, aplique as migrações `015` a `020` com `python -m app.migrate` a partir de `backend`. A fila de diagnóstico usa o worker da aplicação. Execute a API com `RUN_WORKER=true` ou mantenha `python -m app.worker` em um processo separado.
+Antes de iniciar a aplicação com esta versão, aplique as migrações `015` a `022` com `python -m app.migrate` a partir de `backend`. A fila de diagnóstico usa o worker da aplicação. Execute a API com `RUN_WORKER=true` ou mantenha `python -m app.worker` em um processo separado.
 
 ## Superadmin
 
@@ -49,5 +49,7 @@ Em **Recebimento**, cadastre PIX ou conta bancária. O portal exibe somente o de
 - `018` registra titularidade e regra financeira na reserva e cria `owner_payout_destinations` e `owner_settlements`. Os dados de recebimento são cifrados. O histórico financeiro anterior à migração permanece fora da apuração.
 - `019` habilita o diagnóstico de autenticação PSN separado do teste de conexão. A confirmação de funcionamento com agente e console em redes distintas exige homologação em hardware real.
 - `020` persiste a fila e os resultados. A execução aguarda o console sair de uma sessão ativa. O código de pareamento fica cifrado enquanto necessário e é removido quando o lote termina ou expira.
+- `021` registra o tipo de teste individual e o estado de cancelamento do diagnóstico.
+- `022` registra a pausa da disponibilidade. A pausa impede novas reservas e preserva as já registradas.
 
 A apuração cria saldos elegíveis ou retidos após a sessão. O envio e a confirmação de dinheiro dependem da integração com um provedor de repasse. O Mercado Pago existente continua responsável pelas cobranças e pelos estornos. A aprovação de uma apuração para repasse não altera seu status para pago.
