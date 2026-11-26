@@ -240,10 +240,11 @@ class RemoteCipher(BaseCipher):
 
     def decrypt(self, data: bytes, key_pos: int) -> bytes:
         """Decrypt data."""
-        key_stream = b""
-        key_stream = self.get_key_stream(key_pos, len(data))
-        dec = decrypt_encrypt(self.base_key, self.base_iv, key_pos, data, key_stream)
-        return dec
+        # LocaPlay: chave calculada pela posição do próprio pacote (AES-CTR direto, sem estado).
+        # A janela de keystreams só andava para a frente: pacote fora de ordem (comum pela internet/PSN)
+        # era decifrado com o bloco errado e virava "Invalid data" no decodificador; também não era
+        # seguro entre a thread de mídia e a do laço de rede.
+        return decrypt_encrypt(self.base_key, self.base_iv, key_pos, data)
 
     def verify_gmac(self, data: bytes, key_pos: int, gmac: bytes) -> bool:
         """Verify GMAC."""
@@ -272,12 +273,8 @@ class LocalCipher(BaseCipher):
 
     def encrypt(self, data: bytes) -> bytes:
         """Encrypt data using key stream."""
-        key_stream = b""
-        key_stream = self.get_key_stream(self.key_pos, len(data))
-        enc = decrypt_encrypt(
-            self.base_key, self.base_iv, self.key_pos, data, key_stream
-        )
-        return enc
+        # LocaPlay: idem ao decrypt — sem a janela compartilhada (controle e rede enviam de threads diferentes).
+        return decrypt_encrypt(self.base_key, self.base_iv, self.key_pos, data)
 
     def advance_key_pos(self, advance_by: int):
         """Advance key pos by data length."""
