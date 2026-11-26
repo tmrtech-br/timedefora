@@ -74,13 +74,25 @@ def my_reservations(p: Principal = Depends(current_user), scope: str = 'all'):
 
 @router.get('/me/queues')
 def my_queues(p: Principal = Depends(current_user)):
+    n = timeutil.now()
     with tx() as conn:
-        rows = all_(conn, """select r.*, q.position from reservations r join queue_entries q on q.reservation_id=r.id
-                             where r.user_id=%s and q.status in ('playing','next','waiting') order by r.starts_at""", (p.user_id,))
+        rows = all_(conn, """select * from reservations
+                             where user_id=%s and status in ('confirmed','active') and ends_at > %s
+                             order by starts_at, id""", (p.user_id, n))
         out = []
+        snapshots = {}
         for r in rows:
+            console_id = r['console_id']
+            if console_id not in snapshots:
+                snapshots[console_id] = scheduling.queue_snapshot(conn, console_id, p.user_id, now=n)
+            snapshot = snapshots[console_id]
+            entry = snapshot.get(r['id'])
+            if not entry:
+                continue
             v = _reservation_view(conn, r)
-            v['public_queue'] = scheduling.public_queue(conn, r['console_id'], p.user_id)
+            v['console_id'] = str(console_id)
+            v['queue'] = {'position': entry['position'], 'status': entry['status']}
+            v['public_queue'] = list(snapshot.values())
             out.append(v)
         return out
 

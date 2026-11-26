@@ -27,7 +27,9 @@ def test_worker_prepara_e_libera_sessao(world, freeze):
     p = _row('select * from console_preparations where reservation_id=%s', rid)
     assert p and p['status'] == 'ready' and p['simulated'] is True
     assert _row('select status from game_sessions where reservation_id=%s', rid)['status'] == 'ready'
+    assert user.get('/me/queues').json()[0]['queue']['status'] == 'next'
     assert user.post(f'/reservations/{rid}/join', json={'input_device': 'gamepad'}).status_code == 200
+    assert user.get('/me/queues').json()[0]['queue']['status'] == 'playing'
 
 
 def test_falha_na_preparacao_nao_consome_tempo_e_avisa_equipe(world, freeze):
@@ -44,6 +46,13 @@ def test_falha_na_preparacao_nao_consome_tempo_e_avisa_equipe(world, freeze):
     res = _row('select status, resolution_notes from reservations where id=%s', rid)
     assert res['status'] == 'needs_resolution' and 'não foi consumido' in res['resolution_notes']
     assert not _row('select 1 from game_sessions where reservation_id=%s', rid)
+    assert _row('select status from queue_entries where reservation_id=%s', rid)['status'] == 'left'
+    with tx() as conn:
+        conn.execute("update queue_entries set status='playing' where reservation_id=%s", (rid,))
+    assert user.get('/me/queues').json() == []
+    assert user.get(f'/reservations/{rid}').json()['public_queue'] == []
+    worker.tick()
+    assert _row('select status from queue_entries where reservation_id=%s', rid)['status'] == 'left'
     inc = _row("select * from service_incidents where reservation_id=%s and kind='console_failure'", rid)
     assert inc and inc['resolved_at'] is None
     assert _row("select 1 from notifications where event_code='console_not_ready' and user_id=(select user_id from reservations where id=%s)", rid)

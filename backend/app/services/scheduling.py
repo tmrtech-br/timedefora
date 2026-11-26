@@ -448,31 +448,40 @@ def confirm_reservation(conn, reservation_id, source: str) -> str:
     return 'needs_resolution'
 
 
-def recompute_queue(conn, console_id) -> None:
-    """Atualiza queue_entries (posições, próximos, estimativas) a partir das reservas confirmadas."""
-    n = timeutil.now()
+def _queue_members(conn, console_id, n) -> list[dict]:
     rows = conn.execute(
-        """select r.id, r.user_id, r.starts_at, r.ends_at, r.status from reservations r
-           where r.console_id=%s and r.status in ('confirmed','active') and r.ends_at > %s order by r.starts_at""",
-        (console_id, n)).fetchall()
-    ids = []
+        """select r.id, r.user_id, r.starts_at, r.ends_at, r.minutes, u.username,
+                  s.status='active' and s.contract_starts_at <= %s and s.contract_ends_at > %s as playing
+           from reservations r join users u on u.id=r.user_id
+           left join game_sessions s on s.reservation_id=r.id
+           where r.console_id=%s and r.status in ('confirmed','active') and r.ends_at > %s
+           order by r.starts_at, r.id""",
+        (n, n, console_id, n)).fetchall()
     playing_seen = False
     for i, r in enumerate(rows, start=1):
-        is_playing = r['status'] == 'active' or r['starts_at'] <= n
-        status = 'playing' if is_playing else ('next' if (i == 1 or (i == 2 and playing_seen)) else 'waiting')
-        playing_seen = playing_seen or is_playing
-        ids.append(r['id'])
+        r['position'] = i
+        r['status'] = 'playing' if r['playing'] else 'next' if i == 1 or (i == 2 and playing_seen) else 'waiting'
+        playing_seen = playing_seen or bool(r['playing'])
+    return rows
+
+
+def recompute_queue(conn, console_id) -> None:
+    """Atualiza os registros persistidos com a posição real das reservas em aberto."""
+    rows = _queue_members(conn, console_id, timeutil.now())
+    for r in rows:
         conn.execute(
             """insert into queue_entries(reservation_id, console_id, user_id, position, status, estimated_start_at, estimated_end_at)
                values (%s,%s,%s,%s,%s,%s,%s)
                on conflict (reservation_id) do update set position=excluded.position, status=excluded.status,
                  estimated_start_at=excluded.estimated_start_at, estimated_end_at=excluded.estimated_end_at
                where queue_entries.position is distinct from excluded.position or queue_entries.status is distinct from excluded.status
-                 or queue_entries.estimated_start_at is distinct from excluded.estimated_start_at""",
-            (r['id'], console_id, r['user_id'], i, status, r['starts_at'], r['ends_at']))
-    conn.execute("""update queue_entries set status=case when status='playing' then 'done' else 'left' end
-                    where console_id=%s and status in ('waiting','next','playing') and not (reservation_id = any(%s))""",
-                 (console_id, ids))
+                 or queue_entries.estimated_start_at is distinct from excluded.estimated_start_at
+                 or queue_entries.estimated_end_at is distinct from excluded.estimated_end_at""",
+            (r['id'], console_id, r['user_id'], r['position'], r['status'], r['starts_at'], r['ends_at']))
+    conn.execute("""update queue_entries q set status=case when r.status='completed' then 'done' else 'left' end
+                    from reservations r where r.id=q.reservation_id and q.console_id=%s
+                      and q.status in ('waiting','next','playing') and not (q.reservation_id = any(%s))""",
+                 (console_id, [r['id'] for r in rows]))
 
 
 def compact_queue(conn, console_id) -> int:
@@ -514,15 +523,16 @@ def release_reservation(conn, r: dict, new_status: str, reason: str, by_user=Non
     compact_queue(conn, r['console_id'])
 
 
+def queue_snapshot(conn, console_id, viewer_id=None, now=None) -> dict:
+    return {r['id']: {'position': r['position'], 'status': r['status'], 'username': r['username'], 'minutes': r['minutes'],
+                      'estimated_start_at': r['starts_at'].isoformat(), 'estimated_end_at': r['ends_at'].isoformat(),
+                      'is_me': viewer_id is not None and str(r['user_id']) == str(viewer_id)}
+            for r in _queue_members(conn, console_id, now or timeutil.now())}
+
+
 def public_queue(conn, console_id, viewer_id=None) -> list[dict]:
     """Fila pública: somente nomes públicos (sem e-mail/nome civil)."""
-    rows = conn.execute(
-        """select q.position, q.status, q.estimated_start_at, q.estimated_end_at, u.username, q.user_id, r.minutes
-           from queue_entries q join users u on u.id=q.user_id join reservations r on r.id=q.reservation_id
-           where q.console_id=%s and q.status in ('playing','next','waiting') order by q.position""", (console_id,)).fetchall()
-    return [{'position': r['position'], 'status': r['status'], 'username': r['username'], 'minutes': r['minutes'],
-             'estimated_start_at': r['estimated_start_at'].isoformat(), 'estimated_end_at': r['estimated_end_at'].isoformat(),
-             'is_me': viewer_id is not None and str(r['user_id']) == str(viewer_id)} for r in rows]
+    return list(queue_snapshot(conn, console_id, viewer_id).values())
 
 
 def availability_summary(conn, game: dict) -> dict:

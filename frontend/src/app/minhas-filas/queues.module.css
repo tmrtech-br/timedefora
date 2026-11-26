@@ -1,0 +1,23 @@
+﻿.scroll { --reservation-height: 112px; --reservation-gap: 10px; }
+.scroll[data-scrollable='true'] {
+  max-height: calc(5 * var(--reservation-height) + 4 * var(--reservation-gap));
+  overflow-y: auto;
+  padding-inline-end: 4px;
+  scrollbar-color: var(--purple) var(--bg2);
+  scrollbar-width: thin;
+}
+.list { display: grid; grid-auto-rows: var(--reservation-height); gap: var(--reservation-gap); list-style: none; margin: 0; padding: 0; }
+.reservation { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.summary { display: grid; gap: 4px; min-width: 0; }
+.title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.title h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title span { flex: none; }
+.console { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actions { display: flex; gap: 8px; flex: none; }
+
+@media (max-width: 760px) {
+  .scroll { --reservation-height: 144px; }
+  .reservation { flex-direction: column; align-items: stretch; justify-content: center; gap: 8px; padding: 10px; }
+  .actions { flex-wrap: wrap; }
+  .actions :global(.btn) { min-height: 32px; height: auto; padding-inline: 9px; font-size: .77rem; }
+}

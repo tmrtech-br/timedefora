@@ -173,7 +173,8 @@ def tick() -> dict:
                 out['sessions_started'] = _start_due_sessions(conn, n)
             with tx() as conn:
                 consoles = conn.execute("""select distinct console_id from reservations where status in ('confirmed','active')
-                                           or (status in ('completed','no_show','expired','cancelled') and updated_at > %s)""",
+                                           or (status in ('completed','no_show','expired','cancelled') and updated_at > %s)
+                                           union select console_id from queue_entries where status in ('waiting','next','playing')""",
                                         (n - timedelta(minutes=5),)).fetchall()
                 for c in consoles:
                     scheduling.recompute_queue(conn, c['console_id'])
