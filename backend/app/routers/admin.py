@@ -747,7 +747,8 @@ def run_all_tests(cid: uuid.UUID, body: PairIn | None = None, p: Principal = Dep
     return {'results': run_diagnostic_batch(cid, body, p)}
 
 
-def run_diagnostic_batch(cid: uuid.UUID, body: PairIn | None, p: Principal, on_result=None):
+def run_diagnostic_batch(cid: uuid.UUID, body: PairIn | None, p: Principal, on_result=None,
+                         *, test_type: str | None = None, run_id: uuid.UUID | None = None):
     if not is_allowed(p.permissions, action_key('POST', '/admin/consoles/{cid}/tests/{test_type}')):
         raise forbidden()
     with tx() as conn:
@@ -761,10 +762,11 @@ def run_diagnostic_batch(cid: uuid.UUID, body: PairIn | None, p: Principal, on_r
         if config['method'] == 'unconfigured':
             raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
     results = []
-    for test in TEST_TYPES:
+    for test in (test_type,) if test_type else TEST_TYPES:
+        _require_running_diagnostic(run_id)
         if test == 'psn_auth' and config['network_route'] != 'internet_psn':
             continue
-        if test == 'pair' and config['method'] != 'simulated' and (
+        if not test_type and test == 'pair' and config['method'] != 'simulated' and (
             not body or not body.code or config['network_route'] == 'internet_psn'
         ):
             result = {'test_type': test, 'result': 'not_available',
@@ -773,17 +775,23 @@ def run_diagnostic_batch(cid: uuid.UUID, body: PairIn | None, p: Principal, on_r
                                                   action_key('POST', '/admin/psn-accounts/{account_id}/test')):
             result = {'test_type': test, 'result': 'not_available', 'message': 'Ação sem permissão.'}
         else:
-            result = run_test(cid, test, body, p)
+            result = _run_test(cid, test, body, p, run_id=run_id)
         results.append(result)
         if on_result is not None:
             on_result(result)
     return results
 
 
+class DiagnosticIn(PairIn):
+    test_type: str | None = None
+
+
 @router.post('/consoles/{cid}/diagnostic-runs', status_code=202)
-def enqueue_diagnostic_run(cid: uuid.UUID, body: PairIn | None = None, p: Principal = Depends(ADMIN)):
+def enqueue_diagnostic_run(cid: uuid.UUID, body: DiagnosticIn | None = None, p: Principal = Depends(ADMIN)):
     if not is_allowed(p.permissions, action_key('POST', '/admin/consoles/{cid}/tests/{test_type}')):
         raise forbidden()
+    if body and body.test_type and body.test_type not in TEST_TYPES:
+        raise unprocessable('unknown_test', 'Teste desconhecido.')
     with tx(p.user_id) as conn:
         configuration = one(conn, '''
             select cc.method from console_connection_configs cc join consoles c on c.id=cc.console_id
@@ -795,12 +803,13 @@ def enqueue_diagnostic_run(cid: uuid.UUID, body: PairIn | None = None, p: Princi
             raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
         active = one(conn, '''
             select id, status from console_diagnostic_runs
-            where console_id=%s and status in ('queued','running')
+            where console_id=%s and status in ('queued','running','cancelling')
         ''', (cid,))
         if active:
             return jsonable(active)
         row = insert(conn, 'console_diagnostic_runs', {
             'console_id': cid, 'requested_by': p.user_id,
+            'test_type': body.test_type if body else None,
             'pairing_code_enc': security.encrypt(body.code) if body and body.code else None,
         }, returning='id, status')
         audit_event(conn, 'console.diagnostics_queued', 'console_diagnostic_runs', row['id'])
@@ -811,11 +820,29 @@ def enqueue_diagnostic_run(cid: uuid.UUID, body: PairIn | None = None, p: Princi
 def diagnostic_run(cid: uuid.UUID, run_id: uuid.UUID, p: Principal = Depends(ADMIN)):
     with tx() as conn:
         row = one(conn, '''
-            select id, status, results, error, created_at, started_at, finished_at
+            select id, status, test_type, results, error, created_at, started_at, finished_at
             from console_diagnostic_runs where id=%s and console_id=%s
         ''', (run_id, cid))
     if not row:
         raise not_found()
+    return jsonable(row)
+
+
+@router.post('/consoles/{cid}/diagnostic-runs/{run_id}/cancel')
+def cancel_diagnostic_run(cid: uuid.UUID, run_id: uuid.UUID, p: Principal = Depends(ADMIN)):
+    with tx(p.user_id) as conn:
+        row = one(conn, '''
+            select id, status from console_diagnostic_runs where id=%s and console_id=%s for update
+        ''', (run_id, cid))
+        if not row:
+            raise not_found()
+        if row['status'] in ('queued', 'running'):
+            queued = row['status'] == 'queued'
+            row = one(conn, '''
+                update console_diagnostic_runs set status=%s, pairing_code_enc=null, finished_at=%s
+                where id=%s returning id, status
+            ''', ('cancelled' if queued else 'cancelling', timeutil.now() if queued else None, run_id))
+            audit_event(conn, 'console.diagnostics_cancelled', 'console_diagnostic_runs', run_id)
     return jsonable(row)
 
 
@@ -824,15 +851,35 @@ def clear_tests(cid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     """Limpa o HISTÓRICO de testes exibido no painel. As validações (vídeo/áudio/controle/heartbeat) não mudam.
     Cada linha apagada fica registrada na auditoria (trigger), além do evento abaixo."""
     with tx() as conn:
-        if not one(conn, 'select 1 from consoles where id=%s and deleted_at is null', (cid,)):
+        if not one(conn, 'select 1 from consoles where id=%s and deleted_at is null for update', (cid,)):
             raise not_found()
+        if one(conn, "select 1 from console_diagnostic_runs where console_id=%s and status in ('queued','running','cancelling')", (cid,)):
+            raise conflict('diagnostic_in_progress', 'Cancele ou aguarde o diagnóstico antes de limpar o histórico.')
         n = conn.execute('delete from console_connection_tests where console_id=%s', (cid,)).rowcount
-        audit_event(conn, 'console.tests_cleared', 'consoles', cid, reason=body.reason, details={'removed': n})
+        runs = conn.execute('delete from console_diagnostic_runs where console_id=%s', (cid,)).rowcount
+        audit_event(conn, 'console.tests_cleared', 'consoles', cid, reason=body.reason, details={'removed': n, 'runs_removed': runs})
     return {'ok': True, 'removed': n}
 
 
 @router.post('/consoles/{cid}/tests/{test_type}')
 def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Principal = Depends(ADMIN)):
+    return _run_test(cid, test_type, body, p)
+
+
+def _require_running_diagnostic(run_id: uuid.UUID | None, conn=None):
+    if run_id is None:
+        return
+    if conn is None:
+        with tx() as db:
+            _require_running_diagnostic(run_id, db)
+        return
+    row = one(conn, 'select status from console_diagnostic_runs where id=%s for update', (run_id,))
+    if not row or row['status'] != 'running':
+        raise conflict('diagnostic_cancelled', 'Diagnóstico cancelado.')
+
+
+def _run_test(cid: uuid.UUID, test_type: str, body: PairIn | None, p: Principal,
+              *, run_id: uuid.UUID | None = None):
     """Executa teste REAL via adaptador. O simulador responde como simulado; métodos não implementados falham."""
     if test_type not in TEST_TYPES:
         raise not_found()
@@ -872,6 +919,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
             r = adapter.connect(ref)
             while not r.ok and (getattr(r, 'data', {}) or {}).get('running') and time_mod.monotonic() < deadline:
                 time_mod.sleep(2)
+                _require_running_diagnostic(run_id)
                 r = adapter.connect(ref)
         elif test_type == 'video_audio':
             r = adapter.test_video_audio(ref)
@@ -908,6 +956,7 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
     n = timeutil.now()
     duration_ms = round((time_mod.monotonic() - started) * 1000)
     with tx() as conn:
+        _require_running_diagnostic(run_id, conn)
         if not one(conn, 'select id from consoles where id=%s and deleted_at is null for update', (cid,)):
             raise not_found()
         cfg = one(conn, 'select * from console_connection_configs where console_id=%s for update', (cid,))
@@ -1719,11 +1768,47 @@ class SuspendIn(BaseModel):
     reason: str = Field(min_length=5, max_length=500)
 
 
+@router.delete('/users/{uid}')
+def delete_user(uid: uuid.UUID, body: DeleteIn, p: Principal = Depends(SUPER)):
+    if str(uid) == p.user_id:
+        raise bad_request('self', 'Você não pode excluir a própria conta.')
+    with tx(p.user_id) as conn:
+        # Serializa exclusões e alterações de papéis que afetam a existência de administradores.
+        conn.execute('select pg_advisory_xact_lock(%s)', (8162026,))
+        target = one(conn, 'select id, status from users where id=%s and deleted_at is null for update', (uid,))
+        if not target:
+            raise not_found()
+        roles = {r['code'] for r in all_(conn, '''
+            select r.code from role_assignments a join roles r on r.id=a.role_id
+            where a.user_id=%s and a.revoked_at is null
+        ''', (uid,))}
+        for role in roles & {'admin', 'superadmin'}:
+            levels = ['admin', 'superadmin'] if role == 'admin' else ['superadmin']
+            if target['status'] == 'active' and not one(conn, '''
+                select 1 from role_assignments a join roles r on r.id=a.role_id join users u on u.id=a.user_id
+                where u.id<>%s and u.deleted_at is null and u.status='active'
+                  and a.revoked_at is null and r.code=any(%s)
+            ''', (uid, levels)):
+                raise conflict('last_admin', 'A conta é a última com este nível de administração.')
+        if one(conn, '''
+            select 1 from reservations where status in ('pending_payment','confirmed','active')
+            and (user_id=%s or owner_user_id=%s)
+        ''', (uid, uid)) or one(conn, 'select 1 from consoles where owner_user_id=%s and is_published', (uid,)):
+            raise conflict('user_in_use', 'Resolva as reservas em andamento e despublique os consoles da conta.')
+        conn.execute("update users set deleted_at=%s, status='suspended', suspended_reason=%s where id=%s",
+                     (timeutil.now(), body.reason, uid))
+        conn.execute("update auth_sessions set revoked_at=%s, revoked_reason='deleted' where user_id=%s and revoked_at is null",
+                     (timeutil.now(), uid))
+        audit_event(conn, 'user.deleted', 'users', uid, reason=body.reason)
+    return {'ok': True}
+
+
 @router.post('/users/{uid}/suspension')
 def suspend(uid: uuid.UUID, body: SuspendIn, p: Principal = Depends(ADMIN)):
     if str(uid) == p.user_id:
         raise bad_request('self', 'Você não pode suspender a própria conta.')
     with tx() as conn:
+        conn.execute('select pg_advisory_xact_lock(%s)', (8162026,))
         target_roles = {r['code'] for r in all_(conn, 'select r.code from role_assignments ra join roles r on r.id=ra.role_id where ra.user_id=%s and ra.revoked_at is null', (uid,))}
         if 'superadmin' in target_roles and not p.has('superadmin'):
             raise forbidden()
@@ -1802,6 +1887,7 @@ def set_role(uid: uuid.UUID, body: RoleIn, p: Principal = Depends(SUPER)):
     if body.role not in ('client', 'operator', 'admin', 'superadmin', 'owner'):
         raise unprocessable('validation_error', 'Papel inválido.')
     with tx() as conn:
+        conn.execute('select pg_advisory_xact_lock(%s)', (8162026,))
         if not one(conn, 'select id from users where id=%s and deleted_at is null for update', (uid,)):
             raise not_found()
         role = one(conn, 'select id from roles where code=%s', (body.role,))

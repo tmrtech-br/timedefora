@@ -20,9 +20,10 @@ def _claim():
     now = timeutil.now()
     with tx() as conn:
         conn.execute('''
-            update console_diagnostic_runs set status='failed', pairing_code_enc=null, finished_at=%s,
+            update console_diagnostic_runs set status=case when status='cancelling' then 'cancelled' else 'failed' end,
+              pairing_code_enc=null, finished_at=%s,
               error='Execução interrompida. Inicie um novo diagnóstico.'
-            where status='running' and started_at<%s
+            where status in ('running','cancelling') and started_at<%s
         ''', (now, now - timedelta(minutes=20)))
         return one(conn, '''
             update console_diagnostic_runs set status='running', started_at=%s
@@ -33,7 +34,7 @@ def _claim():
                 )
                 order by j.created_at limit 1 for update of j skip locked
             )
-            returning id, console_id, requested_by, pairing_code_enc
+            returning id, console_id, requested_by, pairing_code_enc, test_type
         ''', (now,))
 
 
@@ -75,7 +76,7 @@ def process_one() -> bool:
         body = PairIn(code=security.decrypt(job['pairing_code_enc'])) if job['pairing_code_enc'] else None
         token = actor_id_var.set(actor)
         try:
-            run_diagnostic_batch(job['console_id'], body, p, save_result)
+            run_diagnostic_batch(job['console_id'], body, p, save_result, test_type=job['test_type'], run_id=job['id'])
         finally:
             actor_id_var.reset(token)
     except AppError as exc:
@@ -84,12 +85,14 @@ def process_one() -> bool:
         status, error = 'failed', 'A execução foi interrompida. Consulte os logs da aplicação.'
         log.exception('Falha no diagnóstico (execução=%s)', job['id'])
     with tx(actor) as conn:
-        conn.execute('''
-            update console_diagnostic_runs set status=%s, error=%s, pairing_code_enc=null, finished_at=%s
-            where id=%s and status='running'
+        finished = one(conn, '''
+            update console_diagnostic_runs set status=case when status='cancelling' then 'cancelled' else %s end,
+                error=case when status='cancelling' then null else %s end, pairing_code_enc=null, finished_at=%s
+            where id=%s and status in ('running','cancelling') returning status
         ''', (status, error, timeutil.now(), job['id']))
-        audit_event(conn, 'console.diagnostics_finished', 'console_diagnostic_runs', job['id'],
-                    details={'status': status, 'console_id': str(job['console_id'])})
+        if finished:
+            audit_event(conn, 'console.diagnostics_finished', 'console_diagnostic_runs', job['id'],
+                        details={'status': finished['status'], 'console_id': str(job['console_id'])})
     return True
 
 

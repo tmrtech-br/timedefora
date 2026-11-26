@@ -1,4 +1,6 @@
 'use client';
+import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
+import { ProgressModal } from '@/components/admin/ProgressModal';
 import { useEffect, useState } from 'react';
 import { Eraser } from 'lucide-react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
@@ -6,7 +8,6 @@ import { del, get, patch, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
 import { DataTable, NewRecord, useAction, useDelete } from './common';
-import { toast } from '@/components/Toaster';
 
 type Method = { method: string; label: string; status: string; applicable: boolean; operational: boolean; guide: string; needs: string[] };
 type Conn = Record<string, unknown> & { method: string; method_label?: string; connection_status: string; agent_id: string | null; psn_account_id?: string | null; validated_at: string | null;
@@ -20,7 +21,7 @@ export type AdminConsole = { id: string; code: string; name: string; platform_co
 type Agent = { id: string; name: string; is_simulated: boolean };
 type PsnAccount = { id: string; label: string; agent_id: string; owner_user_id?: string | null; status: string };
 type Dev = { id: string; agent_id: string; manufacturer: string; model: string; device_identifier?: string; identifier?: string; input_port?: string; used_by_console: string | null; authorized?: boolean };
-type Diagnostic = { id: string; status: 'queued' | 'running' | 'completed' | 'failed'; error?: string; results: { test_type: string; result: string; message: string }[] };
+type Diagnostic = { id: string; status: 'queued' | 'running' | 'cancelling' | 'cancelled' | 'completed' | 'failed'; test_type?: string; error?: string; results: { test_type: string; result: string; message: string }[] };
 
 const ROUTE_HINT: Record<string, string> = {
   lan: 'O PC do agente fica na mesma rede (de preferência no cabo) que o console. Menor atraso; liga o console pela rede.',
@@ -55,6 +56,9 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
   const [basic, setBasic] = useState({ name: c.name, model: c.model, serial_number: c.serial_number || '', location: c.location, description: c.description });
   const [pairCode, setPairCode] = useState('');
   const [runId, setRunId] = useState<string>();
+  const [requestedTest, setRequestedTest] = useState<string>();
+  const [cancelRequested, setCancelRequested] = useState(false);
+  const [cancelError, setCancelError] = useState<string>();
   const [finishedRun, setFinishedRun] = useState<Diagnostic>();
   const batch = useApi<Diagnostic>(runId ? `/admin/consoles/${c.id}/diagnostic-runs/${runId}` : null, 2500);
   const activeRun = batch.data?.id === runId ? batch.data : null;
@@ -63,9 +67,10 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
   const { run, msg, busy } = useAction();
   const deletion = useDelete();
   useEffect(() => {
-    if (!activeRun || (activeRun.status !== 'completed' && activeRun.status !== 'failed')) return;
+    if (!activeRun || !['completed', 'failed', 'cancelled'].includes(activeRun.status)) return;
     setFinishedRun(activeRun);
     setRunId(undefined);
+    setCancelRequested(false);
     onChange();
   }, [activeRun, onChange]);
   useEffect(() => {
@@ -79,6 +84,13 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
   }, [c]);
   const m = String(cfg.method || 'unconfigured');
   const savedMethod = c.connection.method;
+  const queueDiagnostic = (test_type?: string) => void run(async () => {
+    const job = await post<{ id: string }>(`/admin/consoles/${c.id}/diagnostic-runs`, { code: pairCode || null, test_type });
+    setRequestedTest(test_type);
+    setCancelError(undefined);
+    setFinishedRun(undefined);
+    setRunId(job.id);
+  });
   const savedRoute = c.connection.network_route || 'lan';
   const nativePsnRoute = savedMethod === 'remote_play_native' && savedRoute === 'internet_psn';
   const lanPairing = savedMethod === 'remote_play_direct' ||
@@ -127,8 +139,8 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
         <button className="btn" style={{ marginTop: 10 }} disabled={busy} onClick={() => run(async () => { await patch(`/admin/consoles/${c.id}`, { ...basic, serial_number: basic.serial_number || null }); onChange(); }, 'Dados salvos.')}>Salvar dados</button>
       </section>
 
-      <section className="card stack">
-        <h2>Método de conexão e transmissão</h2>
+      <CollapsibleCard title="Método de conexão e transmissão" className="card stack">
+        
         <Field label="Método (obrigatório)"><select value={m} onChange={(e) => set('method', e.target.value)}>
           {methods?.map((x) => <option key={x.method} value={x.method} disabled={!x.applicable}>{x.label}{!x.applicable ? ' — não aplicável a esta plataforma' : ''}</option>)}</select></Field>
         {m === 'remote_play_chiaki' && cfg.network_route !== 'lan' && <div className="alert warn"><span><b>Console em outra rede (pela internet):</b> mais atraso e menos estabilidade que na rede local;
@@ -203,52 +215,59 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
           <button className="btn" disabled={busy || m === 'unconfigured'} onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/connection`, { method: 'unconfigured', reason: 'Desativado no painel' }); onChange(); }, 'Conexão desativada.')}>Desativar</button>
           {c.connection.psn_account_id && <button className="btn danger" disabled={busy} onClick={unlinkPsn}>Desvincular conta PSN</button>}
         </div>
-      </section>
+      </CollapsibleCard>
 
-      <section className="card stack">
-        <h2>Testes e diagnóstico</h2>
+      <CollapsibleCard title="Testes e diagnóstico" className="card stack">
+        
         <div className="row">Vídeo {flag(c.connection.video_validated_at)} Áudio {flag(c.connection.audio_validated_at)} Controle {flag(c.connection.control_validated_at)} Heartbeat {flag(c.connection.heartbeat_validated_at)}
           Conexão <StatusPill status={c.connection.connection_status} /></div>
         {nativePsnRoute && <p className="small muted">O registro remoto é realizado automaticamente no teste de conexão.</p>}
         {savedMethod === 'remote_play_chiaki' && <Field label="Código de pareamento exibido no console (assistente do admin)"><input value={pairCode} onChange={(e) => setPairCode(e.target.value)} maxLength={12} /></Field>}
         {lanPairing && <Field label="PIN de registro (8 dígitos)" hint="No console: Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo. Digite o PIN e clique em Parear.">
           <input inputMode="numeric" value={pairCode} onChange={(e) => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 8))} maxLength={8} placeholder="12345678" /></Field>}
-        <button className="btn" disabled={busy || Boolean(runId) || savedMethod === 'unconfigured'} onClick={() => run(async () => {
-          const job = await post<{ id: string }>(`/admin/consoles/${c.id}/diagnostic-runs`, { code: pairCode || null });
-          setFinishedRun(undefined);
-          setRunId(job.id);
-        })}>Executar todos os testes</button>
-        {runId && <p role="status">{activeRun?.status === 'running' ? `Executando · ${activeRun.results.length} resultado(s)` : 'Na fila de diagnósticos.'}</p>}
-        {batch.error && runId && <p role="alert">{batch.error.message}</p>}
+        <button className="btn" disabled={busy || Boolean(runId) || savedMethod === 'unconfigured'} onClick={() => queueDiagnostic()}>Executar todos os testes</button>
+        {runId && <ProgressModal
+          status={cancelRequested || activeRun?.status === 'cancelling' ? 'Cancelando diagnóstico…' : activeRun?.status === 'running' ? 'Executando diagnóstico…' : 'Na fila de diagnósticos.'}
+          error={cancelError ?? batch.error?.message}
+          tests={TESTS.filter(([test]) => {
+            const selected = activeRun ? activeRun.test_type : requestedTest;
+            return selected ? test === selected : test !== 'psn_auth' || nativePsnRoute;
+          }).map(([id, label], index) => {
+            const result = activeRun?.results.find((item) => item.test_type === id);
+            return { id, label, state: result ? (RESULT_PT[result.result] || result.result) :
+              activeRun?.status === 'running' && index === activeRun.results.length ? 'Em execução' : 'Na fila' };
+          })}
+          onCancel={async () => {
+            if (cancelRequested) return;
+            setCancelError(undefined);
+            setCancelRequested(true);
+            try {
+              await post(`/admin/consoles/${c.id}/diagnostic-runs/${runId}/cancel`);
+              await batch.reload();
+            } catch (error) {
+              setCancelRequested(false);
+              setCancelError(error instanceof Error ? error.message : 'Erro ao cancelar diagnóstico.');
+            }
+          }} />}
         {finishedRun && <div>
-          <p role="status">{finishedRun.status === 'failed' ? (finishedRun.error ?? 'Diagnóstico interrompido.') : 'Diagnóstico concluído.'}</p>
+          <p role="status">{finishedRun.status === 'cancelled' ? 'Diagnóstico cancelado.' : finishedRun.status === 'failed' ? (finishedRun.error ?? 'Diagnóstico interrompido.') : 'Diagnóstico concluído.'}</p>
           <ul>{finishedRun.results.map((item) => <li key={item.test_type}>
             {TESTS.find(([test]) => test === item.test_type)?.[1] ?? item.test_type} · {RESULT_PT[item.result]} · {item.message}
           </li>)}</ul>
         </div>}
-        <div className="row">{TESTS.filter(([test]) => test !== 'psn_auth' || nativePsnRoute).map(([t, l]) => <button key={t} className="btn sm" disabled={busy || Boolean(runId) || (t === 'pair' && nativePsnRoute)} onClick={() => run(async () => {
-          type R = { result: string; message: string; simulated: boolean; in_progress?: boolean };
-          const call = () => post<R>(`/admin/consoles/${c.id}/tests/${t}`, t === 'pair' ? { code: pairCode || null } : {});
-          let r = await call();
-          const deadline = Date.now() + (nativePsnRoute ? 80_000 : 36_000);
-          while (r.in_progress && Date.now() < deadline) {
-            onChange();
-            toast('ok', `${l}: ${r.message.replace(/ Clique em "Testar".*$/, '')} Aguardando…`);
-            await new Promise((ok) => setTimeout(ok, 3000));
-            r = await call();
-          }
-          onChange(); return r;
-        }).then((r) => r && toast(r.result === 'passed' || r.in_progress ? 'ok' : 'error', `${l}: ${RESULT_PT[r.result] || r.result}${r.simulated ? ' (SIMULADO)' : ''} — ${r.message}`))}>{l}</button>)}</div>
+        <div className="row">{TESTS.filter(([test]) => test !== 'psn_auth' || nativePsnRoute).map(([t, l]) =>
+          <button key={t} className="btn sm" disabled={busy || Boolean(runId) || (t === 'pair' && nativePsnRoute)}
+            onClick={() => queueDiagnostic(t)}>{l}</button>)}</div>
         {!onboarding && <div className="row">
           <button className="btn primary" disabled={busy || c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/publish`); onChange(); }, 'Console publicado para vendas.')}>Publicar</button>
           <button className="btn" disabled={busy || !c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/unpublish`); onChange(); }, 'Console despublicado.')}>Despublicar</button>
         </div>}
         <div className="spread"><h3 style={{ margin: 0 }}>Histórico de testes</h3>
-          <button className="btn sm" disabled={busy || !c.tests?.length} title="Apaga só o histórico exibido; as validações continuam valendo"
+          <button className="btn sm" disabled={busy || (!c.tests?.length && !finishedRun)} title="Apaga o histórico exibido e preserva as validações"
             onClick={() => deletion.remove(`/admin/consoles/${c.id}/tests`, 'Limpar o histórico de testes?',
-              (request) => run(async () => { await request(); onChange(); }, 'Histórico de testes limpo.'),
+              (request) => run(async () => { await request(); setFinishedRun(undefined); onChange(); }, 'Histórico de testes limpo.'),
               'As validações do console permanecem registradas.')}>
-            <Eraser size={14} aria-hidden />Limpar testes</button></div>
+            <Eraser size={14} aria-hidden />Limpar diagnóstico</button></div>
         <DataTable rows={c.tests as unknown as Record<string, unknown>[]} empty="Nenhum teste executado." cols={[['Teste', (r) => (
           <details>
             <summary>{TESTS.find(([type]) => type === r.test_type)?.[1] ?? String(r.test_type)}</summary>
@@ -265,11 +284,11 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
           ['Simulado', (r) => (r.simulated ? 'sim' : 'não')], ['Mensagem', (r) => String(r.message)], ['Quando', (r) => dateTime(String(r.run_at))]]} />
         <p className="small muted">Telemetria: {c.last_health ? `${c.last_health.status} · FPS ${c.last_health.fps ?? 'não disponível'} · RTT ${c.last_health.rtt_ms ?? 'não disponível'} · bitrate ${c.last_health.bitrate_kbps ?? 'não disponível'} · ${dateTime(String(c.last_health.checked_at))}${c.last_health.simulated ? ' (simulado)' : ''}` : 'sem amostras'}</p>
         <p className="small muted">Jogo vinculado agora: {c.current_assignment ? `${c.current_assignment.title} até ${dateTime(c.current_assignment.ends_at)}` : 'nenhum'} · Sessão ativa: {c.active_session ? 'sim' : 'não'} · Pareamento: {c.pairing?.status || '—'}</p>
-      </section>
+      </CollapsibleCard>
 
       <div className="grid2">
-        <section className="card stack">
-          <h2>Manutenção / status</h2>
+        <CollapsibleCard title="Manutenção / status" className="card stack">
+          
           <Field label="Justificativa"><input maxLength={500} value={statusReason} onChange={(e) => setStatusReason(e.target.value)} /></Field>
           <div className="row">
             <button className="btn" disabled={busy || statusReason.length < 3} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'maintenance', reason: statusReason }); onChange(); }, 'Em manutenção.')}>Manutenção</button>
@@ -280,9 +299,9 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
             }}>Manutenção + reembolsar afetados</button>
             <button className="btn" disabled={busy || statusReason.length < 3} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'online', reason: statusReason }); onChange(); }, 'Retornou à operação.')}>Retornar à operação</button>
           </div>
-        </section>
-        <section className="card stack">
-          <h2>Horário de funcionamento</h2>
+        </CollapsibleCard>
+        <CollapsibleCard title="Horário de funcionamento" className="card stack">
+          
           {hours.map((h, i) => <div key={i} className="row">
             <select className="btn sm" value={h.weekday} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, weekday: Number(e.target.value) } : x))}>{DAYS.map((d, k) => <option key={k} value={k}>{d}</option>)}</select>
             <input className="btn sm" type="time" value={h.opens_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, opens_at: e.target.value } : x))} />
@@ -291,17 +310,17 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
           <div className="row"><button className="btn sm" onClick={() => setHours([...hours, { weekday: 1, opens_at: '08:00', closes_at: '22:00' }])}>Adicionar faixa</button>
             <button className="btn sm primary" onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/hours`, { hours }); onChange(); }, 'Horários salvos.')}>Salvar horários</button></div>
           <p className="small dim">Sem faixas = funcionamento limitado apenas pelos vínculos.</p>
-        </section>
+        </CollapsibleCard>
       </div>
-      {c.method_history && c.method_history.length > 0 && <section className="card"><h2>Histórico de métodos (rollback)</h2>
+      {c.method_history && c.method_history.length > 0 && <CollapsibleCard title="Histórico de métodos (rollback)" className="card">
         <DataTable rows={c.method_history as unknown as Record<string, unknown>[]} cols={[['De', (r) => String(r.from_method)], ['Para', (r) => String(r.to_method)], ['Motivo', (r) => String(r.reason)],
-          ['Quando', (r) => dateTime(String(r.created_at))], ['', (r) => <button className="btn sm" onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/connection/rollback/${r.id}`); onChange(); }, 'Configuração anterior restaurada (requer nova validação).')}>Restaurar</button>]]} /></section>}
-      <section className="card stack" style={{ borderColor: 'rgba(255, 75, 92, .45)' }}>
-        <h2 style={{ margin: 0 }}>Excluir console</h2>
+          ['Quando', (r) => dateTime(String(r.created_at))], ['', (r) => <button className="btn sm" onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/connection/rollback/${r.id}`); onChange(); }, 'Configuração anterior restaurada (requer nova validação).')}>Restaurar</button>]]} /></CollapsibleCard>}
+      <CollapsibleCard title="Excluir console" className="card stack" style={{ borderColor: 'rgba(255, 75, 92, .45)' }}>
+        
         <p className="small muted" style={{ margin: 0 }}>Remove o console da operação: despublica, arquiva os vínculos futuros e libera capturadora/controle. O histórico (reservas, sessões, auditoria) é mantido.
           Bloqueado se houver sessão ativa ou reservas futuras.</p>
         {onDelete && <div><button className="btn danger" onClick={onDelete}>Excluir este console</button></div>}
-      </section>
+      </CollapsibleCard>
     </div>
   );
 }
@@ -335,7 +354,7 @@ export default function Consoles() {
         <input className="btn" placeholder="Nome (PS5 nº 05)" value={nc.name} onChange={(e) => setNc({ ...nc, name: e.target.value })} />
         <select className="btn" value={nc.platform_code} onChange={(e) => setNc({ ...nc, platform_code: e.target.value })}>{['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((p) => <option key={p}>{p}</option>)}</select>
         <button className="btn primary" onClick={() => run(async () => { const c = await post<AdminConsole>('/admin/consoles', nc); list.reload(); setSel(c.id); setNc({ code: '', name: '', platform_code: 'PS5' }); close(); }, 'Console criado como "não configurado".')}>Cadastrar</button></div>}</NewRecord>
-      <section className="card"><DataTable rows={list.data as unknown as Record<string, unknown>[] | null} cols={[
+      <CollapsibleCard title="Consoles cadastrados" className="card"><DataTable rows={list.data as unknown as Record<string, unknown>[] | null} cols={[
         ['Console', (r) => String(r.name)], ['Plataforma', (r) => String(r.platform_code)],
         ['Método', (r) => String((r.connection as Conn)?.method_label || '—')], ['Status', (r) => <StatusPill status={String(r.status)} />],
         ['Publicado', (r) => (r.is_published ? 'sim' : 'não')], ['Jogo agora', (r) => String((r.current_assignment as { title?: string })?.title || '—')],
@@ -343,8 +362,8 @@ export default function Consoles() {
           <button className="btn sm" onClick={() => run(async () => setViewing(await get<AdminConsole>(`/admin/consoles/${r.id}`)))}>Ver</button>
           <button className="btn sm" onClick={() => setSel(String(r.id))}>Editar</button>
           <button className="btn sm danger" onClick={() => askDelete({ id: String(r.id), code: String(r.code), name: String(r.name) })}>Excluir</button>
-        </div>]]} /></section>
-      {viewing && <Modal title={viewing.name} onClose={() => setViewing(null)}>
+        </div>]]} /></CollapsibleCard>
+      {viewing && <Modal title={viewing.name} onClose={() => setViewing(null)} allowEscape>
         <dl><dt>Código</dt><dd>{viewing.code}</dd><dt>Plataforma</dt><dd>{viewing.platform_code}</dd>
           <dt>Conexão</dt><dd>{viewing.connection.method_label ?? viewing.connection.method}</dd>
           <dt>Status</dt><dd><StatusPill status={viewing.status} /></dd></dl>
