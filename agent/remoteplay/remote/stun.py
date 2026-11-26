@@ -82,8 +82,10 @@ def parse_binding_response(packet: bytes, txid: bytes) -> tuple[str, int]:
     raise ValueError('Resposta STUN sem endereço mapeado.')
 
 
-# O mesmo socket recebe a mídia do PS4 depois do furo: um quadro-chave chega em rajada de centenas de pacotes.
-PEER_QUEUE_SIZE = 4096
+# O mesmo socket recebe a mídia do PS4 depois do furo. Fila curta e descarte do pacote MAIS ANTIGO: se a
+# decodificação atrasar, o vídeo perde um pedaço e volta ao tempo real, em vez de acumular segundos de atraso
+# (com fila grande a imagem do agente congelava enquanto o console seguia respondendo).
+PEER_QUEUE_SIZE = 128
 
 
 class _Dispatcher(asyncio.DatagramProtocol):
@@ -95,11 +97,11 @@ class _Dispatcher(asyncio.DatagramProtocol):
     def datagram_received(self, data: bytes, addr):
         if len(data) < 20 or data[4:8] != struct.pack('!I', COOKIE):
             if self.peer_packets.full():
+                self.peer_packets.get_nowait()          # descarta o mais antigo
                 self.dropped += 1
                 if self.dropped in (1, 100) or self.dropped % 1000 == 0:
-                    logging.getLogger(__name__).warning('Fila UDP do console cheia: %d pacote(s) descartado(s).', self.dropped)
-            else:
-                self.peer_packets.put_nowait((data, addr))
+                    logging.getLogger(__name__).warning('Fila UDP do console cheia: %d pacote(s) antigo(s) descartado(s).', self.dropped)
+            self.peer_packets.put_nowait((data, addr))
             return
         txid = data[8:20]
         future = self.pending.get(txid)
@@ -130,7 +132,7 @@ class StunClient:
         sock = self._socket
         if sock is None:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1024 * 1024)
             sock.bind(('0.0.0.0', 0))
         sock.setblocking(False)
         loop = asyncio.get_running_loop()
