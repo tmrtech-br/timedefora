@@ -1,4 +1,5 @@
 'use client';
+import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useMemo, useState } from 'react';
 import { Alert, Field, Modal, PageHeader } from '@/components/ui';
 import { put } from '@/lib/api';
@@ -77,7 +78,8 @@ export default function Params() {
       <PageHeader title="Parâmetros do sistema" subtitle="Ligue e desligue funções. Cada alteração vale na hora, é aplicada no servidor e fica registrada na auditoria." />
       {msg}
 
-      <section className="card stack"><h2 style={{ margin: 0 }}>Plataformas e consoles</h2>
+      <div className="grid2" style={{ alignItems: 'start' }}>
+      <CollapsibleCard title="Plataformas e consoles" className="card stack">
         <p className="small muted" style={{ margin: 0 }}>Desligar uma plataforma tira da venda todos os consoles dela e esconde do catálogo os jogos que só existem nela. Reservas já pagas continuam valendo.</p>
         <div className="params">
           {Object.entries(byFamily).map(([fam, list]) => {
@@ -102,9 +104,9 @@ export default function Params() {
               </div>);
           })}
         </div>
-      </section>
+      </CollapsibleCard>
 
-      <section className="card stack"><h2 style={{ margin: 0 }}>Funções</h2>
+      <CollapsibleCard title="Funções" className="card stack">
         <div className="params">
           {TOGGLES.map((t) => {
             const raw = Boolean(v[t.key]);
@@ -119,9 +121,9 @@ export default function Params() {
               </div>);
           })}
         </div>
-      </section>
+      </CollapsibleCard>
 
-      <section className="card stack"><h2 style={{ margin: 0 }}>Regras de agenda e limites</h2>
+      <CollapsibleCard title="Regras de agenda e limites" className="card stack">
         <div className="params">
           {NUMBERS.filter((n) => n.key in v).map((n) => {
             const cur = String(v[n.key]);
@@ -140,7 +142,8 @@ export default function Params() {
               </div>);
           })}
         </div>
-      </section>
+      </CollapsibleCard>
+      </div>
 
       {pausedReason !== null && (
         <Modal title="Mensagem de vendas pausadas" onClose={() => setPausedReason(null)}>

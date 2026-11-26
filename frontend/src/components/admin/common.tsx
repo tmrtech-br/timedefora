@@ -66,7 +66,7 @@ export function ScrollableDataGrid<T extends Record<string, unknown>>({ rows, co
     return () => observer.disconnect();
   }, [rows]);
   if (error) return <Alert kind="error">{error}</Alert>;
-  if (!rows) return <div className="skeleton" style={{ height: 120 }} />;
+  if (!rows) return <div className="skeleton" role="status" aria-label="Carregando registros" style={{ height: 120 }} />;
   if (!rows.length) return <div className="empty">{empty}</div>;
   return (
     <div className="table-wrap scrollable-grid" ref={viewport} tabIndex={rows.length > 10 ? 0 : undefined} aria-label={rows.length > 10 ? 'Tabela com rolagem' : undefined}><table className="table"><thead><tr>{cols.map(([h]) => <th key={h}>{h}</th>)}</tr></thead>
@@ -182,20 +182,25 @@ export function NewRecord({ title, children }: { title: string; children: (close
 }
 
 /** Confirmação "sim/não" no padrão do site (substitui o confirm() do navegador). */
-export function useConfirm(): [(o: { title: string; message: React.ReactNode; confirm?: string; danger?: boolean }) => Promise<boolean>, React.ReactNode] {
+type ConfirmOptions = { title: string; message: React.ReactNode; confirm?: string; danger?: boolean };
+
+export function ConfirmDialog({ options, onClose }: { options: ConfirmOptions; onClose: (confirmed: boolean) => void }) {
+  return <Modal title={options.title} onClose={() => onClose(false)}>
+    <div className="stack">
+      <div className="small muted">{options.message}</div>
+      <div className="row">
+        <button type="button" className={`btn ${options.danger ? 'danger' : 'primary'}`} onClick={() => onClose(true)}>{options.confirm || 'Confirmar'}</button>
+        <button type="button" className="btn" onClick={() => onClose(false)}>Voltar</button>
+      </div>
+    </div>
+  </Modal>;
+}
+
+export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, React.ReactNode] {
   const [state, setState] = useState<{ o: { title: string; message: React.ReactNode; confirm?: string; danger?: boolean }; resolve: (v: boolean) => void } | null>(null);
   const ask = (o: { title: string; message: React.ReactNode; confirm?: string; danger?: boolean }) => new Promise<boolean>((resolve) => setState({ o, resolve }));
   const close = (v: boolean) => { state?.resolve(v); setState(null); };
-  const dialog = state ? (
-    <Modal title={state.o.title} onClose={() => close(false)}>
-      <div className="stack">
-        <div className="small muted">{state.o.message}</div>
-        <div className="row">
-          <button autoFocus className={`btn ${state.o.danger ? 'danger' : 'primary'}`} onClick={() => close(true)}>{state.o.confirm || 'Confirmar'}</button>
-          <button className="btn" onClick={() => close(false)}>Voltar</button>
-        </div>
-      </div>
-    </Modal>) : null;
+  const dialog = state ? <ConfirmDialog options={state.o} onClose={close} /> : null;
   return [ask, dialog];
 }
 

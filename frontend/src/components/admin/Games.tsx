@@ -1,4 +1,5 @@
 'use client';
+import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useState } from 'react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { patch, post } from '@/lib/api';
@@ -69,11 +70,11 @@ export default function Games() {
           <Field label="Observações"><input maxLength={500} value={lic.notes} onChange={(e) => setLic({ ...lic, notes: e.target.value })} /></Field></div>
         <button className="btn" onClick={() => run(async () => { await post(`/admin/games/${editing}/license`, { ...lic, doc_url: lic.doc_url || null }); list.reload(); }, 'Licença atualizada.')}>Registrar</button></section>}
       </Modal>}
-      {viewing && <Modal title={viewing.title} onClose={() => setViewing(null)}>
+      {viewing && <Modal title={viewing.title} onClose={() => setViewing(null)} allowEscape>
         <dl><dt>Plataformas</dt><dd>{viewing.platform_codes.join(', ')}</dd><dt>Status</dt><dd><StatusPill status={viewing.status} /></dd>
           <dt>Licença comercial</dt><dd>{LIC[viewing.commercial_license_status]}</dd><dt>Descrição</dt><dd>{String(viewing.description || 'Sem descrição')}</dd></dl>
       </Modal>}
-      <section className="card"><DataTable rows={list.data} cols={[['Jogo', (g) => g.title],
+      <CollapsibleCard title="Jogos cadastrados" className="card"><DataTable rows={list.data} error={list.error?.message} cols={[['Jogo', (g) => g.title],
         ['Plataformas', (g) => g.platform_codes.join(', ')], ['Status', (g) => <StatusPill status={g.status} />], ['Licença', (g) => LIC[g.commercial_license_status]],
         ['Demo', (g) => (g.is_demo ? 'sim' : 'não')],
         ['Ações', (g) => <div className="row">
@@ -83,7 +84,7 @@ export default function Games() {
             (request) => run(async () => { await request(); list.reload(); }, 'Jogo excluído.'))}>Excluir</button>
           {g.status !== 'published'
           ? <button className="btn sm primary" onClick={() => run(async () => { await patch(`/admin/games/${g.id}`, { status: 'published' }); list.reload(); }, 'Publicado.')}>Publicar</button>
-          : <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/games/${g.id}`, { status: 'unpublished', resolution: 'keep_existing' }); list.reload(); }, 'Despublicado (reservas mantidas).')}>Despublicar</button>}</div>]]} /></section>
+          : <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/games/${g.id}`, { status: 'unpublished', resolution: 'keep_existing' }); list.reload(); }, 'Despublicado (reservas mantidas).')}>Despublicar</button>}</div>]]} /></CollapsibleCard>
     </div>
   );
 }

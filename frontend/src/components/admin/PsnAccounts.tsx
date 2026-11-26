@@ -15,13 +15,15 @@ type PsnDevice = { platform: string; duid: string; name: string; remoteplay_enab
 type LanPs4 = { address: string; state: string; host_name: string | null };
 type Ps4Diagnostic = { duid: string; message: string };
 
-export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?: () => void } = {}) {
+export default function PsnAccounts({ onAccountsChanged, initialPlatform = 'all' }: {
+  onAccountsChanged?: () => void; initialPlatform?: string;
+} = {}) {
   const accounts = useApi<Account[]>('/admin/psn-accounts');
   const options = useApi<{ chiaki_import_enabled: boolean }>('/admin/psn-accounts/options');
   const agents = useApi<Agent[]>('/admin/agents');
   const [newLabel, setNewLabel] = useState('');
   const [agentId, setAgentId] = useState('');
-  const [platform, setPlatform] = useState('all');
+  const [platform, setPlatform] = useState(initialPlatform);
   const [redirect, setRedirect] = useState('');
   const [login, setLogin] = useState<LoginLink | null>(null);
   const [diagnostic, setDiagnostic] = useState<(Ps4Diagnostic & { label: string }) | null>(null);
@@ -126,18 +128,20 @@ export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?:
       {devices?.source === 'psn' && <section className="card stack">
         <h2>PS5 da conta {devices.label}</h2>
         <p className="small muted">Dispositivos retornados pela PSN. Para localizar um PS4, use a busca na rede local do agente.</p>
-        {devices.items.length ? devices.items.map((device) => <div key={device.duid} className="row" style={{ flexWrap: 'wrap' }}>
-          <b>{device.name}</b> — {device.platform} — {device.remoteplay_enabled ? 'Remote Play habilitado' : 'Remote Play indisponível'}
-          <code>{device.duid}</code>
-        </div>) : <p>Nenhum PS5 retornado pela Sony.</p>}
+        <DataTable rows={devices.items} empty="Nenhum PS5 retornado pela Sony." cols={[
+          ['Nome', (device) => device.name], ['Plataforma', (device) => device.platform],
+          ['Remote Play', (device) => device.remoteplay_enabled ? 'Habilitado' : 'Indisponível'],
+          ['DUID', (device) => <code>{device.duid}</code>],
+        ]} />
         <button className="btn sm" onClick={() => setDevices(null)}>Fechar</button>
       </section>}
       {devices?.source === 'lan' && <section className="card stack">
         <h2>PS4 na rede de {devices.label}</h2>
         <p className="small muted">A descoberta mostra os consoles detectados pelo agente na rede local. O vínculo com a conta é verificado no pareamento.</p>
-        {devices.items.length ? devices.items.map((device) => <div key={device.address} className="row">
-          <b>{device.host_name || 'PS4'}</b><code>{device.address}</code><span>{device.state}</span>
-        </div>) : <p>Nenhum PS4 respondeu. Confira se o console está ligado, na rede do agente e com Uso remoto habilitado.</p>}
+        <DataTable rows={devices.items} empty="Nenhum PS4 respondeu. Confira a rede e o Uso remoto." cols={[
+          ['Console', (device) => device.host_name || 'PS4'], ['Endereço', (device) => <code>{device.address}</code>],
+          ['Estado', (device) => device.state],
+        ]} />
         <button className="btn sm" onClick={() => setDevices(null)}>Fechar</button>
       </section>}
       {login && <Modal title={`Vincular conta ${login.label}`} onClose={() => { setLogin(null); setRedirect(''); }}>

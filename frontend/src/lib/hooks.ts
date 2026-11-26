@@ -1,31 +1,42 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, get } from './api';
+import { api, ApiError } from './api';
 
 /** Busca dados da API com estados de carregamento/erro e atualização periódica opcional (tempo real por polling). */
 export function useApi<T>(path: string | null, intervalMs = 0) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(!!path);
-  const alive = useRef(true);
+  const request = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
     if (!path) return;
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
     try {
-      const d = await get<T>(path);
-      if (alive.current) { setData(d); setError(null); }
+      const d = await api<T>(path, { signal: controller.signal });
+      if (!controller.signal.aborted) { setData(d); setError(null); }
     } catch (e) {
-      if (alive.current) setError(e instanceof ApiError ? e : new ApiError(0, { detail: String(e) }));
+      if (!controller.signal.aborted) setError(e instanceof ApiError ? e : new ApiError(0, { detail: String(e) }));
     } finally {
-      if (alive.current) setLoading(false);
+      if (request.current === controller) {
+        request.current = null;
+        setLoading(false);
+      }
     }
   }, [path]);
   useEffect(() => {
-    alive.current = true;
     setLoading(!!path);
+    setError(null);
     load();
-    if (!intervalMs || !path) return () => { alive.current = false; };
-    const t = setInterval(() => { if (document.visibilityState === 'visible') load(); }, intervalMs);
-    return () => { alive.current = false; clearInterval(t); };
+    const timer = intervalMs && path ? setInterval(() => {
+      if (!request.current && document.visibilityState === 'visible') load();
+    }, intervalMs) : undefined;
+    return () => {
+      request.current?.abort();
+      request.current = null;
+      clearInterval(timer);
+    };
   }, [load, intervalMs, path]);
   return { data, error, loading, reload: load, setData };
 }

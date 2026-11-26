@@ -1,5 +1,5 @@
 'use client';
-import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
+import { CardAccordion, CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { ProgressModal } from '@/components/admin/ProgressModal';
 import { useEffect, useState } from 'react';
 import { Eraser } from 'lucide-react';
@@ -369,7 +369,7 @@ export default function Consoles() {
           <dt>Status</dt><dd><StatusPill status={viewing.status} /></dd></dl>
       </Modal>}
       {detail && detail.id === sel && !delC && <Modal title={`Editar ${detail.name}`} onClose={() => { setSel(null); setDetail(null); }}>
-        <ConsoleEditor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onChange={() => { load(detail.id); list.reload(); }} onDelete={() => askDelete(detail)} />
+        <CardAccordion><ConsoleEditor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onChange={() => { load(detail.id); list.reload(); }} onDelete={() => askDelete(detail)} /></CardAccordion>
       </Modal>}
       {delC && (
         <Modal title="Excluir console" onClose={() => setDelC(null)}>

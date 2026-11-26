@@ -230,6 +230,7 @@ table.table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 36px); overflow: auto; }
 .modal-shell { width: min(1040px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); margin: auto; color: inherit; }
 .modal-shell::backdrop { background: rgba(4, 2, 12, .78); }
+html:has(.modal-shell[open]) { overflow: hidden; }
 .scrollable-grid { overflow: auto; }
 .scrollable-grid th { position: sticky; top: 0; z-index: 1; background: var(--panel, #231a38); }
 .modal-shell .table { min-width: max-content; }

@@ -1,4 +1,5 @@
 'use client';
+import { CollapsibleCard } from '@/components/admin/CollapsibleCard';
 import { useMemo, useState } from 'react';
 import { Field, Modal, PageHeader } from '@/components/ui';
 import { patch, post } from '@/lib/api';
@@ -172,45 +173,19 @@ export default function Agenda() {
         <div className="spread"><h2 style={{ margin: 0 }}>Próximos vínculos</h2>
           <select className="btn sm" value={listConsole} onChange={(e) => { setListConsole(e.target.value); setShowDays(3); }} aria-label="Filtrar por console">
             <option value="">Todos os consoles</option>{consoles?.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
-        {!assigns.data ? <div className="skeleton" style={{ height: 120 }} /> : !groups.length ? <div className="empty">Nenhum vínculo futuro.</div> : <>
-          <div className="table-wrap"><table className="table">
-            <thead><tr><th>Console</th><th>Jogo</th><th>Horário</th><th>Duração</th><th>Recorrência</th><th>Ações</th></tr></thead>
-            {groups.slice(0, showDays).map(([dayLabel, rows]) => (
-              <tbody key={dayLabel}>
-                <tr className="group-row"><td colSpan={6}>{dayLabel} <span className="dim">· {rows.length} vínculo(s)</span></td></tr>
-                {rows.map((r) => {
-                  const sameDay = dateTime(r.starts_at).slice(0, 10) === dateTime(r.ends_at).slice(0, 10);
-                  return (
-                    <tr key={r.id}>
-                      <td><b>{r.console_name}</b></td><td>{r.game_title}</td>
-                      <td>{time(r.starts_at)} → {sameDay ? time(r.ends_at) : dateTime(r.ends_at)}</td>
-                      <td>{minutesLabel(mins(r.starts_at, r.ends_at))}</td>
-                      <td>{r.recurrence_group_id ? <span className="pill purple">recorrente</span> : <span className="dim">única</span>}</td>
-                      <td><div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
-                        <button className="btn sm" onClick={() => { setDlgErr(''); setDlg({ kind: 'end', a: r, ends_at: toLocalInput(r.ends_at), reason: '' }); }}>Alterar fim</button>
-                        <button className="btn sm danger" onClick={() => { setDlgErr(''); setDlg({ kind: 'cancel', a: r, refund: false, reason: '' }); }}>Cancelar</button></div></td>
-                    </tr>);
-                })}
-              </tbody>))}
-          </table></div>
-          {groups.length > showDays && <div><button className="btn sm" onClick={() => setShowDays(showDays + 3)}>Mostrar mais dias ({groups.length - showDays} restantes)</button></div>}
-        </>}
-      </section>
-
-      <section className="card stack"><h2>Manutenção / bloqueios</h2>
-        <NewRecord title="Novo bloqueio">{(close) => <>
-        <div className="grid3">
-          <Field label="Console" required error={bErr.console_id}><select value={b.console_id} onChange={(e) => setB({ ...b, console_id: e.target.value })}><option value="">Selecione</option>{consoleOptions}</select></Field>
-          <Field label="Início" required error={bErr.starts_at}><input type="datetime-local" value={b.starts_at} onChange={(e) => setB({ ...b, starts_at: e.target.value })} /></Field>
-          <Field label="Fim" required error={bErr.ends_at}><input type="datetime-local" value={b.ends_at} onChange={(e) => setB({ ...b, ends_at: e.target.value })} /></Field>
-        </div>
-        <Field label="Motivo" required error={bErr.reason}><input maxLength={500} value={b.reason} onChange={(e) => setB({ ...b, reason: e.target.value })} /></Field>
-        <div className="row"><button className="btn" disabled={busy} onClick={() => createBlackout(false, close)}>Bloquear</button>
-          <button className="btn danger" disabled={busy} onClick={() => createBlackout(true, close)}>Bloquear + reembolsar afetados</button></div>
-        </>}</NewRecord>
-        <DataTable rows={blackouts.data as unknown as Record<string, unknown>[] | null} empty="Nenhum bloqueio ativo." cols={[['Console', (r) => String(r.console_name)], ['Período', (r) => `${dateTime(String(r.starts_at))} – ${dateTime(String(r.ends_at))}`],
-          ['Motivo', (r) => String(r.reason)], ['', (r) => <button className="btn sm" onClick={() => deletion.remove(`/admin/blackouts/${r.id}`, 'Excluir bloqueio?', (request) => run(async () => { await request(); refresh(); }, 'Bloqueio removido.'))}>Excluir</button>]]} />
-      </section>
+        <DataTable rows={assigns.data ? groups.slice(0, showDays).flatMap(([day, rows]) => rows.map((row) => ({ ...row, day }))) : null}
+          error={assigns.error?.message} empty="Nenhum v?nculo futuro." cols={[
+            ['Dia', (r) => r.day], ['Console', (r) => r.console_name], ['Jogo', (r) => r.game_title],
+            ['In?cio', (r) => dateTime(r.starts_at)], ['Fim', (r) => dateTime(r.ends_at)],
+            ['Dura??o', (r) => minutesLabel(mins(r.starts_at, r.ends_at))],
+            ['Recorr?ncia', (r) => r.recurrence_group_id ? 'recorrente' : '?nica'],
+            ['A??es', (r) => <div className="row">
+              <button className="btn sm" onClick={() => { setDlgErr(''); setDlg({ kind: 'end', a: r, ends_at: toLocalInput(r.ends_at), reason: '' }); }}>Alterar fim</button>
+              <button className="btn sm danger" onClick={() => { setDlgErr(''); setDlg({ kind: 'cancel', a: r, refund: false, reason: '' }); }}>Cancelar</button>
+            </div>],
+          ]} />
+        {groups.length > showDays && <div><button className="btn sm" onClick={() => setShowDays(showDays + 3)}>Mostrar mais dias ({groups.length - showDays} restantes)</button></div>}
+      </CollapsibleCard>
 
       {dlg && (
         <Modal title={dlg.kind === 'end' ? 'Alterar fim do vínculo' : 'Cancelar vínculo'} onClose={() => setDlg(null)}>
