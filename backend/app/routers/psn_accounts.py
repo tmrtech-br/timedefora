@@ -16,7 +16,7 @@ from ..core import security
 from ..core.db import all_, audit_event, insert, one, tx, update
 from ..core.deps import Principal, require_role
 from ..core.errors import AppError, conflict, forbidden, not_found, unprocessable
-from .common import jsonable
+from .common import DeleteIn, jsonable
 
 router = APIRouter(prefix='/admin/psn-accounts', tags=['admin-psn'])
 OPERATOR = require_role('operator')
@@ -37,9 +37,9 @@ class FinishLogin(BaseModel):
     redirect_url: str = Field(min_length=10, max_length=8192)
 
 
-def _account(conn, account_id, lock=False):
+def _account(conn, account_id, lock=False, owner_user_id: str | None = None):
     row = one(conn, 'select * from psn_accounts where id=%s' + (' for update' if lock else ''), (account_id,))
-    if not row:
+    if not row or (owner_user_id is not None and str(row['owner_user_id']) != owner_user_id):
         raise not_found('Conta PSN não encontrada.')
     return row
 
@@ -81,7 +81,7 @@ def _call_agent(conn, row, suffix: str, payload: dict | None = None, method='POS
 @router.get('')
 def list_accounts(p: Principal = Depends(OPERATOR)):
     with tx() as conn:
-        rows = all_(conn, '''select p.id, p.agent_id, a.name agent_name, p.label, p.online_id, p.account_id, p.status,
+        rows = all_(conn, '''select p.id, p.agent_id, p.owner_user_id, a.name agent_name, p.label, p.online_id, p.account_id, p.status,
                                     p.last_check_at, p.last_error, p.created_at, p.updated_at
                              from psn_accounts p join console_agents a on a.id=p.agent_id
                              order by a.name, p.label''')
@@ -131,7 +131,7 @@ def change_account(account_id: uuid.UUID, body: ChangeAccount, p: Principal = De
 
 
 @router.delete('/{account_id}')
-def remove_account(account_id: uuid.UUID, p: Principal = Depends(ADMIN)):
+def remove_account(account_id: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     with tx() as conn:
         row = _account(conn, account_id, lock=True)
         used = all_(conn, '''select c.code from console_connection_configs cfg
@@ -146,15 +146,19 @@ def remove_account(account_id: uuid.UUID, p: Principal = Depends(ADMIN)):
                         from consoles c
                         where cfg.console_id=c.id and c.deleted_at is not null and cfg.psn_account_id=%s''', (account_id,))
         _call_agent(conn, row, '', method='DELETE')
-        audit_event(conn, 'psn.account_deleted', 'psn_accounts', account_id)
+        audit_event(conn, 'psn.account_deleted', 'psn_accounts', account_id, reason=body.reason)
         conn.execute('delete from psn_accounts where id=%s', (account_id,))
     return {'ok': True}
 
 
 @router.post('/{account_id}/login/start')
 def start_login(account_id: uuid.UUID, p: Principal = Depends(ADMIN)):
+    return start_account_login(account_id)
+
+
+def start_account_login(account_id: uuid.UUID, owner_user_id: str | None = None):
     with tx() as conn:
-        row = _account(conn, account_id)
+        row = _account(conn, account_id, lock=True, owner_user_id=owner_user_id)
         if row['status'] == 'disabled':
             raise conflict('account_disabled', 'Ative a conta antes de iniciar o login.')
         response = _call_agent(conn, row, '/login/start', {'label': row['label']})
@@ -164,8 +168,12 @@ def start_login(account_id: uuid.UUID, p: Principal = Depends(ADMIN)):
 
 @router.post('/{account_id}/login/finish')
 def finish_login(account_id: uuid.UUID, body: FinishLogin, p: Principal = Depends(ADMIN)):
+    return finish_account_login(account_id, body)
+
+
+def finish_account_login(account_id: uuid.UUID, body: FinishLogin, owner_user_id: str | None = None):
     with tx() as conn:
-        row = _account(conn, account_id, lock=True)
+        row = _account(conn, account_id, lock=True, owner_user_id=owner_user_id)
         if row['status'] == 'disabled':
             raise conflict('account_disabled', 'Ative a conta antes de concluir o login.')
         response = _call_agent(conn, row, '/login/finish', {'label': row['label'], 'redirect_url': body.redirect_url})
@@ -179,8 +187,12 @@ def finish_login(account_id: uuid.UUID, body: FinishLogin, p: Principal = Depend
 
 @router.post('/{account_id}/test')
 def test_account(account_id: uuid.UUID, p: Principal = Depends(ADMIN)):
+    return test_account_login(account_id)
+
+
+def test_account_login(account_id: uuid.UUID, owner_user_id: str | None = None):
     with tx() as conn:
-        row = _account(conn, account_id, lock=True)
+        row = _account(conn, account_id, lock=True, owner_user_id=owner_user_id)
         if row['status'] == 'disabled':
             raise conflict('account_disabled', 'Esta conta está desativada.')
         try:

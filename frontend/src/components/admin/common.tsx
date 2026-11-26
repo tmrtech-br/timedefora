@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Field, Modal } from '@/components/ui';
-import type { ApiError } from '@/lib/api';
+import { del, type ApiError } from '@/lib/api';
 import { toast } from '@/components/Toaster';
 
 /** Nomes dos campos da API em português (para mensagens de validação). */
@@ -119,6 +119,24 @@ export function useAsk(): [(o: AskOpts) => Promise<string | null>, React.ReactNo
       </form>
     </Modal>) : null;
   return [ask, dialog];
+}
+
+export function useDelete() {
+  const [ask, dialog] = useAsk();
+  async function remove(path: string, title: string, perform: (request: () => Promise<unknown>) => void, message?: string) {
+    const reason = await ask({ title, label: 'Motivo da exclusão', message, danger: true, confirm: 'Excluir' });
+    if (reason) perform(() => del(path, { reason }));
+  }
+  return { remove, dialog };
+}
+
+export function NewRecord({ title, children }: { title: string; children: (close: () => void) => React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
+  return <>
+    <div><button type="button" className="btn" onClick={() => setOpen(true)}>Novo cadastro</button></div>
+    {open && <Modal title={title} onClose={close}><div className="stack">{children(close)}</div></Modal>}
+  </>;
 }
 
 /** Confirmação "sim/não" no padrão do site (substitui o confirm() do navegador). */

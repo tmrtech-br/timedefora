@@ -247,6 +247,17 @@ def explain_unavailable(conn, game_id, minutes: int, mode: str, start_at: dateti
 
 # ------------------------------------------------------------------ preços
 def resolve_package(conn, game: dict, console_id, platform_id, minutes: int, at: datetime) -> dict | None:
+    if not game['min_minutes'] <= minutes <= game['max_minutes']:
+        return None
+    rate = conn.execute('''
+        select c.owner_user_id, r.min_minutes, r.max_minutes, r.rate_unit, r.rate_cents
+        from consoles c left join owner_console_rates r on r.console_id=c.id where c.id=%s
+    ''', (console_id,)).fetchone()
+    if rate and rate['owner_user_id'] is not None:
+        if rate['min_minutes'] is None or not rate['min_minutes'] <= minutes <= rate['max_minutes']:
+            return None
+        divisor = 60 if rate['rate_unit'] == 'hour' else 1
+        return {'id': None, 'price_cents': max(1, (rate['rate_cents'] * minutes + divisor // 2) // divisor)}
     lt = timeutil.local(at).time()
     rows = conn.execute(
         """select * from price_packages where active and minutes=%s
@@ -257,8 +268,6 @@ def resolve_package(conn, game: dict, console_id, platform_id, minutes: int, at:
            order by ((game_id is not null)::int*4 + (console_id is not null)::int*2 + (platform_id is not null)::int) desc,
                     price_cents asc limit 1""",
         (minutes, game['id'], console_id, platform_id, at, at, lt, lt)).fetchone()
-    if rows and not (game['min_minutes'] <= minutes <= game['max_minutes']):
-        return None
     return rows
 
 
@@ -271,7 +280,24 @@ def offered_minutes(conn, game: dict) -> list[dict]:
              and (valid_from is null or valid_from <= %s) and (valid_until is null or valid_until > %s)
            group by minutes order by minutes""",
         (game['id'], game['min_minutes'], game['max_minutes'], n, n)).fetchall()
-    return [dict(r) for r in rows]
+    offers = {r['minutes']: dict(r) for r in rows}
+    owner_rates = conn.execute('''
+        select min_minutes, max_minutes, rate_unit, rate_cents from owner_console_rates
+        where console_id=any(%s)
+    ''', ([console['id'] for console in eligible_consoles(conn, game['id'])],)).fetchall()
+    for rate in owner_rates:
+        low = max(game['min_minutes'], rate['min_minutes'])
+        high = min(game['max_minutes'], rate['max_minutes'], 480)
+        if low > high:
+            continue
+        choices = {low, high, *range((low + 4) // 5 * 5, high + 1, 5)}
+        divisor = 60 if rate['rate_unit'] == 'hour' else 1
+        for minutes in choices:
+            price = max(1, (rate['rate_cents'] * minutes + divisor // 2) // divisor)
+            offer = offers.get(minutes)
+            if offer is None or price < offer['price_cents']:
+                offers[minutes] = {'minutes': minutes, 'price_cents': price, 'promo': False}
+    return [offers[minutes] for minutes in sorted(offers)]
 
 
 def apply_coupon(conn, code: str | None, user_id, game_id, minutes: int, price: int) -> tuple[dict | None, int]:
@@ -339,15 +365,15 @@ def create_reservation(user, game_id, minutes: int, mode: str, start_at: datetim
                        (user.user_id, n)).fetchone()['n']
     if fut >= int(st['max_future_reservations_per_user']):
         raise conflict('too_many_reservations', 'Limite de reservas futuras atingido.')
-    if not offered_minutes(conn, game) or minutes not in [o['minutes'] for o in offered_minutes(conn, game)]:
+    if minutes not in {offer['minutes'] for offer in offered_minutes(conn, game)}:
         raise unprocessable('invalid_package', 'Pacote de tempo indisponível para este jogo.')
     # Expira holds vencidos e trava os consoles candidatos (serializa reservas concorrentes por console).
     expire_stale_holds(conn)
     slots = find_slots(conn, game['id'], minutes, mode, start_at, console_id, lock=True)
-    chosen, pkg = None, None
+    chosen, pkg, inventory = None, None, None
     for s in slots:
-        plat = conn.execute('select platform_id from consoles where id=%s', (s.console_id,)).fetchone()['platform_id']
-        pkg = resolve_package(conn, game, s.console_id, plat, minutes, s.start)
+        inventory = conn.execute('select platform_id, owner_user_id from consoles where id=%s', (s.console_id,)).fetchone()
+        pkg = resolve_package(conn, game, s.console_id, inventory['platform_id'], minutes, s.start)
         if pkg:
             chosen = s
             break
@@ -360,6 +386,8 @@ def create_reservation(user, game_id, minutes: int, mode: str, start_at: datetim
             r = insert(conn, 'reservations', {
                 'code': _code(), 'user_id': user.user_id, 'game_id': game['id'], 'console_id': chosen.console_id,
                 'assignment_id': chosen.assignment_id, 'package_id': pkg['id'], 'coupon_id': coupon['id'] if coupon else None,
+                'owner_user_id': inventory['owner_user_id'],
+                'owner_share_bps': st['owner_share_bps'] if inventory['owner_user_id'] else None,
                 'mode': mode, 'minutes': minutes, 'setup_minutes': int(st['setup_minutes']),
                 'starts_at': chosen.start, 'ends_at': chosen.end, 'blocked_until': chosen.blocked_until,
                 'status': 'pending_payment', 'price_cents': pkg['price_cents'], 'discount_cents': discount,
@@ -536,7 +564,10 @@ def availability_summary(conn, game: dict) -> dict:
                 info['messages'].append(f"Próxima disponibilidade: {timeutil.fmt(nxt['starts_at'])}.")
         for o in offers:
             s = find_slots(conn, game['id'], o['minutes'], 'queue', console_id=c['id'])
-            info['packages'].append({'minutes': o['minutes'], 'price_cents': o['price_cents'], 'fits': bool(s),
+            pkg = resolve_package(conn, game, c['id'], c['platform_id'], o['minutes'], s[0].start if s else n)
+            if not pkg:
+                continue
+            info['packages'].append({'minutes': o['minutes'], 'price_cents': pkg['price_cents'], 'fits': bool(s),
                                      'estimated_start_at': s[0].start.isoformat() if s else None,
                                      'estimated_end_at': s[0].end.isoformat() if s else None})
         consoles_out.append(info)

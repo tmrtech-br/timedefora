@@ -11,6 +11,7 @@ from datetime import timedelta
 from .config import settings
 from .core import timeutil
 from .core.db import get_pool, insert, tx
+from .diagnostic_worker import DiagnosticWorker
 from .gamebridge import AdapterError, get_adapter
 from .services import notifications, payments, preparation, scheduling, sessions
 from .services.consoles import console_ref
@@ -192,8 +193,10 @@ class WorkerThread(threading.Thread):
     def __init__(self):
         super().__init__(daemon=True, name='locaplay-worker')
         self._stop = threading.Event()
+        self._diagnostics = DiagnosticWorker()
 
     def run(self):
+        self._diagnostics.start()
         while not self._stop.is_set():
             try:
                 tick()
@@ -203,11 +206,13 @@ class WorkerThread(threading.Thread):
 
     def stop(self):
         self._stop.set()
+        self._diagnostics.stop()
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     settings.validate()
+    DiagnosticWorker().start()
     while True:
         log.info('tick %s', tick())
         time.sleep(settings.worker_interval_seconds)

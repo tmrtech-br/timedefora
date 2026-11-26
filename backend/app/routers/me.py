@@ -44,11 +44,17 @@ def me(p: Principal = Depends(current_user)):
     with tx() as conn:
         out = _profile(conn, p.user_id)
     out['mfa_verified'] = p.mfa_verified
+    out['permission_overrides'] = p.permissions
     out['unread_notifications'] = 0
     with tx() as conn:
         out['unread_notifications'] = one(conn, 'select count(*) n from notifications where user_id=%s and read_at is null',
                                           (p.user_id,))['n']
     return out
+
+
+@router.get('/permissions')
+def permissions(p: Principal = Depends(current_user)):
+    return {'roles': sorted(p.roles), 'overrides': p.permissions}
 
 
 class ProfileIn(BaseModel):

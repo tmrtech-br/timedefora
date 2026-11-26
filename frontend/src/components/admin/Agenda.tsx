@@ -1,10 +1,10 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { Field, Modal, PageHeader } from '@/components/ui';
-import { del, patch, post } from '@/lib/api';
+import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime, minutesLabel, time } from '@/lib/format';
-import { DataTable, fromLocalInput, toLocalInput, useAction } from './common';
+import { DataTable, fromLocalInput, NewRecord, toLocalInput, useAction, useDelete } from './common';
 
 type Ev = { id: string; console_id: string; starts_at: string; ends_at: string; title: string; kind: 'assignment' | 'reservation' | 'blackout'; status?: string; cancel_requested?: boolean };
 type Cal = { consoles: { id: string; code: string; name: string; status: string; is_published: boolean }[]; events: Ev[] };
@@ -69,6 +69,7 @@ export default function Agenda() {
     return Array.from(m.entries());
   }, [assigns.data, listConsole]);
   const { run, msg, busy } = useAction();
+  const deletion = useDelete();
   const refresh = () => { cal.reload(); assigns.reload(); blackouts.reload(); };
   const pct = (iso: string) => Math.min(100, Math.max(0, (new Date(iso).getTime() - from.getTime()) / 864e5 * 100));
   const nowPct = (Date.now() - from.getTime()) / 864e5 * 100;
@@ -77,18 +78,18 @@ export default function Agenda() {
   const selConsole = consoles?.find((c) => c.id === f.console_id);
   const gameOptions = (games || []).filter((g) => !selConsole || g.platform_codes.includes(selConsole.platform_code));
 
-  function createAssignment() {
+  function createAssignment(close: () => void) {
     const e = checkWindow(f, ['console_id', 'game_id']);
     setFErr(e);
     if (Object.keys(e).length) return;
-    run(async () => { await post('/admin/assignments', { ...f, starts_at: fromLocalInput(f.starts_at), ends_at: fromLocalInput(f.ends_at) }); refresh(); setF({ ...f, starts_at: '', ends_at: '' }); }, 'Vínculo criado.');
+    run(async () => { await post('/admin/assignments', { ...f, starts_at: fromLocalInput(f.starts_at), ends_at: fromLocalInput(f.ends_at) }); refresh(); setF({ ...f, starts_at: '', ends_at: '' }); close(); }, 'Vínculo criado.');
   }
-  function createBlackout(refund: boolean) {
+  function createBlackout(refund: boolean, close: () => void) {
     const e = checkWindow(b, ['console_id']);
     if (!b.reason.trim()) e.reason = 'Informe o motivo.';
     setBErr(e);
     if (Object.keys(e).length) return;
-    run(async () => { await post('/admin/blackouts', { ...b, starts_at: fromLocalInput(b.starts_at), ends_at: fromLocalInput(b.ends_at), ...(refund ? { resolution: 'cancel_and_refund' } : {}) }); refresh(); },
+    run(async () => { await post('/admin/blackouts', { ...b, starts_at: fromLocalInput(b.starts_at), ends_at: fromLocalInput(b.ends_at), ...(refund ? { resolution: 'cancel_and_refund' } : {}) }); refresh(); close(); },
       refund ? 'Bloqueio criado; reservas afetadas reembolsadas.' : 'Bloqueio criado.');
   }
   async function confirmDialog(refund: boolean) {
@@ -112,7 +113,8 @@ export default function Agenda() {
     <div className="stack">
       <PageHeader title="Vínculos jogo × console e calendário" subtitle="Janelas por período, sem sobreposição. Horários em America/Fortaleza." />
       {msg}
-      <section className="card stack"><h2>Novo vínculo</h2>
+      {deletion.dialog}
+      <NewRecord title="Novo vínculo">{(close) => <>
         <div className="grid3">
           <Field label="Console" required error={fErr.console_id}><select value={f.console_id} onChange={(e) => setF({ ...f, console_id: e.target.value, game_id: '' })}><option value="">Selecione</option>{consoleOptions}</select></Field>
           <Field label="Jogo" required error={fErr.game_id} hint={selConsole ? `Somente jogos de ${selConsole.platform_code}` : undefined}>
@@ -122,8 +124,8 @@ export default function Agenda() {
           <Field label="Fim" required error={fErr.ends_at}><input type="datetime-local" value={f.ends_at} onChange={(e) => setF({ ...f, ends_at: e.target.value })} /></Field>
           {f.repeat !== 'none' && <Field label="Ocorrências" hint="1 a 60"><input type="number" min={1} max={60} value={f.occurrences} onChange={(e) => setF({ ...f, occurrences: Math.min(60, Math.max(1, Number(e.target.value) || 1)) })} /></Field>}
         </div>
-        <div><button className="btn primary" disabled={busy} onClick={createAssignment}>Vincular</button></div>
-      </section>
+        <div><button className="btn primary" disabled={busy} onClick={() => createAssignment(close)}>Vincular</button></div>
+      </>}</NewRecord>
 
       <section className="card stack">
         <div className="spread"><h2 style={{ margin: 0 }}>Calendário do dia</h2>
@@ -196,16 +198,18 @@ export default function Agenda() {
       </section>
 
       <section className="card stack"><h2>Manutenção / bloqueios</h2>
+        <NewRecord title="Novo bloqueio">{(close) => <>
         <div className="grid3">
           <Field label="Console" required error={bErr.console_id}><select value={b.console_id} onChange={(e) => setB({ ...b, console_id: e.target.value })}><option value="">Selecione</option>{consoleOptions}</select></Field>
           <Field label="Início" required error={bErr.starts_at}><input type="datetime-local" value={b.starts_at} onChange={(e) => setB({ ...b, starts_at: e.target.value })} /></Field>
           <Field label="Fim" required error={bErr.ends_at}><input type="datetime-local" value={b.ends_at} onChange={(e) => setB({ ...b, ends_at: e.target.value })} /></Field>
         </div>
         <Field label="Motivo" required error={bErr.reason}><input maxLength={500} value={b.reason} onChange={(e) => setB({ ...b, reason: e.target.value })} /></Field>
-        <div className="row"><button className="btn" disabled={busy} onClick={() => createBlackout(false)}>Bloquear</button>
-          <button className="btn danger" disabled={busy} onClick={() => createBlackout(true)}>Bloquear + reembolsar afetados</button></div>
+        <div className="row"><button className="btn" disabled={busy} onClick={() => createBlackout(false, close)}>Bloquear</button>
+          <button className="btn danger" disabled={busy} onClick={() => createBlackout(true, close)}>Bloquear + reembolsar afetados</button></div>
+        </>}</NewRecord>
         <DataTable rows={blackouts.data as unknown as Record<string, unknown>[] | null} empty="Nenhum bloqueio ativo." cols={[['Console', (r) => String(r.console_name)], ['Período', (r) => `${dateTime(String(r.starts_at))} – ${dateTime(String(r.ends_at))}`],
-          ['Motivo', (r) => String(r.reason)], ['', (r) => <button className="btn sm" onClick={() => run(async () => { await del(`/admin/blackouts/${r.id}`); refresh(); }, 'Bloqueio removido.')}>Remover</button>]]} />
+          ['Motivo', (r) => String(r.reason)], ['', (r) => <button className="btn sm" onClick={() => deletion.remove(`/admin/blackouts/${r.id}`, 'Excluir bloqueio?', (request) => run(async () => { await request(); refresh(); }, 'Bloqueio removido.'))}>Excluir</button>]]} />
       </section>
 
       {dlg && (

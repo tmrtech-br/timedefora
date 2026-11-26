@@ -8,6 +8,7 @@ from . import timeutil
 from .context import actor_id_var
 from .db import get_pool
 from .errors import AppError, forbidden, unauthorized
+from .permissions import action_key, is_allowed, route_menu
 from .security import sha256
 
 SESSION_COOKIE = 'lp_session'
@@ -28,6 +29,7 @@ class Principal:
     roles: set[str] = field(default_factory=set)
     mfa_enabled: bool = False
     mfa_verified: bool = False
+    permissions: dict[str, bool] = field(default_factory=dict)
 
     @property
     def is_staff(self) -> bool:
@@ -43,6 +45,7 @@ def load_principal(token: str | None) -> Principal | None:
     with get_pool().connection() as conn:
         row = conn.execute(
             """select s.id sid, s.mfa_verified_at, s.last_seen_at, u.*,
+                      coalesce((select overrides from user_permissions where user_id=u.id), '{}'::jsonb) permissions,
                       exists(select 1 from mfa_factors f where f.user_id=u.id and f.confirmed_at is not null and f.disabled_at is null) mfa_enabled,
                       coalesce((select array_agg(r.code) from role_assignments ra join roles r on r.id=ra.role_id
                                 where ra.user_id=u.id and ra.revoked_at is null), '{}') roles
@@ -56,7 +59,8 @@ def load_principal(token: str | None) -> Principal | None:
     return Principal(user_id=str(row['id']), session_id=str(row['sid']), username=row['username'],
                      full_name=row['full_name'], email=row['email'], status=row['status'],
                      email_verified=row['email_verified_at'] is not None, roles=set(row['roles']),
-                     mfa_enabled=row['mfa_enabled'], mfa_verified=row['mfa_verified_at'] is not None)
+                     mfa_enabled=row['mfa_enabled'], mfa_verified=row['mfa_verified_at'] is not None,
+                     permissions=row['permissions'])
 
 
 def optional_user(request: Request) -> Principal | None:
@@ -79,8 +83,12 @@ def verified_user(p: Principal = Depends(current_user)) -> Principal:
 
 
 def require_role(minimum: str):
-    def dep(p: Principal = Depends(current_user)) -> Principal:
+    def dep(request: Request, p: Principal = Depends(current_user)) -> Principal:
         if not p.has(minimum):
+            raise forbidden()
+        path = request.scope['route'].path
+        if not is_allowed(p.permissions, f'level:{minimum}', route_menu(path),
+                          action_key(request.method, path)):
             raise forbidden()
         if settings.require_admin_mfa and minimum in STAFF_ROLES:
             if not p.mfa_enabled:
@@ -88,6 +96,7 @@ def require_role(minimum: str):
             if not p.mfa_verified:
                 raise AppError(403, 'mfa_required', 'Confirme o código de autenticação em dois fatores.')
         return p
+    dep.minimum_role = minimum
     return dep
 
 

@@ -1,9 +1,9 @@
 'use client';
 import { useState } from 'react';
 import { Alert, Field, PageHeader, StatusPill } from '@/components/ui';
-import { del, patch, post } from '@/lib/api';
+import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
-import { DataTable, useAction, useConfirm } from './common';
+import { DataTable, NewRecord, useAction, useConfirm, useDelete } from './common';
 import { dateTime } from '@/lib/format';
 
 type Account = Record<string, unknown> & { id: string; agent_id: string; agent_name: string; label: string; status: string; online_id: string | null;
@@ -15,7 +15,7 @@ type PsnDevice = { platform: string; duid: string; name: string; remoteplay_enab
 type LanPs4 = { address: string; state: string; host_name: string | null };
 type Ps4Diagnostic = { duid: string; message: string };
 
-export default function PsnAccounts() {
+export default function PsnAccounts({ onAccountsChanged }: { onAccountsChanged?: () => void } = {}) {
   const accounts = useApi<Account[]>('/admin/psn-accounts');
   const options = useApi<{ chiaki_import_enabled: boolean }>('/admin/psn-accounts/options');
   const agents = useApi<Agent[]>('/admin/agents');
@@ -30,16 +30,16 @@ export default function PsnAccounts() {
   >(null);
   const { run, msg, busy } = useAction();
   const [confirm, confirmation] = useConfirm();
-  const refresh = () => { accounts.reload(); setLogin(null); setRedirect(''); setDevices(null); setDiagnostic(null); };
+  const deletion = useDelete();
+  const refresh = () => { accounts.reload(); onAccountsChanged?.(); setLogin(null); setRedirect(''); setDevices(null); setDiagnostic(null); };
 
   return (
     <div className="stack">
       <PageHeader title="Contas PSN" subtitle="Vincule várias contas ao mesmo PC agente. Os tokens são protegidos por DPAPI e não são armazenados no servidor." />
-      {msg}{confirmation}
+      {msg}{confirmation}{deletion.dialog}
       <Alert kind="warn"><span>A conexão Remote Play nativa pela internet ainda depende do protocolo PSN Session Manager/holepunch.
         Vincular uma conta NÃO significa que vídeo, áudio, controle ou conexão ao console foram validados.</span></Alert>
-      <section className="card stack">
-        <h2>Cadastrar conta</h2>
+      <NewRecord title="Nova conta PSN">{(close) => <>
         <div className="grid3">
           <Field label="Rótulo interno"><input maxLength={80} placeholder="teste01" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} /></Field>
           <Field label="Agente Windows"><select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
@@ -49,9 +49,9 @@ export default function PsnAccounts() {
         </div>
         <div className="row"><button className="btn primary" disabled={busy || !agentId || newLabel.trim().length < 2} onClick={() => run(async () => {
           await post('/admin/psn-accounts', { label: newLabel.trim(), agent_id: agentId });
-          setNewLabel(''); accounts.reload();
+          setNewLabel(''); accounts.reload(); onAccountsChanged?.(); close();
         }, 'Conta cadastrada. Clique em Vincular para autenticar na Sony.')}>Cadastrar conta</button></div>
-      </section>
+      </>}</NewRecord>
       <section className="card stack">
         <h2>Contas vinculadas ao agente</h2>
         <DataTable<Account> rows={accounts.data} cols={[
@@ -95,11 +95,11 @@ export default function PsnAccounts() {
             {a.status === 'disabled' && <button className="btn sm" disabled={busy} onClick={() => run(async () => {
               await patch(`/admin/psn-accounts/${a.id}`, { status: 'pending' }); accounts.reload();
             }, 'Conta reativada. Vincule e valide o login Sony novamente.')}>Reativar</button>}
-            <button className="btn sm danger" disabled={busy} onClick={() => run(async () => {
-              const yes = await confirm({ title: 'Excluir conta PSN', message: `Excluir a conta ${a.label} e eliminar os tokens armazenados no agente?`, confirm: 'Excluir', danger: true });
-              if (!yes) return;
-              await del(`/admin/psn-accounts/${a.id}`); refresh();
-            }, 'Conta excluída do agente e do banco.')}>Excluir</button>
+            <button className="btn sm danger" disabled={busy} onClick={() => deletion.remove(
+              `/admin/psn-accounts/${a.id}`, 'Excluir conta PSN?',
+              (request) => run(async () => { await request(); refresh(); }, 'Conta excluída do agente e do banco.'),
+              `Os tokens da conta ${a.label} serão eliminados do agente.`,
+            )}>Excluir</button>
           </div>],
         ]} />
         {accounts.data?.some((a) => a.last_error) && <div className="small muted">

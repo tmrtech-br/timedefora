@@ -2,13 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import RequireAuth from '@/components/RequireAuth';
+import OwnerInventory from '@/components/OwnerInventory';
 import { Alert } from '@/components/ui';
 import { get, post } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 
 type Terms = { id: string; version: string; body: string; accepted_at: string | null };
-type Console = { id: string; name: string; is_published: boolean };
-type Account = { id: string; label: string; online_id: string | null };
 
 function OwnerPortal() {
   const { me } = useAuth();
@@ -17,7 +16,6 @@ function OwnerPortal() {
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [inventory, setInventory] = useState<{ consoles: Console[]; accounts: Account[] }>();
 
   useEffect(() => {
     if (!isOwner) return;
@@ -29,18 +27,6 @@ function OwnerPortal() {
     });
     return () => { active = false; };
   }, [isOwner]);
-
-  useEffect(() => {
-    if (!terms?.accepted_at) return;
-    let active = true;
-    Promise.all([get<Console[]>('/owner/consoles'), get<Account[]>('/owner/psn-accounts')])
-      .then(([consoles, accounts]) => {
-        if (active) setInventory({ consoles, accounts });
-      }).catch((cause: Error) => {
-        if (active) setError(cause.message);
-      });
-    return () => { active = false; };
-  }, [terms]);
 
   async function accept() {
     if (!terms || !accepted || busy) return;
@@ -71,25 +57,7 @@ function OwnerPortal() {
           <button type="submit" className="btn" disabled={!accepted || busy}>{busy ? 'Salvando…' : 'Confirmar aceite'}</button>
         </form>
       )}
-      {terms?.accepted_at && !inventory && !error && <p role="status">Carregando inventário…</p>}
-      {inventory && (
-        <div className="admin-grid">
-          <nav className="admin-nav" aria-label="Inventário do proprietário">
-            <a href="#contas-psn">Contas PSN</a>
-            <a href="#consoles">Consoles</a>
-          </nav>
-          <div>
-            <section className="card" id="contas-psn">
-              <h2>Contas PSN</h2>
-              {inventory.accounts.length ? <ul>{inventory.accounts.map((account) => <li key={account.id}>{account.label}{account.online_id && ` · ${account.online_id}`}</li>)}</ul> : <p>Nenhuma conta vinculada.</p>}
-            </section>
-            <section className="card" id="consoles">
-              <h2>Consoles</h2>
-              {inventory.consoles.length ? <ul>{inventory.consoles.map((console) => <li key={console.id}>{console.name} · {console.is_published ? 'Publicado' : 'Aguardando publicação'}</li>)}</ul> : <p>Nenhum console vinculado.</p>}
-            </section>
-          </div>
-        </div>
-      )}
+      {terms?.accepted_at && <OwnerInventory />}
     </section>
   );
 }

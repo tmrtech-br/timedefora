@@ -9,14 +9,24 @@ from pydantic import BaseModel, Field
 from ..config import settings
 from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx
-from ..core.deps import Principal, client_ip, current_user, verified_user
-from ..core.errors import AppError, bad_request, conflict, not_found
+from ..core.deps import Principal, client_ip, current_user as authenticated_user, verified_user as verified_account
+from ..core.errors import AppError, bad_request, conflict, forbidden, not_found
 from ..services import notifications, payments, scheduling, sessions
 from ..services.payment_providers import verify_mp_signature
 from ..services.settings_store import get_settings, require_enabled
 from .common import jsonable
 
 router = APIRouter(tags=['jogador'])
+
+
+def current_user(p: Principal = Depends(authenticated_user)) -> Principal:
+    if 'owner' in p.roles and 'client' not in p.roles:
+        raise forbidden('O papel de locatário é necessário para acessar esta ação.')
+    return p
+
+
+def verified_user(p: Principal = Depends(current_user)) -> Principal:
+    return verified_account(p)
 
 
 class ReservationIn(BaseModel):

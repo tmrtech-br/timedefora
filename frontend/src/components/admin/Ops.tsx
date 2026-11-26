@@ -1,10 +1,10 @@
 'use client';
 import { useState } from 'react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
-import { del, patch, post } from '@/lib/api';
+import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { CANCEL_REQUEST_STATUS, dateTime, minutesLabel, money, QUEUE_STATUS, RESERVATION_STATUS, time } from '@/lib/format';
-import { DataTable, fromLocalInput, need, useAction, useAsk } from './common';
+import { DataTable, fromLocalInput, need, NewRecord, useAction, useAsk, useDelete } from './common';
 
 type R = Record<string, unknown>;
 const INPUT_LABEL: Record<string, string> = { gamepad: 'Controle', keyboard_mouse: 'Teclado e mouse' };
@@ -79,8 +79,8 @@ export function Sessions() {
   const resolved = all.data ? all.data.filter((r) => r.resolved_at) : null;
   const { run, msg, busy } = useAction();
   const [ask, askDialog] = useAsk();
-  const [i, setI] = useState({ description: '', kind: 'other' });
-  const [res, setRes] = useState<{ id: string; label: string; compensation: string; notes: string } | null>(null);
+  const [i, setI] = useState({ description: '', kind: 'other', reservationId: '' });
+  const [res, setRes] = useState<{ id: string; label: string; compensation: string; notes: string; ownerRental: boolean; fault: string; ownerCents: string } | null>(null);
   return (
     <div className="stack">
       <PageHeader title="Sessões ativas e incidentes" />
@@ -101,10 +101,17 @@ export function Sessions() {
       {askDialog}
       <section className="card stack"><h2>Incidentes</h2>
         <div className="row"><select className="btn" value={i.kind} onChange={(e) => setI({ ...i, kind: e.target.value })}><option value="console_failure">Falha de console</option><option value="stream_failure">Falha de stream</option><option value="agent_offline">Agente offline</option><option value="platform_delay">Atraso da plataforma</option><option value="other">Outro</option></select>
+          <select className="btn" aria-label="Reserva afetada" value={i.reservationId} onChange={(e) => setI({ ...i, reservationId: e.target.value })}>
+            <option value="">Sem reserva associada</option>
+            {s.data?.map((item) => <option key={String(item.id)} value={String(item.reservation_id)}>{String(item.code)} · {String(item.console_name)}</option>)}
+          </select>
           <input className="btn" style={{ flex: 1 }} placeholder="Descrição" value={i.description} onChange={(e) => setI({ ...i, description: e.target.value })} />
-          <button className="btn" onClick={() => run(async () => { await post('/admin/incidents', i); inc.reload(); }, 'Incidente registrado.')}>Registrar</button></div>
+          <button className="btn" onClick={() => run(async () => {
+            await post('/admin/incidents', { description: i.description, kind: i.kind, reservation_id: i.reservationId || null });
+            inc.reload();
+          }, 'Incidente registrado.')}>Registrar</button></div>
         <DataTable rows={inc.data} empty="Nenhum incidente aberto." cols={[['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')], ['Descrição', (r) => String(r.description)],
-          ['Desde', (r) => dateTime(String(r.started_at))], ['', (r) => <button className="btn sm" onClick={() => setRes({ id: String(r.id), label: String(r.description), compensation: 'none', notes: '' })}>Resolver</button>]]} />
+          ['Desde', (r) => dateTime(String(r.started_at))], ['', (r) => <button className="btn sm" onClick={() => setRes({ id: String(r.id), label: String(r.description), compensation: 'none', notes: '', ownerRental: Boolean(r.owner_rental), fault: '', ownerCents: '' })}>Resolver</button>]]} />
       </section>
       <section className="card stack"><h2>Histórico de incidentes resolvidos</h2>
         <DataTable rows={resolved} empty="Nenhum incidente resolvido ainda." cols={[
@@ -119,17 +126,33 @@ export function Sessions() {
         <Modal title="Resolver incidente" onClose={() => setRes(null)}>
           <div className="stack">
             <p className="small muted" style={{ margin: 0 }}>{res.label}</p>
+            {res.ownerRental && <Field label="Causa" required>
+              <select value={res.fault} onChange={(e) => setRes({ ...res, fault: e.target.value })}>
+                <option value="">Selecione</option><option value="renter">Locatário</option><option value="console">Proprietário ou console</option>
+              </select>
+            </Field>}
+            {res.ownerRental && res.fault === 'console' && <Field label="Parcela aprovada em centavos" hint="Em branco, aplica a parcela definida na reserva.">
+              <input type="number" min={0} step={1} value={res.ownerCents} onChange={(e) => setRes({ ...res, ownerCents: e.target.value })} />
+            </Field>}
+            {res.fault === 'renter' ? <p>O cliente recebe o estorno integral e o proprietário fica sem repasse.</p> : <>
             <Field label="Compensação ao cliente" required>
               <select value={res.compensation} onChange={(e) => setRes({ ...res, compensation: e.target.value })}>
                 {Object.entries(COMPENSATION).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></Field>
-            <p className="small dim" style={{ margin: 0 }}>{COMPENSATION[res.compensation].hint}</p>
-            <Field label="Observações (registradas no incidente)" required={res.compensation !== 'none'}>
+            <p className="small dim" style={{ margin: 0 }}>{COMPENSATION[res.compensation].hint}</p></>}
+            <Field label="Justificativa da decisão" required={res.ownerRental || res.compensation !== 'none'}>
               <textarea maxLength={1000} value={res.notes} onChange={(e) => setRes({ ...res, notes: e.target.value })} /></Field>
             <div className="row">
               <button className={`btn ${res.compensation === 'refund' ? 'danger' : 'primary'}`} disabled={busy} onClick={async () => {
                 const ok = await run(async () => {
-                  need(res.compensation === 'none' || res.notes.trim().length >= 5, 'Descreva a compensação concedida (mínimo 5 caracteres).');
-                  await post(`/admin/incidents/${res.id}/resolve`, { compensation: res.compensation, compensation_notes: res.notes.trim() }); inc.reload(); all.reload(); return true;
+                  need(!res.ownerRental || res.fault, 'Informe a causa do incidente.');
+                  need((!res.ownerRental && res.compensation === 'none') || res.notes.trim().length >= 5, 'Justifique a decisão (mínimo 5 caracteres).');
+                  const result = await post<{ ok: boolean; message?: string }>(`/admin/incidents/${res.id}/resolve`, {
+                    compensation: res.compensation, compensation_notes: res.notes.trim(),
+                    owner_fault: res.fault || null,
+                    owner_approved_cents: res.fault === 'console' && res.ownerCents ? Number(res.ownerCents) : null,
+                  });
+                  need(result.ok, result.message || 'O incidente permanece aberto.');
+                  inc.reload(); all.reload(); return true;
                 }, 'Incidente resolvido.');
                 if (ok) setRes(null);
               }}>Resolver incidente</button>
@@ -143,6 +166,7 @@ export function Sessions() {
 }
 
 export function Channels() {
+  const deletion = useDelete();
   const ch = useApi<R[]>('/admin/channels');
   const games = useApi<{ id: string; title: string }[]>('/admin/games').data;
   const consoles = useApi<{ id: string; name: string }[]>('/admin/consoles').data;
@@ -152,21 +176,22 @@ export function Channels() {
     <div className="stack">
       <PageHeader title="Transmissões públicas" subtitle="Somente espectadores. Nunca exiba credenciais, telas de compra/configuração ou dados pessoais." />
       {msg}
-      <section className="card stack"><div className="grid3">
+      {deletion.dialog}
+      <NewRecord title="Nova transmissão">{(close) => <><div className="grid3">
         <Field label="Plataforma"><select value={f.provider} onChange={(e) => setF({ ...f, provider: e.target.value })}><option value="twitch">Twitch</option><option value="kick">Kick</option><option value="external">Link externo</option></select></Field>
         {f.provider === 'external' ? <Field label="URL https"><input maxLength={500} value={f.external_url} onChange={(e) => setF({ ...f, external_url: e.target.value })} /></Field>
           : <Field label="Nome do canal"><input value={f.channel_name} onChange={(e) => setF({ ...f, channel_name: e.target.value })} /></Field>}
         <Field label="Console"><select value={f.console_id} onChange={(e) => setF({ ...f, console_id: e.target.value })}><option value="">—</option>{consoles?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         <Field label="Jogo"><select value={f.game_id} onChange={(e) => setF({ ...f, game_id: e.target.value })}><option value="">—</option>{games?.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</select></Field>
         <label className="check"><input type="checkbox" checked={f.privacy_mask_enabled} onChange={(e) => setF({ ...f, privacy_mask_enabled: e.target.checked })} />Máscara/corte de telas sensíveis ativo</label></div>
-        <button className="btn primary" onClick={() => run(async () => { await post('/admin/channels', { ...f, console_id: f.console_id || null, game_id: f.game_id || null, channel_name: f.channel_name || null, external_url: f.external_url || null }); ch.reload(); }, 'Canal cadastrado.')}>Cadastrar</button></section>
+        <button className="btn primary" onClick={() => run(async () => { await post('/admin/channels', { ...f, console_id: f.console_id || null, game_id: f.game_id || null, channel_name: f.channel_name || null, external_url: f.external_url || null }); ch.reload(); close(); }, 'Canal cadastrado.')}>Cadastrar</button></>}</NewRecord>
       <section className="card"><DataTable rows={ch.data} cols={[['Plataforma', (r) => PROVIDER_LABEL[String(r.provider)] || String(r.provider)], ['Canal', (r) => String(r.channel_name || r.external_url)], ['Console / jogo', (r) => [r.console_name, r.game_title].filter(Boolean).join(' · ')],
         ['Aparece no site?', (r) => { const issues = (r.issues as string[]) || []; const shown = (r.shown_on as string[]) || [];
           return issues.length ? <div className="stack" style={{ gap: 4 }}>{shown.length > 0 && <span className="pill amber">parcial: {shown.join(', ')}</span>}
             {!shown.length && <span className="pill red">não aparece</span>}<ul className="small" style={{ margin: 0, paddingLeft: 16 }}>{issues.map((x) => <li key={x}>{x}</li>)}</ul></div>
             : <span className="pill green">sim — {shown.join(', ')}</span>; }],
         ['Status', (r) => <select className="btn sm" value={String(r.status)} onChange={(e) => run(async () => { await patch(`/admin/channels/${r.id}`, { status: e.target.value }); ch.reload(); })}><option value="offline">offline</option><option value="live">ao vivo</option><option value="disabled">desativado</option></select>],
-        ['', (r) => <button className="btn sm danger" onClick={() => run(async () => { await del(`/admin/channels/${r.id}`); ch.reload(); }, 'Removido.')}>Remover</button>]]} /></section>
+        ['', (r) => <button className="btn sm danger" onClick={() => deletion.remove(`/admin/channels/${r.id}`, 'Excluir canal?', (request) => run(async () => { await request(); ch.reload(); }, 'Removido.'))}>Excluir</button>]]} /></section>
     </div>
   );
 }

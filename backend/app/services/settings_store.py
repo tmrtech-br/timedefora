@@ -1,5 +1,6 @@
 """Leitura de global_settings com valores padrão documentados."""
 DEFAULTS = {
+    'owner_share_bps': 3000,                  # percentual do proprietário em pontos-base
     'hold_minutes': 5,                        # expiração da reserva provisória
     'setup_minutes': 2,                       # preparação/limpeza entre jogadores
     'queue_lead_minutes': 0,                  # antecedência mínima do início em modo fila (0 = assim que o console estiver livre)

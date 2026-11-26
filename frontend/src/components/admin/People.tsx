@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Copy } from 'lucide-react';
 import { Alert, Field, Modal, PageHeader } from '@/components/ui';
 import { toast } from '@/components/Toaster';
-import { patch, post, put } from '@/lib/api';
+import { get, patch, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
@@ -12,13 +12,20 @@ const DR_STATUS_PT = { in_progress: 'Em andamento', completed: 'Concluir', rejec
 
 type R = Record<string, unknown>;
 
+type PermissionDocument = {
+  version: number;
+  overrides: Record<string, boolean>;
+  catalog: { key: string; label: string; kind: 'menu' | 'level' | 'action'; minimum: string }[];
+};
+
 export function Users() {
   const [q, setQ] = useState('');
   const { me } = useAuth();
   const list = useApi<R[]>(`/admin/users?q=${encodeURIComponent(q)}`);
-  const { run, msg } = useAction();
+  const { run, msg, busy } = useAction();
   const [ask, askDialog] = useAsk();
   const sup = me?.roles.includes('superadmin');
+  const [permissions, setPermissions] = useState<PermissionDocument & { userId: string; username: string }>();
   return (
     <div className="stack">
       <PageHeader title="Usuários e permissões" subtitle="Senhas, tokens e dados sensíveis nunca são exibidos." />
@@ -33,9 +40,52 @@ export function Users() {
               danger: susp, confirm: susp ? 'Suspender' : 'Reativar', message: susp ? 'A pessoa perde o acesso e as sessões abertas são encerradas.' : undefined });
             if (reason) run(async () => { await post(`/admin/users/${r.id}/suspension`, { suspend: susp, reason }); list.reload(); }, 'Atualizado.');
           }}>{r.status === 'suspended' ? 'Reativar' : 'Suspender'}</button>
+          {sup && r.id !== me?.id && <button className="btn sm" disabled={busy} onClick={() => run(async () => {
+            const userId = String(r.id);
+            const data = await get<PermissionDocument>(`/admin/users/${userId}/permissions`);
+            setPermissions({ ...data, userId, username: String(r.username) });
+          })}>Permissões</button>}
           {sup && <select className="btn sm" value="" onChange={(e) => { const [g, role] = e.target.value.split(':'); if (role) run(async () => { await post(`/admin/users/${r.id}/roles`, { role, grant: g === '+' }); list.reload(); }, 'Papéis atualizados.'); }}>
             <option value="">Papéis…</option>{['operator', 'admin', 'superadmin', 'owner'].map((x) => <option key={x} value={`${(r.roles as string[]).includes(x) ? '-' : '+'}:${x}`}>{(r.roles as string[]).includes(x) ? 'Remover' : 'Conceder'} {x}</option>)}</select>}</div>]]} /></section>
       {askDialog}
+      {permissions && <Modal title={`Permissões de ${permissions.username}`} onClose={() => setPermissions(undefined)}>
+        <form className="stack" onSubmit={(event) => {
+          event.preventDefault();
+          void run(async () => {
+            await put(`/admin/users/${permissions.userId}/permissions`, {
+              version: permissions.version, overrides: permissions.overrides,
+            });
+            setPermissions(undefined);
+          }, 'Permissões atualizadas.');
+        }}>
+          <p className="small muted">As permissões marcadas respeitam o papel da pessoa.</p>
+          {msg}
+          <div className="stack" style={{ maxHeight: '55vh', overflowY: 'auto' }}>
+            {(['menu', 'level', 'action'] as const).map((kind) => <fieldset key={kind} className="stack">
+              <legend>{{ menu: 'Menus', level: 'Níveis de acesso', action: 'Ações' }[kind]}</legend>
+              {permissions.catalog.filter((item) => item.kind === kind).map((item) => (
+                <label key={item.key} className="row">
+                  <input type="checkbox" checked={permissions.overrides[item.key] !== false} onChange={(event) => {
+                    const enabled = event.target.checked;
+                    setPermissions((current) => {
+                      if (!current) return current;
+                      const overrides = { ...current.overrides };
+                      if (enabled) delete overrides[item.key];
+                      else overrides[item.key] = false;
+                      return { ...current, overrides };
+                    });
+                  }} />
+                  <span>{item.label}{kind === 'action' ? ` · ${item.minimum}` : ''}</span>
+                </label>
+              ))}
+            </fieldset>)}
+          </div>
+          <div className="row">
+            <button className="btn primary" type="submit" disabled={busy}>Salvar permissões</button>
+            <button className="btn" type="button" disabled={busy} onClick={() => setPermissions({ ...permissions, overrides: {} })}>Restaurar padrão do papel</button>
+          </div>
+        </form>
+      </Modal>}
     </div>
   );
 }

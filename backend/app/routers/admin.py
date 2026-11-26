@@ -6,23 +6,26 @@ import re
 import time as time_mod
 import uuid
 from datetime import date, datetime, time, timedelta
+from typing import Literal
 
 import psycopg
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator
 
 from ..config import settings
 from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx, update
 from ..core.deps import Principal, require_role
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found, unprocessable
+from ..core.permissions import ADMIN_MENUS, action_key, is_allowed, menu_key, route_menu
 from ..gamebridge import METHODS, AdapterError, get_adapter, method_info
-from ..services import notifications, payments, scheduling, sessions
+from ..services import notifications, owner_settlements, payments, scheduling, sessions
 from ..services.consoles import console_ref
 from ..services.settings_store import DEFAULTS, get_settings
-from .common import jsonable
+from .common import DeleteIn, jsonable
+from . import psn_accounts
 
 router = APIRouter(prefix='/admin', tags=['admin'])
 OPERATOR = require_role('operator')
@@ -249,12 +252,15 @@ def set_license(gid: uuid.UUID, body: LicenseIn, p: Principal = Depends(ADMIN)):
 
 
 @router.delete('/games/{gid}')
-def delete_game(gid: uuid.UUID, p: Principal = Depends(ADMIN)):
+def delete_game(gid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     with tx() as conn:
+        if not one(conn, 'select id from games where id=%s and deleted_at is null for update', (gid,)):
+            raise not_found()
         if _future_paid_for_game(conn, gid):
             raise conflict('has_reservations', 'Não é possível excluir: há reservas futuras deste jogo.')
         conn.execute("update games set deleted_at=%s, status='archived' where id=%s", (timeutil.now(), gid))
         conn.execute("update console_game_assignments set status='archived' where game_id=%s and status='active' and starts_at > %s", (gid, timeutil.now()))
+        audit_event(conn, 'game.deleted', 'games', gid, reason=body.reason)
     return {'ok': True}
 
 
@@ -388,11 +394,13 @@ def create_capture(body: CaptureIn, p: Principal = Depends(ADMIN)):
 
 
 @router.delete('/capture-devices/{did}')
-def delete_capture(did: uuid.UUID, p: Principal = Depends(ADMIN)):
+def delete_capture(did: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     with tx() as conn:
         if one(conn, 'select 1 from console_connection_configs where capture_device_id=%s', (did,)):
             raise conflict('in_use', 'Capturadora vinculada a um console.')
-        conn.execute('delete from capture_devices where id=%s', (did,))
+        if not conn.execute('delete from capture_devices where id=%s', (did,)).rowcount:
+            raise not_found()
+        audit_event(conn, 'capture_device.deleted', 'capture_devices', did, reason=body.reason)
     return {'ok': True}
 
 
@@ -418,11 +426,13 @@ def create_control(body: ControlIn, p: Principal = Depends(ADMIN)):
 
 
 @router.delete('/control-adapters/{cid}')
-def delete_control(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
+def delete_control(cid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     with tx() as conn:
         if one(conn, 'select 1 from console_connection_configs where control_adapter_id=%s', (cid,)):
             raise conflict('in_use', 'Adaptador vinculado a um console.')
-        conn.execute('delete from control_adapters where id=%s', (cid,))
+        if not conn.execute('delete from control_adapters where id=%s', (cid,)).rowcount:
+            raise not_found()
+        audit_event(conn, 'control_adapter.deleted', 'control_adapters', cid, reason=body.reason)
     return {'ok': True}
 
 
@@ -450,7 +460,10 @@ def _console_view(conn, c: dict) -> dict:
     if cfg:
         info = method_info(cfg['method'])
         out['connection']['method_label'] = info['label'] if info else cfg['method']
-    out['tests'] = jsonable(all_(conn, 'select id, test_type, result, simulated, message, run_at, duration_ms from console_connection_tests where console_id=%s order by run_at desc limit 20', (c['id'],)))
+    out['tests'] = jsonable(all_(conn, '''
+        select id, test_type, result, simulated, message, run_at, duration_ms, metrics->>'network_route' network_route
+        from console_connection_tests where console_id=%s order by run_at desc limit 20
+    ''', (c['id'],)))
     out['last_health'] = jsonable(one(conn, 'select * from console_health_samples where console_id=%s order by checked_at desc limit 1', (c['id'],)))
     out['current_assignment'] = jsonable(one(conn, '''select a.id, g.title, a.starts_at, a.ends_at from console_game_assignments a join games g on g.id=a.game_id
                                                       where a.console_id=%s and a.status='active' and a.starts_at <= %s and a.ends_at > %s''',
@@ -468,6 +481,10 @@ def list_consoles(p: Principal = Depends(OPERATOR)):
 
 @router.post('/consoles', status_code=201)
 def create_console(body: ConsoleIn, p: Principal = Depends(ADMIN)):
+    return register_console(body, p.user_id)
+
+
+def register_console(body: ConsoleIn, actor_id: str, owner_user_id: str | None = None):
     code = body.code.strip().upper()
     if not re.match(r'^[A-Z0-9-]{3,30}$', code):
         raise unprocessable('validation_error', 'Código inválido (ex.: PS5-01).')
@@ -479,8 +496,11 @@ def create_console(body: ConsoleIn, p: Principal = Depends(ADMIN)):
             raise conflict('code_taken', 'Já existe console com este código.')
         data = body.model_dump(exclude={'platform_code'})
         data['code'] = code
-        c = insert(conn, 'consoles', {**data, 'platform_id': plat['id'], 'manufacturer': body.manufacturer or plat['manufacturer'],
-                                      'created_by': p.user_id, 'updated_by': p.user_id})
+        try:
+            c = insert(conn, 'consoles', {**data, 'platform_id': plat['id'], 'manufacturer': body.manufacturer or plat['manufacturer'],
+                                          'created_by': actor_id, 'updated_by': actor_id, 'owner_user_id': owner_user_id})
+        except psycopg.errors.UniqueViolation:
+            raise conflict('code_taken', 'Já existe um console com o código ou identificador informado.')
         insert(conn, 'console_connection_configs', {'console_id': c['id'], 'method': 'unconfigured'})
         return _console_view(conn, c)
 
@@ -532,7 +552,7 @@ def set_console_status(cid: uuid.UUID, body: StatusIn, p: Principal = Depends(OP
 
 
 @router.delete('/consoles/{cid}')
-def delete_console(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
+def delete_console(cid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     with tx() as conn:
         c = one(conn, 'select id from consoles where id=%s and deleted_at is null for update', (cid,))
         if not c:
@@ -544,7 +564,7 @@ def delete_console(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
             raise conflict('has_reservations', f'Não é possível excluir: {len(fut)} reserva(s) futura(s) neste console. '
                            'Coloque em manutenção com reembolso (ou remarque as reservas) antes de excluir.',
                            reservations=[{'code': r['code'], 'starts_at': r['starts_at'].isoformat()} for r in fut])
-        audit_event(conn, 'console.deleted', 'consoles', cid)
+        audit_event(conn, 'console.deleted', 'consoles', cid, reason=body.reason)
         conn.execute("update consoles set deleted_at=%s, is_published=false, status='disabled' where id=%s", (timeutil.now(), cid))
         conn.execute("update console_game_assignments set status='archived' where console_id=%s and status='active' and ends_at > %s", (cid, timeutil.now()))
         conn.execute('''update console_connection_configs
@@ -622,9 +642,11 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
                 if not body.psn_account_id:
                     errors['psn_account_id'] = 'Selecione uma conta PSN vinculada ao agente.'
                 else:
-                    account = one(conn, 'select agent_id, status from psn_accounts where id=%s', (body.psn_account_id,))
+                    account = one(conn, 'select agent_id, status, owner_user_id from psn_accounts where id=%s', (body.psn_account_id,))
                     if not account or str(account['agent_id']) != str(body.agent_id) or account['status'] != 'linked':
                         errors['psn_account_id'] = 'Conta PSN deve estar vinculada e pertencer ao agente selecionado.'
+                    elif account['owner_user_id'] != c['owner_user_id']:
+                        errors['psn_account_id'] = 'A conta PSN e o console precisam ter o mesmo titular.'
                     elif c['platform_code'] == 'PS4' and one(conn, '''select 1 from console_connection_configs cc
                         join consoles cx on cx.id=cc.console_id join platforms pp on pp.id=cx.platform_id
                         where cc.psn_account_id=%s and cc.network_route='internet_psn'
@@ -712,7 +734,7 @@ def rollback_connection(cid: uuid.UUID, change_id: uuid.UUID, p: Principal = Dep
     return set_connection(cid, body, p)
 
 
-TEST_TYPES = ('discover', 'pair', 'connection', 'video_audio', 'controls', 'heartbeat', 'latency')
+TEST_TYPES = ('discover', 'pair', 'psn_auth', 'connection', 'video_audio', 'controls', 'heartbeat', 'latency')
 CONNECT_WAIT = 60.0      # segundos que o teste manual de conexão espera o agente concluir
 
 
@@ -722,6 +744,12 @@ class PairIn(BaseModel):
 
 @router.post('/consoles/{cid}/diagnostics/run-all')
 def run_all_tests(cid: uuid.UUID, body: PairIn | None = None, p: Principal = Depends(ADMIN)):
+    return {'results': run_diagnostic_batch(cid, body, p)}
+
+
+def run_diagnostic_batch(cid: uuid.UUID, body: PairIn | None, p: Principal, on_result=None):
+    if not is_allowed(p.permissions, action_key('POST', '/admin/consoles/{cid}/tests/{test_type}')):
+        raise forbidden()
     with tx() as conn:
         config = one(conn, '''
             select cfg.method, cfg.network_route from consoles c
@@ -734,25 +762,72 @@ def run_all_tests(cid: uuid.UUID, body: PairIn | None = None, p: Principal = Dep
             raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
     results = []
     for test in TEST_TYPES:
+        if test == 'psn_auth' and config['network_route'] != 'internet_psn':
+            continue
         if test == 'pair' and config['method'] != 'simulated' and (
             not body or not body.code or config['network_route'] == 'internet_psn'
         ):
-            results.append({'test_type': test, 'result': 'not_available',
-                            'message': 'Pareamento manual exige um código e uma rota compatível.'})
-            continue
-        results.append(run_test(cid, test, body, p))
-    return {'results': results}
+            result = {'test_type': test, 'result': 'not_available',
+                      'message': 'Pareamento manual exige um código e uma rota compatível.'}
+        elif test == 'psn_auth' and not is_allowed(p.permissions, 'menu:contas-psn',
+                                                  action_key('POST', '/admin/psn-accounts/{account_id}/test')):
+            result = {'test_type': test, 'result': 'not_available', 'message': 'Ação sem permissão.'}
+        else:
+            result = run_test(cid, test, body, p)
+        results.append(result)
+        if on_result is not None:
+            on_result(result)
+    return results
+
+
+@router.post('/consoles/{cid}/diagnostic-runs', status_code=202)
+def enqueue_diagnostic_run(cid: uuid.UUID, body: PairIn | None = None, p: Principal = Depends(ADMIN)):
+    if not is_allowed(p.permissions, action_key('POST', '/admin/consoles/{cid}/tests/{test_type}')):
+        raise forbidden()
+    with tx(p.user_id) as conn:
+        configuration = one(conn, '''
+            select cc.method from console_connection_configs cc join consoles c on c.id=cc.console_id
+            where c.id=%s and c.deleted_at is null for update of c
+        ''', (cid,))
+        if not configuration:
+            raise not_found()
+        if configuration['method'] == 'unconfigured':
+            raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
+        active = one(conn, '''
+            select id, status from console_diagnostic_runs
+            where console_id=%s and status in ('queued','running')
+        ''', (cid,))
+        if active:
+            return jsonable(active)
+        row = insert(conn, 'console_diagnostic_runs', {
+            'console_id': cid, 'requested_by': p.user_id,
+            'pairing_code_enc': security.encrypt(body.code) if body and body.code else None,
+        }, returning='id, status')
+        audit_event(conn, 'console.diagnostics_queued', 'console_diagnostic_runs', row['id'])
+    return jsonable(row)
+
+
+@router.get('/consoles/{cid}/diagnostic-runs/{run_id}')
+def diagnostic_run(cid: uuid.UUID, run_id: uuid.UUID, p: Principal = Depends(ADMIN)):
+    with tx() as conn:
+        row = one(conn, '''
+            select id, status, results, error, created_at, started_at, finished_at
+            from console_diagnostic_runs where id=%s and console_id=%s
+        ''', (run_id, cid))
+    if not row:
+        raise not_found()
+    return jsonable(row)
 
 
 @router.delete('/consoles/{cid}/tests')
-def clear_tests(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
+def clear_tests(cid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     """Limpa o HISTÓRICO de testes exibido no painel. As validações (vídeo/áudio/controle/heartbeat) não mudam.
     Cada linha apagada fica registrada na auditoria (trigger), além do evento abaixo."""
     with tx() as conn:
         if not one(conn, 'select 1 from consoles where id=%s and deleted_at is null', (cid,)):
             raise not_found()
         n = conn.execute('delete from console_connection_tests where console_id=%s', (cid,)).rowcount
-        audit_event(conn, 'console.tests_cleared', 'consoles', cid, details={'removed': n})
+        audit_event(conn, 'console.tests_cleared', 'consoles', cid, reason=body.reason, details={'removed': n})
     return {'ok': True, 'removed': n}
 
 
@@ -761,10 +836,16 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
     """Executa teste REAL via adaptador. O simulador responde como simulado; métodos não implementados falham."""
     if test_type not in TEST_TYPES:
         raise not_found()
+    if test_type == 'psn_auth' and not is_allowed(p.permissions, 'menu:contas-psn',
+                                                  action_key('POST', '/admin/psn-accounts/{account_id}/test')):
+        raise forbidden()
     with tx() as conn:
         c = one(conn, 'select * from consoles where id=%s and deleted_at is null', (cid,))
         if not c:
             raise not_found()
+        cfg_at_start = one(conn, 'select version, psn_account_id, network_route from console_connection_configs where console_id=%s for share', (cid,))
+        if not cfg_at_start:
+            raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
         ref = console_ref(conn, cid)
     if ref.method == 'unconfigured':
         raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
@@ -777,6 +858,13 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
             r = adapter.discover_console(ref)
         elif test_type == 'pair':
             r = adapter.pair_console(ref, body.code if body else None)
+        elif test_type == 'psn_auth':
+            if cfg_at_start['network_route'] != 'internet_psn' or not cfg_at_start['psn_account_id']:
+                raise AdapterError('not_implemented', 'O teste de autenticação exige uma conta configurada na rota Internet via PSN.')
+            checked = psn_accounts.test_account_login(cfg_at_start['psn_account_id'])
+            r = type('AuthResult', (), {'ok': checked['ok'],
+                                      'message': 'O agente autenticou a conta pela PSN.' if checked['ok']
+                                      else 'O agente não conseguiu autenticar a conta pela PSN.'})()
         elif test_type == 'connection':
             # A conexão real (achar, autenticar, primeira imagem) leva de 5 a 60 s; cada chamada ao agente responde
             # em até ~5 s com o andamento. No teste manual do painel esperamos aqui até concluir (máx. CONNECT_WAIT).
@@ -808,6 +896,10 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
     except AdapterError as e:
         result = 'not_available' if e.code == 'not_implemented' else 'failed'
         message = e.message
+    except AppError as e:
+        if test_type != 'psn_auth':
+            raise
+        message = f'Falha na autenticação PSN ({e.code}).'
     # Um agente real que responda "simulado" não pode validar canais de um console real.
     simulated = adapter.simulated or reported_simulated
     if reported_simulated and not adapter.simulated and result == 'passed':
@@ -816,6 +908,11 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
     n = timeutil.now()
     duration_ms = round((time_mod.monotonic() - started) * 1000)
     with tx() as conn:
+        if not one(conn, 'select id from consoles where id=%s and deleted_at is null for update', (cid,)):
+            raise not_found()
+        cfg = one(conn, 'select * from console_connection_configs where console_id=%s for update', (cid,))
+        if not cfg or cfg['version'] != cfg_at_start['version']:
+            raise conflict('configuration_changed', 'A conexão foi alterada durante o teste. Execute o teste novamente.')
         # O painel repete o teste enquanto a conexão está em andamento: a linha "em andamento" anterior é substituída
         # (o histórico mostra o andamento atual ou o resultado final, não uma pilha de "em andamento").
         conn.execute("delete from console_connection_tests where id = (select id from console_connection_tests "
@@ -823,9 +920,8 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
                      "and result='not_available' and message like 'Em andamento%%'", (cid, test_type))
         insert(conn, 'console_connection_tests', {'console_id': cid, 'test_type': test_type, 'result': result,
                                                   'simulated': simulated, 'message': message,
-                                                  'metrics': Jsonb(metrics), 'run_by': p.user_id,
+                                                  'metrics': Jsonb({**metrics, 'network_route': cfg_at_start['network_route']}), 'run_by': p.user_id,
                                                   'duration_ms': duration_ms})
-        cfg = one(conn, 'select * from console_connection_configs where console_id=%s for update', (cid,))
         col = {'video_audio': ['video_validated_at', 'audio_validated_at'], 'controls': ['control_validated_at'],
                'heartbeat': ['heartbeat_validated_at'], 'connection': []}.get(test_type)
         if col is not None and not in_progress:
@@ -850,13 +946,61 @@ def run_test(cid: uuid.UUID, test_type: str, body: PairIn | None = None, p: Prin
             conn.execute("update consoles set status='online' where id=%s and status in ('offline','unconfigured','degraded')", (cid,))
     return {'test_type': test_type, 'result': result, 'message': message, 'simulated': simulated,
             'duration_ms': duration_ms,
-            'metrics': metrics or None, 'in_progress': in_progress}
+            'metrics': metrics or None, 'network_route': cfg_at_start['network_route'], 'in_progress': in_progress}
 
 
 @router.post('/consoles/{cid}/publish')
 def publish_console(cid: uuid.UUID, p: Principal = Depends(ADMIN)):
+    return _publish_console(cid)
+
+
+@router.post('/console-onboardings/{cid}/publish')
+def publish_onboarding(cid: uuid.UUID, p: Principal = Depends(SUPER)):
+    if not is_allowed(p.permissions, 'level:admin', 'menu:consoles',
+                      action_key('POST', '/admin/consoles/{cid}/publish')):
+        raise forbidden()
+    return _publish_console(cid, require_assignment=True)
+
+
+class OwnerAgentIn(BaseModel):
+    agent_id: uuid.UUID
+
+
+@router.put('/console-onboardings/{cid}/owner-agent')
+def set_owner_agent(cid: uuid.UUID, body: OwnerAgentIn, p: Principal = Depends(SUPER)):
+    with tx(p.user_id) as conn:
+        console = one(conn, '''
+            select owner_user_id, is_published from consoles where id=%s and deleted_at is null for update
+        ''', (cid,))
+        if not console or console['owner_user_id'] is None:
+            raise not_found()
+        if console['is_published']:
+            raise conflict('console_published', 'Despublique o console antes de trocar o agente do proprietário.')
+        psn_accounts._agent(conn, body.agent_id)
+        conn.execute('''
+            update consoles set owner_onboarding_agent_id=%s,
+              owner_requested_psn_account_id=case when owner_onboarding_agent_id=%s then owner_requested_psn_account_id end
+            where id=%s
+        ''', (body.agent_id, body.agent_id, cid))
+        audit_event(conn, 'owner.agent_assigned', 'consoles', cid, details={'agent_id': str(body.agent_id)})
+    return {'ok': True}
+
+
+def _publish_console(cid: uuid.UUID, require_assignment: bool = False):
     try:
         with tx() as conn:
+            console = one(conn, 'select owner_user_id from consoles where id=%s and deleted_at is null for update', (cid,))
+            if not console:
+                raise not_found()
+            if console['owner_user_id'] and not one(conn, 'select 1 from owner_console_rates where console_id=%s', (cid,)):
+                raise conflict('rate_required', 'Configure a tarifa e a duração das sessões antes de publicar.')
+            if (require_assignment or console['owner_user_id']) and not one(conn, '''
+                select 1 from console_game_assignments a join games g on g.id=a.game_id
+                where a.console_id=%s and a.status='active' and a.ends_at>%s
+                  and g.deleted_at is null and g.status='published'
+                for share of a, g
+            ''', (cid, timeutil.now())):
+                raise conflict('assignment_required', 'Vincule um jogo publicado a uma janela futura antes de publicar.')
             conn.execute('update consoles set is_published=true where id=%s', (cid,))
             audit_event(conn, 'console.published', 'consoles', cid)
             return _console_view(conn, one(conn, 'select * from consoles where id=%s', (cid,)))
@@ -925,6 +1069,10 @@ def list_assignments(console_id: uuid.UUID | None = None, game_id: uuid.UUID | N
 
 @router.post('/assignments', status_code=201)
 def create_assignment(body: AssignmentIn, p: Principal = Depends(ADMIN)):
+    return register_assignment(body, p.user_id)
+
+
+def register_assignment(body: AssignmentIn, actor_id: str, owner_user_id: str | None = None):
     if body.starts_at.tzinfo is None or body.ends_at.tzinfo is None:
         raise unprocessable('validation_error', 'Informe data/hora com fuso horário.')
     if body.starts_at >= body.ends_at:
@@ -937,10 +1085,17 @@ def create_assignment(body: AssignmentIn, p: Principal = Depends(ADMIN)):
     created = []
     try:
         with tx() as conn:
-            c = one(conn, 'select * from consoles where id=%s and deleted_at is null', (body.console_id,))
+            c = one(conn, 'select * from consoles where id=%s and deleted_at is null for update', (body.console_id,))
             g = one(conn, 'select * from games where id=%s and deleted_at is null', (body.game_id,))
             if not c or not g:
                 raise not_found('Console ou jogo inexistente.')
+            if owner_user_id is not None:
+                if str(c['owner_user_id']) != owner_user_id:
+                    raise not_found()
+                if c['is_published']:
+                    raise conflict('console_published', 'Solicite a despublicação do console para alterar a agenda.')
+                if g['status'] != 'published':
+                    raise not_found('Jogo indisponível.')
             _check_platform(conn, body.console_id, body.game_id)
             for i in range(count):
                 off = step * i if step else timedelta(0)
@@ -949,9 +1104,9 @@ def create_assignment(body: AssignmentIn, p: Principal = Depends(ADMIN)):
                           (body.console_id, e, s))
                 row = insert(conn, 'console_game_assignments', {
                     'console_id': body.console_id, 'game_id': body.game_id, 'starts_at': s, 'ends_at': e,
-                    'recurrence_group_id': group, 'responsible_user_id': body.responsible_user_id or p.user_id,
+                    'recurrence_group_id': group, 'responsible_user_id': body.responsible_user_id or actor_id,
                     'notes': body.notes + (' [há manutenção/bloqueio dentro desta janela]' if blk else ''),
-                    'created_by': p.user_id, 'updated_by': p.user_id})
+                    'created_by': actor_id, 'updated_by': actor_id})
                 created.append(row)
     except psycopg.errors.ExclusionViolation:
         raise conflict('overlap', 'Conflito: este console já possui um jogo vinculado em parte deste período.')
@@ -1037,9 +1192,11 @@ def create_blackout(body: BlackoutIn, p: Principal = Depends(OPERATOR)):
 
 
 @router.delete('/blackouts/{bid}')
-def delete_blackout(bid: uuid.UUID, p: Principal = Depends(OPERATOR)):
+def delete_blackout(bid: uuid.UUID, body: DeleteIn, p: Principal = Depends(OPERATOR)):
     with tx() as conn:
-        conn.execute("update blackout_windows set status='cancelled' where id=%s", (bid,))
+        if not conn.execute("update blackout_windows set status='cancelled' where id=%s and status<>'cancelled'", (bid,)).rowcount:
+            raise not_found()
+        audit_event(conn, 'blackout.cancelled', 'blackout_windows', bid, reason=body.reason)
     return {'ok': True}
 
 
@@ -1228,9 +1385,11 @@ def patch_channel(chid: uuid.UUID, body: dict, p: Principal = Depends(OPERATOR))
 
 
 @router.delete('/channels/{chid}')
-def delete_channel(chid: uuid.UUID, p: Principal = Depends(ADMIN)):
+def delete_channel(chid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
     with tx() as conn:
-        conn.execute('delete from streaming_channels where id=%s', (chid,))
+        if not conn.execute('delete from streaming_channels where id=%s', (chid,)).rowcount:
+            raise not_found()
+        audit_event(conn, 'channel.deleted', 'streaming_channels', chid, reason=body.reason)
     return {'ok': True}
 
 
@@ -1323,7 +1482,7 @@ def admin_reschedule(rid: uuid.UUID, body: RescheduleIn, p: Principal = Depends(
 
 @router.get('/sessions')
 def admin_sessions(active_only: bool = True, p: Principal = Depends(OPERATOR)):
-    q = '''select s.id, s.status, s.contract_starts_at, s.contract_ends_at, s.first_connected_at, s.input_device, s.adapter_method,
+    q = '''select s.id, s.reservation_id, s.status, s.contract_starts_at, s.contract_ends_at, s.first_connected_at, s.input_device, s.adapter_method,
                   s.end_reason, s.seconds_used, u.username, g.title, c.name console_name, r.code
            from game_sessions s join users u on u.id=s.user_id join reservations r on r.id=s.reservation_id
            join games g on g.id=r.game_id join consoles c on c.id=s.console_id'''
@@ -1344,8 +1503,11 @@ def terminate(sid: uuid.UUID, body: TerminateIn, p: Principal = Depends(OPERATOR
         sessions.admin_terminate(conn, sid, body.reason, body.compensation)
         if body.compensation != 'none':
             s = one(conn, 'select * from game_sessions where id=%s', (sid,))
-            insert(conn, 'service_incidents', {'console_id': s['console_id'], 'reservation_id': s['reservation_id'], 'kind': 'other',
-                                               'description': body.reason, 'compensation': body.compensation, 'created_by': p.user_id})
+            incident = insert(conn, 'service_incidents', {'console_id': s['console_id'], 'reservation_id': s['reservation_id'], 'kind': 'other',
+                                                          'description': body.reason, 'compensation': body.compensation, 'created_by': p.user_id})
+            owner_settlements.refresh(conn, s['reservation_id'])
+            audit_event(conn, 'incident.opened', 'service_incidents', incident['id'],
+                        details={'session_id': str(sid), 'reservation_id': str(s['reservation_id'])})
     return {'ok': True}
 
 
@@ -1360,20 +1522,37 @@ class IncidentIn(BaseModel):
 @router.get('/incidents')
 def incidents(open_only: bool = True, p: Principal = Depends(OPERATOR)):
     with tx() as conn:
-        return jsonable(all_(conn, 'select i.*, c.name console_name from service_incidents i left join consoles c on c.id=i.console_id'
+        return jsonable(all_(conn, 'select i.*, c.name console_name, (r.owner_user_id is not null) owner_rental '
+                             'from service_incidents i left join consoles c on c.id=i.console_id '
+                             'left join reservations r on r.id=i.reservation_id'
                              + (' where i.resolved_at is null' if open_only else '') + ' order by i.started_at desc limit 200'))
 
 
 @router.post('/incidents', status_code=201)
 def create_incident(body: IncidentIn, p: Principal = Depends(OPERATOR)):
     with tx() as conn:
-        return jsonable(insert(conn, 'service_incidents', {**body.model_dump(), 'created_by': p.user_id}))
+        data = body.model_dump()
+        if body.reservation_id:
+            reservation = one(conn, 'select console_id from reservations where id=%s for update', (body.reservation_id,))
+            if not reservation:
+                raise not_found('Reserva não encontrada.')
+            if body.console_id and body.console_id != reservation['console_id']:
+                raise unprocessable('invalid_console', 'O console precisa corresponder à reserva.')
+            data['console_id'] = reservation['console_id']
+        incident = insert(conn, 'service_incidents', {**data, 'created_by': p.user_id})
+        if body.reservation_id:
+            owner_settlements.refresh(conn, body.reservation_id)
+        audit_event(conn, 'incident.opened', 'service_incidents', incident['id'],
+                    details={'reservation_id': str(body.reservation_id) if body.reservation_id else None})
+        return jsonable(incident)
 
 
 class ResolveIncidentIn(BaseModel):
     compensation: str = 'none'
     compensation_notes: str = ''
     refund_cents: int | None = None
+    owner_fault: Literal['renter', 'console'] | None = None
+    owner_approved_cents: int | None = Field(default=None, ge=0)
 
 
 @router.post('/incidents/{iid}/resolve')
@@ -1386,12 +1565,41 @@ def resolve_incident(iid: uuid.UUID, body: ResolveIncidentIn, p: Principal = Dep
         i = one(conn, 'select * from service_incidents where id=%s for update', (iid,))
         if not i:
             raise not_found()
-        if body.compensation == 'refund' and i['reservation_id']:
+        if i['resolved_at'] is not None:
+            raise conflict('incident_resolved', 'O incidente já foi decidido.')
+        r = one(conn, 'select owner_user_id, total_cents, owner_share_bps from reservations where id=%s for update',
+                (i['reservation_id'],)) if i['reservation_id'] else None
+        owned = r and r['owner_user_id'] is not None
+        if owned and (not body.owner_fault or len(body.compensation_notes.strip()) < 3):
+            raise unprocessable('owner_decision_required', 'Informe a causa e justifique a decisão do incidente.')
+        compensation = 'refund' if owned and body.owner_fault == 'renter' else body.compensation
+        if owned and body.owner_approved_cents is not None:
+            ceiling = (r['total_cents'] * r['owner_share_bps'] + 5000) // 10000
+            if body.owner_fault != 'console' or body.owner_approved_cents > ceiling:
+                raise unprocessable('invalid_settlement_amount', 'O valor aprovado deve respeitar a parcela da reserva e a causa do incidente.')
+        if compensation == 'refund' and i['reservation_id']:
             pay = one(conn, "select * from payments where reservation_id=%s and status='approved'", (i['reservation_id'],))
             if pay:
-                payments.create_refund(conn, pay['id'], body.refund_cents or pay['amount_cents'], f'Compensação de incidente: {i["description"]}', p.user_id)
-        conn.execute('update service_incidents set resolved_at=%s, compensation=%s, compensation_notes=%s where id=%s',
-                     (timeutil.now(), body.compensation, body.compensation_notes, iid))
+                amount = body.refund_cents or pay['amount_cents']
+                if owned and body.owner_fault == 'renter':
+                    refunded = one(conn, '''
+                        select coalesce(sum(amount_cents),0) amount from refunds
+                        where payment_id=%s and status='completed'
+                    ''', (pay['id'],))['amount']
+                    amount = pay['amount_cents'] - refunded
+                if amount > 0:
+                    refund = payments.create_refund(conn, pay['id'], amount, 'Compensação de incidente', p.user_id)
+                    if refund['status'] == 'failed':
+                        return {'ok': False, 'message': 'O provedor recusou o estorno. O incidente permanece aberto.'}
+        conn.execute('''
+            update service_incidents set resolved_at=%s, compensation=%s, compensation_notes=%s,
+              owner_fault=%s, owner_approved_cents=%s where id=%s
+        ''', (timeutil.now(), compensation, body.compensation_notes, body.owner_fault if owned else None,
+              body.owner_approved_cents if owned else None, iid))
+        if owned:
+            owner_settlements.refresh(conn, i['reservation_id'])
+        audit_event(conn, 'incident.resolved', 'service_incidents', iid, reason=body.compensation_notes,
+                    details={'compensation': compensation, 'owner_fault': body.owner_fault})
     return {'ok': True}
 
 
@@ -1530,6 +1738,63 @@ def suspend(uid: uuid.UUID, body: SuspendIn, p: Principal = Depends(ADMIN)):
 class RoleIn(BaseModel):
     role: str
     grant: bool
+
+
+def permission_catalog() -> list[dict]:
+    items = [{'key': menu_key(section), 'label': label, 'kind': 'menu', 'minimum': minimum}
+             for section, label, minimum in ADMIN_MENUS.values()]
+    items.extend({'key': f'level:{level}', 'label': label, 'kind': 'level', 'minimum': level}
+                 for level, label in [('operator', 'Operador'), ('admin', 'Administrador'),
+                                      ('superadmin', 'Superadministrador')])
+    for route in (*router.routes, *psn_accounts.router.routes):
+        path = route.path
+        minimum = next((dep.call.minimum_role for dep in route.dependant.dependencies
+                        if hasattr(dep.call, 'minimum_role')), None)
+        if minimum:
+            items.extend({'key': action_key(method, path), 'label': f'{method} {path}',
+                          'kind': 'action', 'minimum': minimum, 'menu': route_menu(path)}
+                         for method in sorted(route.methods))
+    return items
+
+
+class PermissionIn(BaseModel):
+    version: int = Field(ge=0)
+    overrides: dict[str, StrictBool] = Field(max_length=250)
+
+
+@router.get('/users/{uid}/permissions')
+def get_permissions(uid: uuid.UUID, p: Principal = Depends(SUPER)):
+    with tx() as conn:
+        if not one(conn, 'select id from users where id=%s and deleted_at is null', (uid,)):
+            raise not_found()
+        saved = one(conn, 'select version, overrides from user_permissions where user_id=%s', (uid,))
+    return {**(saved or {'version': 0, 'overrides': {}}), 'catalog': permission_catalog()}
+
+
+@router.put('/users/{uid}/permissions')
+def set_permissions(uid: uuid.UUID, body: PermissionIn, p: Principal = Depends(SUPER)):
+    if str(uid) == p.user_id:
+        raise forbidden('As permissões da própria conta devem ser editadas por outro superadmin.')
+    catalog = {entry['key'] for entry in permission_catalog()}
+    if body.overrides.keys() - catalog:
+        raise unprocessable('invalid_permission', 'Uma ou mais permissões são desconhecidas.')
+    with tx(p.user_id) as conn:
+        if not one(conn, 'select id from users where id=%s and deleted_at is null for update', (uid,)):
+            raise not_found()
+        saved = one(conn, 'select version, overrides from user_permissions where user_id=%s', (uid,))
+        version = saved['version'] if saved else 0
+        if version != body.version:
+            raise conflict('permissions_changed', 'As permissões mudaram. Reabra o cadastro para atualizar.')
+        old = saved['overrides'] if saved else {}
+        if old == body.overrides:
+            return {'version': version, 'overrides': old}
+        conn.execute('''
+            insert into user_permissions(user_id, version, overrides) values (%s, %s, %s)
+            on conflict (user_id) do update set version=excluded.version, overrides=excluded.overrides
+        ''', (uid, version + 1, Jsonb(body.overrides)))
+        audit_event(conn, 'user.permissions_changed', 'users', uid,
+                    details={'previous': old, 'current': body.overrides})
+    return {'version': version + 1, 'overrides': body.overrides}
 
 
 @router.post('/users/{uid}/roles')
@@ -1718,7 +1983,7 @@ def resolve_data(did: uuid.UUID, body: DataResolveIn, p: Principal = Depends(ADM
     return {'ok': True}
 
 
-CRITICAL_SETTINGS = {'sales_paused', 'cancel_full_refund_min_minutes_before', 'hold_minutes'}
+CRITICAL_SETTINGS = {'sales_paused', 'cancel_full_refund_min_minutes_before', 'hold_minutes', 'owner_share_bps'}
 
 
 @router.get('/settings')
@@ -1746,6 +2011,11 @@ def put_setting(key: str, body: SettingIn, p: Principal = Depends(ADMIN)):
         raise unprocessable('validation_error', 'Tipo de valor inválido para esta configuração.')
     if key == 'player_video_max_kbps' and not 1000 <= body.value <= 15000:
         raise unprocessable('validation_error', 'Qualidade do vídeo: use de 1000 a 15000 kbps.')
+    if key == 'owner_share_bps':
+        if not p.has('superadmin') or not is_allowed(p.permissions, 'level:superadmin'):
+            raise forbidden()
+        if type(body.value) is not int or not 0 <= body.value <= 10000:
+            raise unprocessable('validation_error', 'Parcela do proprietário: use de 0 a 10000 pontos-base.')
     with tx() as conn:
         if key == 'disabled_platforms':
             known = {r['code'] for r in conn.execute('select code from platforms').fetchall()}

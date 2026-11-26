@@ -12,7 +12,7 @@ from ..core import security, timeutil
 from ..core.db import audit_event, insert, tx
 from ..core.errors import AppError, conflict, forbidden, not_found
 from ..gamebridge import AdapterError, get_adapter
-from . import notifications, preparation, scheduling
+from . import notifications, owner_settlements, preparation, scheduling
 from .consoles import console_ref
 from .settings_store import get_settings, require_enabled
 
@@ -180,6 +180,7 @@ def end_session(conn, s: dict, reason: str, status: str = 'ended') -> None:
     new_res_status = 'no_show' if reason == 'no_show' else 'completed'
     conn.execute('update reservations set status=%s where id=%s and status in (%s,%s)', (new_res_status, s['reservation_id'], 'active', 'confirmed'))
     _event(conn, s['id'], 'ended', {'reason': reason})
+    owner_settlements.refresh(conn, s['reservation_id'])
     ref = console_ref(conn, s['console_id'])
     try:
         a = get_adapter(ref.method)

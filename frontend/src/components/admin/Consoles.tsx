@@ -5,20 +5,22 @@ import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, get, patch, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
-import { DataTable, useAction, useConfirm } from './common';
+import { DataTable, NewRecord, useAction, useDelete } from './common';
 import { toast } from '@/components/Toaster';
 
 type Method = { method: string; label: string; status: string; applicable: boolean; operational: boolean; guide: string; needs: string[] };
 type Conn = Record<string, unknown> & { method: string; method_label?: string; connection_status: string; agent_id: string | null; psn_account_id?: string | null; validated_at: string | null;
   video_validated_at: string | null; audio_validated_at: string | null; control_validated_at: string | null; heartbeat_validated_at: string | null };
-type C = { id: string; code: string; name: string; platform_code: string; status: string; is_published: boolean; model: string; serial_number: string | null;
+export type AdminConsole = { id: string; code: string; name: string; platform_code: string; status: string; is_published: boolean; model: string; serial_number: string | null;
+  owner_user_id?: string | null; owner_onboarding_agent_id?: string | null; owner_requested_psn_account_id?: string | null;
   location: string; description: string; connection: Conn; tests: { test_type: string; result: string; simulated: boolean; message: string; run_at: string }[];
   last_health: Record<string, unknown> | null; current_assignment: { title: string; ends_at: string } | null; active_session: { id: string } | null;
   pairing: { status: string } | null; method_history?: { id: string; from_method: string; to_method: string; reason: string; created_at: string }[];
   hours?: { weekday: number; opens_at: string; closes_at: string }[] };
 type Agent = { id: string; name: string; is_simulated: boolean };
-type PsnAccount = { id: string; label: string; agent_id: string; status: string };
+type PsnAccount = { id: string; label: string; agent_id: string; owner_user_id?: string | null; status: string };
 type Dev = { id: string; agent_id: string; manufacturer: string; model: string; device_identifier?: string; identifier?: string; input_port?: string; used_by_console: string | null; authorized?: boolean };
+type Diagnostic = { id: string; status: 'queued' | 'running' | 'completed' | 'failed'; error?: string; results: { test_type: string; result: string; message: string }[] };
 
 const ROUTE_HINT: Record<string, string> = {
   lan: 'O PC do agente fica na mesma rede (de preferência no cabo) que o console. Menor atraso; liga o console pela rede.',
@@ -27,11 +29,23 @@ const ROUTE_HINT: Record<string, string> = {
 };
 
 const TESTS: [string, string][] = [['discover', 'Descobrir console'], ['pair', 'Parear'], ['connection', 'Testar conexão'], ['video_audio', 'Testar imagem e áudio'],
-  ['controls', 'Testar controles'], ['heartbeat', 'Verificar heartbeat'], ['latency', 'Medir latência']];
+  ['controls', 'Testar controles'], ['heartbeat', 'Verificar heartbeat'], ['latency', 'Medir latência'], ['psn_auth', 'Testar autenticação PSN']];
+const TEST_DETAILS: Record<string, [string, string]> = {
+  discover: ['Localiza o console pela rota configurada.', 'Console desligado ou identificação incorreta.'],
+  pair: ['Registra o agente para uso remoto.', 'Código expirado ou uso remoto desativado no console.'],
+  connection: ['Tenta iniciar a conexão com o console.', 'Console indisponível, rota, pareamento ou autenticação incorretos.'],
+  video_audio: ['Verifica se o adaptador recebe vídeo e áudio.', 'Conexão ainda indisponível ou captura incompatível.'],
+  controls: ['Valida o canal de comandos do controle.', 'Dispositivo de entrada não associado ou sem permissão.'],
+  heartbeat: ['Verifica se o agente está acessível.', 'Agente offline ou credenciais inválidas.'],
+  latency: ['Consulta uma medição de latência disponível.', 'A medição pode exigir uma sessão ativa.'],
+  psn_auth: ['Verifica a autenticação da conta PSN configurada para a rota pela internet.', 'Login Sony expirado ou agente sem acesso à PSN.'],
+};
 const RESULT_PT: Record<string, string> = { passed: 'aprovado', failed: 'falhou', not_available: 'não disponível' };
 const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelete: () => void }) {
+export function ConsoleEditor({ c, onChange, onDelete, onboarding = false }: {
+  c: AdminConsole; onChange: () => void; onDelete?: () => void; onboarding?: boolean;
+}) {
   const methods = useApi<Method[]>(`/admin/connection-methods?platform=${c.platform_code}`).data;
   const agents = useApi<Agent[]>('/admin/agents').data;
   const psnAccounts = useApi<PsnAccount[]>('/admin/psn-accounts').data;
@@ -40,17 +54,27 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
   const [cfg, setCfg] = useState<Record<string, unknown>>({});
   const [basic, setBasic] = useState({ name: c.name, model: c.model, serial_number: c.serial_number || '', location: c.location, description: c.description });
   const [pairCode, setPairCode] = useState('');
+  const [runId, setRunId] = useState<string>();
+  const [finishedRun, setFinishedRun] = useState<Diagnostic>();
+  const batch = useApi<Diagnostic>(runId ? `/admin/consoles/${c.id}/diagnostic-runs/${runId}` : null, 2500);
+  const activeRun = batch.data?.id === runId ? batch.data : null;
   const [statusReason, setStatusReason] = useState('');
   const [hours, setHours] = useState(c.hours || []);
   const { run, msg, busy } = useAction();
-  const [sure, sureDialog] = useConfirm();
+  const deletion = useDelete();
+  useEffect(() => {
+    if (!activeRun || (activeRun.status !== 'completed' && activeRun.status !== 'failed')) return;
+    setFinishedRun(activeRun);
+    setRunId(undefined);
+    onChange();
+  }, [activeRun, onChange]);
   useEffect(() => {
     const x = c.connection;
-    setCfg({ method: x.method, agent_id: x.agent_id || '', internal_host: x.internal_host || '', console_identifier: x.console_identifier || '', discovery_mode: x.discovery_mode,
+    setCfg({ method: x.method, agent_id: x.agent_id || c.owner_onboarding_agent_id || '', internal_host: x.internal_host || '', console_identifier: x.console_identifier || '', discovery_mode: x.discovery_mode,
       network_route: x.network_route || 'lan', public_host: x.public_host || '', public_port: x.public_port || '',
       resolution: x.resolution, fps: x.fps, codec: x.codec, bitrate_kbps: x.bitrate_kbps, low_latency: x.low_latency, audio_enabled: x.audio_enabled,
       capture_device_id: x.capture_device_id || '', control_adapter_id: x.control_adapter_id || '', video_encoder: x.video_encoder || '', capture_color_space: x.capture_color_space || '',
-      psn_account_id: x.psn_account_id || '', psn_device_uid: x.psn_device_uid || '',
+      psn_account_id: x.psn_account_id || c.owner_requested_psn_account_id || '', psn_device_uid: x.psn_device_uid || '',
       standby_after_session: x.standby_after_session ?? true, keep_awake_minutes: x.keep_awake_minutes ?? 15, reason: '' });
   }, [c]);
   const m = String(cfg.method || 'unconfigured');
@@ -89,7 +113,7 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
   return (
     <div className="stack">
       {msg}
-      {sureDialog}
+      {deletion.dialog}
       <section className="card">
         <div className="spread"><h2 style={{ margin: 0 }}>{c.name} <span className="small muted">{c.code} · {c.platform_code}</span></h2>
           <div className="row"><StatusPill status={c.status} />{c.is_published ? <span className="pill green">publicado</span> : <span className="pill amber">não publicado</span>}</div></div>
@@ -146,7 +170,8 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
             </> : <>
               <Field label="Conta PSN vinculada"><select value={String(cfg.psn_account_id || '')} onChange={(e) => set('psn_account_id', e.target.value)}>
                 <option value="">Selecione uma conta</option>
-                {psnAccounts?.filter((a) => a.agent_id === cfg.agent_id && a.status === 'linked').map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+                {psnAccounts?.filter((a) => a.agent_id === cfg.agent_id && a.status === 'linked' &&
+                  (a.owner_user_id ?? null) === (c.owner_user_id ?? null)).map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
               </select></Field>
               {c.platform_code === 'PS4' ? (
                 <p className="small muted">Usar o PS4 principal da conta selecionada.</p>
@@ -188,14 +213,20 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
         {savedMethod === 'remote_play_chiaki' && <Field label="Código de pareamento exibido no console (assistente do admin)"><input value={pairCode} onChange={(e) => setPairCode(e.target.value)} maxLength={12} /></Field>}
         {lanPairing && <Field label="PIN de registro (8 dígitos)" hint="No console: Configurações → Configurações da Conexão de Uso Remoto → Adicionar Dispositivo. Digite o PIN e clique em Parear.">
           <input inputMode="numeric" value={pairCode} onChange={(e) => setPairCode(e.target.value.replace(/\D/g, '').slice(0, 8))} maxLength={8} placeholder="12345678" /></Field>}
-        <button className="btn" disabled={busy || savedMethod === 'unconfigured'} onClick={() => run(async () => {
-          const batch = await post<{ results: { test_type: string; result: string }[] }>(
-            `/admin/consoles/${c.id}/diagnostics/run-all`, { code: pairCode || null });
-          onChange();
-          const failed = batch.results.filter((test) => test.result === 'failed').length;
-          toast(failed ? 'error' : 'ok', failed ? `Diagnóstico concluído com ${failed} falha(s).` : 'Diagnóstico concluído. Consulte o histórico de testes.');
+        <button className="btn" disabled={busy || Boolean(runId) || savedMethod === 'unconfigured'} onClick={() => run(async () => {
+          const job = await post<{ id: string }>(`/admin/consoles/${c.id}/diagnostic-runs`, { code: pairCode || null });
+          setFinishedRun(undefined);
+          setRunId(job.id);
         })}>Executar todos os testes</button>
-        <div className="row">{TESTS.map(([t, l]) => <button key={t} className="btn sm" disabled={busy || (t === 'pair' && nativePsnRoute)} onClick={() => run(async () => {
+        {runId && <p role="status">{activeRun?.status === 'running' ? `Executando · ${activeRun.results.length} resultado(s)` : 'Na fila de diagnósticos.'}</p>}
+        {batch.error && runId && <p role="alert">{batch.error.message}</p>}
+        {finishedRun && <div>
+          <p role="status">{finishedRun.status === 'failed' ? (finishedRun.error ?? 'Diagnóstico interrompido.') : 'Diagnóstico concluído.'}</p>
+          <ul>{finishedRun.results.map((item) => <li key={item.test_type}>
+            {TESTS.find(([test]) => test === item.test_type)?.[1] ?? item.test_type} · {RESULT_PT[item.result]} · {item.message}
+          </li>)}</ul>
+        </div>}
+        <div className="row">{TESTS.filter(([test]) => test !== 'psn_auth' || nativePsnRoute).map(([t, l]) => <button key={t} className="btn sm" disabled={busy || Boolean(runId) || (t === 'pair' && nativePsnRoute)} onClick={() => run(async () => {
           type R = { result: string; message: string; simulated: boolean; in_progress?: boolean };
           const call = () => post<R>(`/admin/consoles/${c.id}/tests/${t}`, t === 'pair' ? { code: pairCode || null } : {});
           let r = await call();
@@ -208,25 +239,26 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
           }
           onChange(); return r;
         }).then((r) => r && toast(r.result === 'passed' || r.in_progress ? 'ok' : 'error', `${l}: ${RESULT_PT[r.result] || r.result}${r.simulated ? ' (SIMULADO)' : ''} — ${r.message}`))}>{l}</button>)}</div>
-        <div className="row">
+        {!onboarding && <div className="row">
           <button className="btn primary" disabled={busy || c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/publish`); onChange(); }, 'Console publicado para vendas.')}>Publicar</button>
           <button className="btn" disabled={busy || !c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/unpublish`); onChange(); }, 'Console despublicado.')}>Despublicar</button>
-        </div>
+        </div>}
         <div className="spread"><h3 style={{ margin: 0 }}>Histórico de testes</h3>
           <button className="btn sm" disabled={busy || !c.tests?.length} title="Apaga só o histórico exibido; as validações continuam valendo"
-            onClick={async () => {
-              if (await sure({ title: 'Limpar o histórico de testes?', confirm: 'Limpar histórico',
-                message: 'Apaga só a lista de testes exibida. As validações (vídeo, áudio, controle, heartbeat) continuam valendo e a exclusão fica na auditoria.' }))
-                run(async () => { await del(`/admin/consoles/${c.id}/tests`); onChange(); }, 'Histórico de testes limpo.');
-            }}>
+            onClick={() => deletion.remove(`/admin/consoles/${c.id}/tests`, 'Limpar o histórico de testes?',
+              (request) => run(async () => { await request(); onChange(); }, 'Histórico de testes limpo.'),
+              'As validações do console permanecem registradas.')}>
             <Eraser size={14} aria-hidden />Limpar testes</button></div>
         <DataTable rows={c.tests as unknown as Record<string, unknown>[]} empty="Nenhum teste executado." cols={[['Teste', (r) => (
           <details>
             <summary>{TESTS.find(([type]) => type === r.test_type)?.[1] ?? String(r.test_type)}</summary>
             <dl>
+              <dt>Objetivo</dt><dd>{TEST_DETAILS[String(r.test_type)]?.[0]}</dd>
               <dt>Resultado</dt><dd>{RESULT_PT[String(r.result)] ?? String(r.result)}</dd>
               <dt>Duração</dt><dd>{typeof r.duration_ms === 'number' ? `${r.duration_ms} ms` : 'Indisponível'}</dd>
+              {Boolean(r.network_route) && <><dt>Rota</dt><dd>{String(r.network_route)}</dd></>}
               <dt>Registro do adaptador</dt><dd>{String(r.message)}</dd>
+              {r.result !== 'passed' && <><dt>Possíveis causas</dt><dd>{TEST_DETAILS[String(r.test_type)]?.[1]}</dd></>}
             </dl>
           </details>
         )], ['Resultado', (r) => <StatusPill status={String(r.result)} />],
@@ -268,51 +300,65 @@ function Editor({ c, onChange, onDelete }: { c: C; onChange: () => void; onDelet
         <h2 style={{ margin: 0 }}>Excluir console</h2>
         <p className="small muted" style={{ margin: 0 }}>Remove o console da operação: despublica, arquiva os vínculos futuros e libera capturadora/controle. O histórico (reservas, sessões, auditoria) é mantido.
           Bloqueado se houver sessão ativa ou reservas futuras.</p>
-        <div><button className="btn danger" onClick={onDelete}>Excluir este console</button></div>
+        {onDelete && <div><button className="btn danger" onClick={onDelete}>Excluir este console</button></div>}
       </section>
     </div>
   );
 }
 
 export default function Consoles() {
-  const list = useApi<C[]>('/admin/consoles', 20000);
+  const list = useApi<AdminConsole[]>('/admin/consoles', 20000);
   const [sel, setSel] = useState<string | null>(null);
-  const [detail, setDetail] = useState<C | null>(null);
+  const [detail, setDetail] = useState<AdminConsole | null>(null);
+  const [viewing, setViewing] = useState<AdminConsole | null>(null);
   const [nc, setNc] = useState({ code: '', name: '', platform_code: 'PS5' });
   const { run, msg } = useAction();
-  const load = async (id: string) => setDetail(await get<C>(`/admin/consoles/${id}`));
+  const load = async (id: string) => setDetail(await get<AdminConsole>(`/admin/consoles/${id}`));
   const [delC, setDelC] = useState<{ id: string; code: string; name: string } | null>(null);
   const [delTyped, setDelTyped] = useState('');
+  const [deleteReason, setDeleteReason] = useState('');
   const del_ = useAction();
   async function confirmDelete() {
-    if (!delC) return;
-    const ok = await del_.run(async () => { await del(`/admin/consoles/${delC.id}`); return true; }, `Console ${delC.name} excluído.`);
+    if (!delC || delTyped !== delC.code || deleteReason.trim().length < 3) return;
+    const ok = await del_.run(async () => { await del(`/admin/consoles/${delC.id}`, { reason: deleteReason.trim() }); return true; }, `Console ${delC.name} excluído.`);
     if (ok) { if (sel === delC.id) { setSel(null); setDetail(null); } setDelC(null); list.reload(); }
   }
-  const askDelete = (x: { id: string; code: string; name: string }) => { setDelTyped(''); setDelC(x); };
+  const askDelete = (x: { id: string; code: string; name: string }) => { setDelTyped(''); setDeleteReason(''); setDelC(x); };
   useEffect(() => { if (sel) load(sel); }, [sel]);
   return (
     <div className="stack">
       <PageHeader title="Consoles e conexão" subtitle="Cadastro independente de jogos; método de conexão individual por console." />
       {msg}
       {!delC && del_.msg}
-      <section className="card"><h2>Novo console</h2><div className="row">
+      <NewRecord title="Novo console">{(close) => <div className="row">
         <input className="btn" placeholder="Código (PS5-05)" value={nc.code} onChange={(e) => setNc({ ...nc, code: e.target.value.toUpperCase() })} />
         <input className="btn" placeholder="Nome (PS5 nº 05)" value={nc.name} onChange={(e) => setNc({ ...nc, name: e.target.value })} />
         <select className="btn" value={nc.platform_code} onChange={(e) => setNc({ ...nc, platform_code: e.target.value })}>{['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((p) => <option key={p}>{p}</option>)}</select>
-        <button className="btn primary" onClick={() => run(async () => { const c = await post<C>('/admin/consoles', nc); list.reload(); setSel(c.id); setNc({ code: '', name: '', platform_code: 'PS5' }); }, 'Console criado como "não configurado".')}>Cadastrar</button></div></section>
+        <button className="btn primary" onClick={() => run(async () => { const c = await post<AdminConsole>('/admin/consoles', nc); list.reload(); setSel(c.id); setNc({ code: '', name: '', platform_code: 'PS5' }); close(); }, 'Console criado como "não configurado".')}>Cadastrar</button></div>}</NewRecord>
       <section className="card"><DataTable rows={list.data as unknown as Record<string, unknown>[] | null} cols={[
-        ['Console', (r) => <button className="btn sm" onClick={() => setSel(String(r.id))}>{String(r.name)}</button>], ['Plataforma', (r) => String(r.platform_code)],
+        ['Console', (r) => String(r.name)], ['Plataforma', (r) => String(r.platform_code)],
         ['Método', (r) => String((r.connection as Conn)?.method_label || '—')], ['Status', (r) => <StatusPill status={String(r.status)} />],
         ['Publicado', (r) => (r.is_published ? 'sim' : 'não')], ['Jogo agora', (r) => String((r.current_assignment as { title?: string })?.title || '—')],
-        ['', (r) => <button className="btn sm danger" onClick={() => askDelete({ id: String(r.id), code: String(r.code), name: String(r.name) })}>Excluir</button>]]} /></section>
-      {detail && <Editor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onChange={() => { load(detail.id); list.reload(); }} onDelete={() => askDelete(detail)} />}
+        ['Ações', (r) => <div className="row">
+          <button className="btn sm" onClick={() => run(async () => setViewing(await get<AdminConsole>(`/admin/consoles/${r.id}`)))}>Ver</button>
+          <button className="btn sm" onClick={() => setSel(String(r.id))}>Editar</button>
+          <button className="btn sm danger" onClick={() => askDelete({ id: String(r.id), code: String(r.code), name: String(r.name) })}>Excluir</button>
+        </div>]]} /></section>
+      {viewing && <Modal title={viewing.name} onClose={() => setViewing(null)}>
+        <dl><dt>Código</dt><dd>{viewing.code}</dd><dt>Plataforma</dt><dd>{viewing.platform_code}</dd>
+          <dt>Conexão</dt><dd>{viewing.connection.method_label ?? viewing.connection.method}</dd>
+          <dt>Status</dt><dd><StatusPill status={viewing.status} /></dd></dl>
+      </Modal>}
+      {detail && detail.id === sel && !delC && <Modal title={`Editar ${detail.name}`} onClose={() => { setSel(null); setDetail(null); }}>
+        <ConsoleEditor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onChange={() => { load(detail.id); list.reload(); }} onDelete={() => askDelete(detail)} />
+      </Modal>}
       {delC && (
         <Modal title="Excluir console" onClose={() => setDelC(null)}>
           <div className="stack">
             <p style={{ margin: 0 }}>Excluir <b>{delC.name}</b>? Ele sai da operação e do painel; o histórico é mantido.</p>
             <Field label={`Digite o código do console para confirmar: ${delC.code}`}><input value={delTyped} onChange={(e) => setDelTyped(e.target.value.toUpperCase())} /></Field>
-            <div className="row"><button className="btn danger" disabled={del_.busy || delTyped !== delC.code} onClick={confirmDelete}>Excluir definitivamente</button>
+            <Field label="Motivo da exclusão" required><textarea maxLength={500} value={deleteReason} onChange={(e) => setDeleteReason(e.target.value)} /></Field>
+            <div className="row"><button className="btn danger" disabled={del_.busy || delTyped !== delC.code || deleteReason.trim().length < 3} onClick={confirmDelete}>Excluir console</button>
               <button className="btn" onClick={() => setDelC(null)}>Cancelar</button></div>
             {del_.msg}
           </div>
