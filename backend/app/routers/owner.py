@@ -106,7 +106,11 @@ def consoles(p: Principal = Depends(enrolled_owner)):
 class ConsoleIn(BaseModel):
     code: str
     name: str = Field(min_length=2, max_length=60)
-    platform_code: Literal['PS4', 'PS5']
+    platform_code: Literal['PS4', 'PS5', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH']
+    model: str = Field(default='', max_length=120)
+    serial_number: str | None = Field(default=None, max_length=120)
+    location: str = Field(default='', max_length=120)
+    description: str = Field(default='', max_length=500)
 
 
 @router.post('/consoles', status_code=201)
@@ -117,8 +121,10 @@ def create_console(body: ConsoleIn, p: Principal = Depends(enrolled_owner)):
 
 def owned_console(conn, console_id: UUID, owner_id: str, *, edit: bool = False, allow_published: bool = False):
     row = one(conn, '''
-        select c.id, c.is_published, c.platform_id, coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id
+        select c.id, c.is_published, c.platform_id, p.code platform_code,
+               coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id
         from consoles c join console_connection_configs cfg on cfg.console_id=c.id
+        join platforms p on p.id=c.platform_id
         where c.id=%s and c.owner_user_id=%s and c.deleted_at is null
     ''' + (' for update of c, cfg' if edit else ''), (console_id, owner_id))
     if not row:
@@ -129,7 +135,7 @@ def owned_console(conn, console_id: UUID, owner_id: str, *, edit: bool = False, 
 
 
 class OwnerAccountIn(BaseModel):
-    console_id: UUID
+    console_id: UUID | None = None
     label: str = Field(min_length=2, max_length=80, pattern=r'^[a-zA-Z0-9_.\- ]+$')
 
 
@@ -140,11 +146,12 @@ def create_account(body: OwnerAccountIn, p: Principal = Depends(enrolled_owner))
         raise unprocessable('invalid_label', 'Informe um rótulo com pelo menos dois caracteres.')
     try:
         with tx(p.user_id) as conn:
-            console = owned_console(conn, body.console_id, p.user_id, edit=True)
-            agent_id = console['agent_id']
-            if not agent_id:
-                raise conflict('agent_required', 'A equipe precisa configurar o agente do console primeiro.')
-            psn_accounts._agent(conn, agent_id)
+            console = owned_console(conn, body.console_id, p.user_id) if body.console_id else None
+            if console and console['platform_code'] not in ('PS4', 'PS5'):
+                raise unprocessable('invalid_platform', 'Selecione um console PlayStation.')
+            agent_id = console['agent_id'] if console else None
+            if agent_id:
+                psn_accounts._agent(conn, agent_id)
             row = insert(conn, 'psn_accounts', {'label': label, 'agent_id': agent_id,
                                                'owner_user_id': p.user_id, 'created_by': p.user_id},
                          returning='id, label, status')
@@ -152,6 +159,30 @@ def create_account(body: OwnerAccountIn, p: Principal = Depends(enrolled_owner))
     except psycopg.errors.UniqueViolation:
         raise conflict('label_taken', 'Já existe uma conta PSN com esse rótulo neste agente.')
     return jsonable(row)
+
+
+class AccountConsoleIn(BaseModel):
+    console_id: UUID
+
+
+@router.put('/psn-accounts/{account_id}/agent')
+def assign_psn_agent(account_id: UUID, body: AccountConsoleIn, p: Principal = Depends(enrolled_owner)):
+    try:
+        with tx(p.user_id) as conn:
+            console = owned_console(conn, body.console_id, p.user_id)
+            if console['platform_code'] not in ('PS4', 'PS5'):
+                raise unprocessable('invalid_platform', 'Selecione um console PlayStation.')
+            account = psn_accounts._account(conn, account_id, lock=True, owner_user_id=p.user_id)
+            if account['agent_id'] is not None:
+                raise conflict('agent_already_set', 'Esta conta PSN já tem um agente definido.')
+            if not console['agent_id']:
+                raise conflict('agent_required', 'A equipe precisa autorizar o agente deste console.')
+            psn_accounts._agent(conn, console['agent_id'])
+            conn.execute('update psn_accounts set agent_id=%s where id=%s', (console['agent_id'], account_id))
+            audit_event(conn, 'psn.owner_agent_assigned', 'psn_accounts', account_id)
+    except psycopg.errors.UniqueViolation:
+        raise conflict('label_taken', 'Já existe uma conta PSN com esse rótulo neste agente.')
+    return {'ok': True}
 
 
 @router.post('/psn-accounts/{account_id}/login/start')
@@ -220,8 +251,9 @@ def add_game(console_id: UUID, body: GameWindowIn, p: Principal = Depends(enroll
                                      p.user_id, p.user_id)
 
 
-class GameDraftIn(BaseModel):
+class GameDraftIn(admin.GameIn):
     title: str = Field(min_length=2, max_length=120)
+    slug: str = ''
 
 
 @router.post('/consoles/{console_id}/game-drafts', status_code=201)
@@ -239,10 +271,26 @@ def create_game_draft(console_id: UUID, body: GameDraftIn, p: Principal = Depend
               and (g.status='published' or g.created_by=%s)
         ''', (console['platform_id'], title, p.user_id)):
             raise conflict('game_exists', 'Já existe um jogo ou rascunho com esse título para a plataforma.')
-        row = insert(conn, 'games', {'title': title, 'slug': 'proprietario-' + security.new_token(12).lower().replace('_', '-'),
-                                     'status': 'draft', 'created_by': p.user_id, 'updated_by': p.user_id},
-                     returning='id, title, status')
-        insert(conn, 'game_platforms', {'game_id': row['id'], 'platform_id': console['platform_id']})
+        slug = body.slug or 'proprietario-' + security.new_token(12).lower().replace('_', '-')
+        if not admin.SLUG_RE.fullmatch(slug) or not 1 <= body.min_minutes <= body.max_minutes <= 480:
+            raise unprocessable('invalid_game', 'Verifique o slug e o intervalo de duração do jogo.')
+        metadata = body.model_dump(include={
+            'short_description', 'description', 'cover_url', 'banner_url', 'trailer_url',
+            'age_rating', 'release_date', 'requirements', 'min_minutes', 'max_minutes', 'image_rights_notes',
+        })
+        if metadata['age_rating'] not in (None, 'L', '10', '12', '14', '16', '18'):
+            raise unprocessable('invalid_age_rating', 'Classificação etária inválida.')
+        for field in ('cover_url', 'banner_url', 'trailer_url'):
+            value = metadata[field]
+            if value and (len(value) > 500 or not value.lower().startswith(('https://', 'http://'))):
+                raise unprocessable('invalid_media_url', 'Informe URLs de mídia HTTP ou HTTPS.')
+        try:
+            row = insert(conn, 'games', {**metadata, 'title': title, 'slug': slug, 'status': 'draft',
+                                         'created_by': p.user_id, 'updated_by': p.user_id},
+                         returning='id, title, status')
+        except psycopg.errors.UniqueViolation:
+            raise conflict('slug_taken', 'Já existe um jogo com este slug.')
+        admin._set_game_relations(conn, row['id'], [platform['code']], body.genres[:30])
         audit_event(conn, 'owner.game_draft_created', 'games', row['id'])
     return jsonable(row)
 

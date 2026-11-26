@@ -7,10 +7,12 @@ import { patch, post, put } from '@/lib/api';
 import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { DataTable, fromLocalInput, NewRecord, useAction, useDelete } from '@/components/admin/common';
+import { EMPTY_GAME, GameRegistrationFields, gameRegistrationBody } from '@/components/admin/Games';
 
-type Console = { id: string; code: string; name: string; agent_id: string | null; is_published: boolean;
+type Console = { id: string; code: string; name: string; platform_code: string; agent_id: string | null; is_published: boolean;
   owner_requested_psn_account_id?: string | null; psn_account_id?: string | null };
-type Account = { id: string; label: string; online_id: string | null; status: string; agent_id: string };
+type Account = { id: string; label: string; online_id: string | null; status: string; agent_id: string | null };
+const EMPTY_CONSOLE = { code: '', name: '', platform_code: 'PS5', model: '', serial_number: '', location: '', description: '' };
 type Games = { games: { id: string; title: string }[]; assignments: { id: string; title: string; starts_at: string; ends_at: string }[]; drafts: { id: string; title: string }[] };
 type Rate = { min_minutes: number; max_minutes: number; rate_unit: 'minute' | 'hour'; rate_cents: number; paused?: boolean };
 type Dashboard = { totals: { sessions: number; seconds_used: number; rented_minutes: number; paid_cents: number; pending_cents: number }; history: { id: string; name: string; ended_at: string; seconds_used: number }[] };
@@ -62,14 +64,16 @@ export default function OwnerInventory() {
   const settlements = useApi<Settlement[]>('/owner/settlements');
   const destination = useApi<Destination>('/owner/payout-destination');
   const [consoleId, setConsoleId] = useState('');
-  const [newConsole, setNewConsole] = useState({ code: '', name: '', platform_code: 'PS5' });
+  const [newConsole, setNewConsole] = useState(EMPTY_CONSOLE);
+  const [psnConsole, setPsnConsole] = useState('');
   const [label, setLabel] = useState('');
   const [window, setWindow] = useState({ game_id: '', starts_at: '', ends_at: '' });
-  const [gameTitle, setGameTitle] = useState('');
+  const [gameDraft, setGameDraft] = useState<Record<string, unknown>>(EMPTY_GAME);
   const [login, setLogin] = useState<{ id: string; url: string }>();
   const [redirectUrl, setRedirectUrl] = useState('');
   const { busy, msg, run } = useAction();
   const current = consoles.data?.find((item) => item.id === consoleId);
+  const playStations = (consoles.data ?? []).filter((item) => ['PS4', 'PS5'].includes(item.platform_code));
   const games = useApi<Games>(current ? `/owner/consoles/${current.id}/games` : null);
   const rate = useApi<Rate | null>(current ? `/owner/consoles/${current.id}/availability` : null);
   const error = consoles.error ?? accounts.error ?? dashboard.error ?? games.error ?? rate.error ?? settlements.error ?? destination.error;
@@ -103,23 +107,28 @@ export default function OwnerInventory() {
         <form className="stack" onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
-            const created = await post<Console>('/owner/consoles', newConsole);
+            const created = await post<Console>('/owner/consoles', { ...newConsole, serial_number: newConsole.serial_number || null });
             await consoles.reload();
             setConsoleId(created.id);
-            setNewConsole({ code: '', name: '', platform_code: 'PS5' });
+            setNewConsole(EMPTY_CONSOLE);
           }, 'Console cadastrado. A equipe configura o agente antes do vínculo PSN.');
         }}>
           <div className="grid3">
             <Field label="Código"><input required maxLength={30} value={newConsole.code} onChange={(e) => setNewConsole({ ...newConsole, code: e.target.value.toUpperCase() })} /></Field>
             <Field label="Nome"><input required maxLength={60} value={newConsole.name} onChange={(e) => setNewConsole({ ...newConsole, name: e.target.value })} /></Field>
-            <Field label="Plataforma"><select value={newConsole.platform_code} onChange={(e) => setNewConsole({ ...newConsole, platform_code: e.target.value })}><option>PS5</option><option>PS4</option></select></Field>
+            <Field label="Plataforma"><select value={newConsole.platform_code} onChange={(e) => setNewConsole({ ...newConsole, platform_code: e.target.value })}>
+              {['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((platform) => <option key={platform}>{platform}</option>)}</select></Field>
+            <Field label="Modelo"><input maxLength={120} value={newConsole.model} onChange={(e) => setNewConsole({ ...newConsole, model: e.target.value })} /></Field>
+            <Field label="Série / identificador"><input maxLength={120} value={newConsole.serial_number} onChange={(e) => setNewConsole({ ...newConsole, serial_number: e.target.value })} /></Field>
+            <Field label="Localização operacional"><input maxLength={120} value={newConsole.location} onChange={(e) => setNewConsole({ ...newConsole, location: e.target.value })} /></Field>
           </div>
+          <Field label="Descrição / observações"><textarea maxLength={500} value={newConsole.description} onChange={(e) => setNewConsole({ ...newConsole, description: e.target.value })} /></Field>
           <div><button className="btn primary" disabled={busy}>Cadastrar console</button></div>
         </form>
         <Field label="Console em edição"><select value={consoleId} onChange={(e) => {
           setConsoleId(e.target.value);
           setWindow({ game_id: '', starts_at: '', ends_at: '' });
-          setGameTitle('');
+          setGameDraft(EMPTY_GAME);
           games.setData(null);
           rate.setData(null);
         }}>
@@ -143,21 +152,42 @@ export default function OwnerInventory() {
       </CollapsibleCard>
       <CollapsibleCard title="Contas PSN" className="card stack" id="contas-psn">
         
-        {current?.agent_id && !current.is_published && <form className="row" onSubmit={(event) => {
+        <NewRecord title="Nova conta PSN">{(close) => <form className="stack" onSubmit={(event) => {
           event.preventDefault();
           void run(async () => {
-            await post('/owner/psn-accounts', { console_id: current.id, label });
+            await post('/owner/psn-accounts', { console_id: psnConsole || null, label: label.trim() });
             setLabel('');
+            setPsnConsole('');
             await accounts.reload();
-          }, 'Conta cadastrada. Vincule o login Sony.');
+            close();
+          }, 'Conta PSN cadastrada.');
         }}>
-          <Field label="Rótulo da conta"><input required minLength={2} maxLength={80} value={label} onChange={(event) => setLabel(event.target.value)} /></Field>
+          <Field label="Rótulo interno"><input required minLength={2} maxLength={80} value={label} onChange={(event) => setLabel(event.target.value)} /></Field>
+          <Field label="Console PlayStation" hint="Opcional. Se o console já tem um agente autorizado, você pode vincular o login Sony logo após cadastrar.">
+            <select value={psnConsole} onChange={(event) => setPsnConsole(event.target.value)}>
+              <option value="">Cadastrar sem console</option>
+              {playStations.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.platform_code}</option>)}
+            </select>
+          </Field>
           <button className="btn" disabled={busy}>Cadastrar conta PSN</button>
-        </form>}
+        </form>}</NewRecord>
         <DataTable rows={accounts.data} error={accounts.error?.message} empty="Nenhuma conta PSN cadastrada."
           cols={[[ 'Conta', (account) => account.label ], ['ID PSN', (account) => account.online_id ?? '—'],
+            ['Estado', (account) => !account.agent_id ? 'Aguardando agente' : account.status === 'linked' ? 'Vinculada' : 'Vínculo pendente'],
             ['Ações', (account) => <div className="row">
-          <button className="btn sm" disabled={busy || account.status === 'disabled'} onClick={() => run(async () => {
+          {!account.agent_id && playStations.some((item) => item.agent_id) && <Field label="Associar agente do console">
+            <select value="" disabled={busy} onChange={(event) => {
+              const console_id = event.target.value;
+              if (console_id) void run(async () => {
+                await put(`/owner/psn-accounts/${account.id}/agent`, { console_id });
+                await accounts.reload();
+              }, 'Agente associado. Vincule o login Sony.');
+            }}>
+              <option value="">Selecione um console</option>
+              {playStations.filter((item) => item.agent_id).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>}
+          <button className="btn sm" disabled={busy || !account.agent_id || account.status === 'disabled'} onClick={() => run(async () => {
             const response = await post<{ login_url: string }>(`/owner/psn-accounts/${account.id}/login/start`);
             setRedirectUrl('');
             setLogin({ id: account.id, url: response.login_url });
@@ -190,14 +220,16 @@ export default function OwnerInventory() {
           {!current.is_published && <NewRecord title="Cadastrar jogo para revisão">{(close) => <form className="stack" onSubmit={(event) => {
             event.preventDefault();
             void run(async () => {
-              await post(`/owner/consoles/${current.id}/game-drafts`, { title: gameTitle.trim() });
-              setGameTitle('');
+              await post(`/owner/consoles/${current.id}/game-drafts`, gameRegistrationBody(gameDraft));
+              setGameDraft(EMPTY_GAME);
               await games.reload();
               close();
             }, 'Rascunho criado para revisão da equipe.');
           }}>
-            <Field label="Título do jogo"><input required minLength={2} maxLength={120} value={gameTitle} onChange={(event) => setGameTitle(event.target.value)} /></Field>
-            <div><button className="btn primary" disabled={busy}>Cadastrar rascunho</button></div>
+            {msg}
+            <p>Plataforma do console: {current.platform_code}</p>
+            <GameRegistrationFields f={gameDraft} set={(key, value) => setGameDraft((form) => ({ ...form, [key]: value }))} owner />
+            <div><button className="btn primary" disabled={busy || String(gameDraft.title).trim().length < 2}>Cadastrar rascunho</button></div>
           </form>}</NewRecord>}
           {Boolean(games.data.drafts.length) && <DataTable rows={games.data.drafts} cols={[[ 'Rascunho aguardando revisão', (item) => item.title ]]} />}
           {!current.is_published && <form className="stack" onSubmit={(event) => {

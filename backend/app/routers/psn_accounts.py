@@ -56,6 +56,8 @@ def _agent(conn, agent_id):
 
 
 def _call_agent(conn, row, suffix: str, payload: dict | None = None, method='POST') -> dict:
+    if row['agent_id'] is None:
+        raise conflict('agent_required', 'Associe um console com agente autorizado antes de vincular o login Sony.')
     a = _agent(conn, row['agent_id'])
     token = security.decrypt(a['outbound_token_enc'])
     url = f"{a['endpoint_url'].rstrip('/')}/v1/psn/accounts/{row['id']}{suffix}"
@@ -83,7 +85,7 @@ def list_accounts(p: Principal = Depends(OPERATOR)):
     with tx() as conn:
         rows = all_(conn, '''select p.id, p.agent_id, p.owner_user_id, a.name agent_name, p.label, p.online_id, p.account_id, p.status,
                                     p.last_check_at, p.last_error, p.created_at, p.updated_at
-                             from psn_accounts p join console_agents a on a.id=p.agent_id
+                             from psn_accounts p left join console_agents a on a.id=p.agent_id
                              order by a.name, p.label''')
         return jsonable(rows)
 
@@ -119,9 +121,9 @@ def change_account(account_id: uuid.UUID, body: ChangeAccount, p: Principal = De
             if one(conn, 'select 1 from psn_accounts where agent_id=%s and lower(label)=lower(%s) and id<>%s',
                    (row['agent_id'], values['label'], account_id)):
                 raise conflict('label_taken', 'Já existe uma conta PSN com esse rótulo neste agente.')
-        if values.get('status') == 'disabled':
+        if row['agent_id'] is not None and values.get('status') == 'disabled':
             _call_agent(conn, row, '/disable')
-        elif values.get('status') == 'pending':
+        elif row['agent_id'] is not None and values.get('status') == 'pending':
             _call_agent(conn, row, '/enable')
         values['updated_at'] = datetime.now(timezone.utc)
         updated = update(conn, 'psn_accounts', account_id, values)
@@ -145,7 +147,8 @@ def remove_account(account_id: uuid.UUID, body: DeleteIn, p: Principal = Depends
                         set psn_account_id=null, psn_device_uid=null
                         from consoles c
                         where cfg.console_id=c.id and c.deleted_at is not null and cfg.psn_account_id=%s''', (account_id,))
-        _call_agent(conn, row, '', method='DELETE')
+        if row['agent_id'] is not None:
+            _call_agent(conn, row, '', method='DELETE')
         audit_event(conn, 'psn.account_deleted', 'psn_accounts', account_id, reason=body.reason)
         conn.execute('delete from psn_accounts where id=%s', (account_id,))
     return {'ok': True}

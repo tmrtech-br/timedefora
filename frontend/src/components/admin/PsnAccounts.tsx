@@ -6,7 +6,7 @@ import { useApi } from '@/lib/hooks';
 import { DataTable, DropdownActions, NewRecord, useAction, useConfirm, useDelete } from './common';
 import { dateTime } from '@/lib/format';
 
-type Account = Record<string, unknown> & { id: string; agent_id: string; agent_name: string; label: string; status: string; online_id: string | null;
+type Account = Record<string, unknown> & { id: string; agent_id: string | null; agent_name: string | null; label: string; status: string; online_id: string | null;
   account_id: string | null; last_check_at: string | null; last_error: string };
 type Agent = { id: string; name: string; is_simulated: boolean };
 
@@ -68,37 +68,37 @@ export default function PsnAccounts({ onAccountsChanged, initialPlatform = 'all'
         </select></Field>
         <DataTable<Account> rows={accounts.data} error={accounts.error?.message} cols={[
           ['Rótulo', (a) => <b>{a.label}</b>],
-          ['Agente', (a) => a.agent_name],
+          ['Agente', (a) => a.agent_name ?? 'Aguardando agente'],
           ['PSN ID', (a) => a.online_id || '—'],
           ['Estado', (a) => <StatusPill status={a.status} map={{ pending: 'pendente', linked: 'vinculada', expired: 'expirada', error: 'erro', disabled: 'desativada' }} />],
           ['Última verificação', (a) => dateTime(a.last_check_at)],
           ['Ações', (a) => <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
             <DropdownActions key={platform} disabled={busy} actions={[
-              { id: 'link', label: 'Vincular', disabled: a.status === 'disabled', execute: () => run(async () => {
+              { id: 'link', label: 'Vincular', disabled: !a.agent_id || a.status === 'disabled', execute: () => run(async () => {
                 const result = await post<{ login_url: string }>('/admin/psn-accounts/' + a.id + '/login/start');
                 setLogin({ id: a.id, label: a.label, url: result.login_url }); setRedirect('');
               }) },
-              { id: 'test', label: 'Testar autentica??o', disabled: a.status === 'disabled', execute: () => run(async () => {
+              { id: 'test', label: 'Testar autenticação', disabled: !a.agent_id || a.status === 'disabled', execute: () => run(async () => {
                 const result = await post<{ ok: boolean; message?: string }>('/admin/psn-accounts/' + a.id + '/test');
                 accounts.reload(); if (!result.ok) throw new Error(result.message || 'A conta PSN n?o foi validada.');
-              }, 'Autentica??o PSN validada.') },
+              }, 'Autenticação PSN validada.') },
               ...(platform !== 'PS4' ? [{ id: 'ps5', label: 'Consultar PS5', disabled: a.status !== 'linked', execute: () => run(async () => {
                 const response = await post<{ devices: PsnDevice[] }>('/admin/psn-accounts/' + a.id + '/devices');
                 setDevices({ source: 'psn', label: a.label, items: response.devices });
               }) }] : []),
               ...(platform !== 'PS5' ? [
-                { id: 'ps4-lan', label: 'Buscar PS4 na rede local', execute: () => run(async () => {
+                { id: 'ps4-lan', label: 'Buscar PS4 na rede local', disabled: !a.agent_id, execute: () => run(async () => {
                   const response = await post<{ devices: LanPs4[] }>('/admin/psn-accounts/' + a.id + '/devices/ps4-lan');
-                  setDevices({ source: 'lan', label: a.agent_name, items: response.devices });
+                  setDevices({ source: 'lan', label: a.agent_name ?? a.label, items: response.devices });
                 }) },
                 { id: 'ps4-wan', label: 'Diagnosticar PS4 via PSN', disabled: a.status !== 'linked', execute: () => run(async () => {
                   const result = await post<Ps4Diagnostic>('/admin/psn-accounts/' + a.id + '/diagnose/ps4-psn');
                   setDiagnostic({ ...result, label: a.label });
                 }) },
               ] : []),
-              ...(options.data?.chiaki_import_enabled ? [{ id: 'chiaki', label: 'Importar Chiaki', disabled: a.status === 'disabled', execute: () => run(async () => {
+              ...(options.data?.chiaki_import_enabled ? [{ id: 'chiaki', label: 'Importar Chiaki', disabled: !a.agent_id || a.status === 'disabled', execute: () => run(async () => {
                 await post('/admin/psn-accounts/' + a.id + '/import/chiaki'); accounts.reload();
-              }, 'Credencial importada. Execute o teste de autentica??o.') }] : []),
+              }, 'Credencial importada. Execute o teste de autenticação.') }] : []),
               ...(a.status === 'disabled' ? [{ id: 'enable', label: 'Reativar', execute: () => run(async () => {
                 await patch('/admin/psn-accounts/' + a.id, { status: 'pending' }); refresh();
               }, 'Conta reativada.') }] : []),

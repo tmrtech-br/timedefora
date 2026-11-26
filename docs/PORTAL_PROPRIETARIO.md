@@ -1,6 +1,6 @@
 # Portal do proprietário
 
-Antes de iniciar a aplicação com esta versão, aplique as migrações `015` a `022` com `python -m app.migrate` a partir de `backend`. A fila de diagnóstico usa o worker da aplicação. Execute a API com `RUN_WORKER=true` ou mantenha `python -m app.worker` em um processo separado.
+Antes de iniciar a aplicação com esta versão, aplique as migrações `015` a `023` com `python -m app.migrate` a partir de `backend`. A fila de diagnóstico usa o worker da aplicação. Execute a API com `RUN_WORKER=true` ou mantenha `python -m app.worker` em um processo separado.
 
 ## Superadmin
 
@@ -14,7 +14,7 @@ Em **Sessões e incidentes**, associe o incidente à reserva. Para locação de 
 
 ## Proprietário
 
-Cadastre um console no portal. Após a equipe autorizar um agente, cadastre e vincule a conta PSN pelo login da Sony. Selecione a conta para solicitar o vínculo com o console. Cadastre janelas de jogos e a tarifa por minuto ou por hora. A equipe configura e publica o console. Ajustes de agenda, tarifa e associação exigem um console despublicado.
+Cadastre o console, a conta PSN e os jogos no portal. A conta PSN pode ser cadastrada primeiro. Depois que houver um PlayStation com agente autorizado, associe-o à conta e conclua o vínculo pelo login Sony. Selecione a conta para solicitar o vínculo com o console. Use um jogo publicado para cadastrar as janelas ou crie um rascunho para a equipe revisar. Cadastre a tarifa por minuto ou por hora. A equipe valida a conexão, revisa licenças e publica o console.
 
 Em **Recebimento**, cadastre PIX ou conta bancária. O portal exibe somente o destino mascarado. O dashboard apresenta tempo alugado, sessões realizadas, histórico e situação da apuração.
 
@@ -24,7 +24,8 @@ Em **Recebimento**, cadastre PIX ou conta bancária. O portal exibe somente o de
 |---|---|
 | `GET /owner/terms` | Retorna ID, versão, título, texto e data do aceite vigente, quando houver. |
 | `POST /owner/enrollment` | Recebe `policy_version_id` e `accepted: true`. Aceites repetidos da mesma versão são idempotentes. Uma versão substituída retorna `409`. |
-| `GET/POST /owner/psn-accounts` | Lista contas próprias ou recebe `console_id` e `label` para criar uma conta no agente autorizado. |
+| `GET/POST /owner/psn-accounts` | Lista contas próprias ou recebe `label` e `console_id` opcional. |
+| `PUT /owner/psn-accounts/{id}/agent` | Recebe `console_id` de um PlayStation próprio com agente autorizado para associar à conta pendente. |
 | `POST /owner/psn-accounts/{id}/login/start`, `/login/finish`, `/test` | Inicia autenticação, recebe `redirect_url` para concluir o vínculo e verifica a autenticação no agente. |
 | `GET/POST /owner/consoles` | Lista inventário ou recebe `code`, `name` e `platform_code` para cadastrar PS4/PS5. |
 | `PUT /owner/consoles/{id}/connection` | Recebe `psn_account_id` e registra a conta solicitada. |
@@ -51,5 +52,6 @@ Em **Recebimento**, cadastre PIX ou conta bancária. O portal exibe somente o de
 - `020` persiste a fila e os resultados. A execução aguarda o console sair de uma sessão ativa. O código de pareamento fica cifrado enquanto necessário e é removido quando o lote termina ou expira.
 - `021` registra o tipo de teste individual e o estado de cancelamento do diagnóstico.
 - `022` registra a pausa da disponibilidade. A pausa impede novas reservas e preserva as já registradas.
+- `023` permite cadastrar contas PSN do proprietário antes de associar um agente.
 
 A apuração cria saldos elegíveis ou retidos após a sessão. O envio e a confirmação de dinheiro dependem da integração com um provedor de repasse. O Mercado Pago existente continua responsável pelas cobranças e pelos estornos. A aprovação de uma apuração para repasse não altera seu status para pago.
