@@ -18,10 +18,15 @@ type AgentRow = Record<string, unknown>;
 type ConfigHandle = FileSystemFileHandle & {
   requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
 };
+type ConfigTargetFile = { handle: ConfigHandle; selectedForWriting: boolean };
 type ConfigPickerWindow = Window & {
   showOpenFilePicker?: (options: {
     types: { description: string; accept: Record<string, string[]> }[];
   }) => Promise<ConfigHandle[]>;
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: { description: string; accept: Record<string, string[]> }[];
+  }) => Promise<ConfigHandle>;
 };
 
 function isLocalAgent(endpoint: string) {
@@ -52,7 +57,11 @@ function downloadConfig(config: Record<string, unknown>) {
 }
 
 async function readConfig(file: ConfigHandle) {
-  const data: unknown = JSON.parse((await (await file.getFile()).text()).replace(/^\uFEFF/, ''));
+  const text = (await (await file.getFile()).text()).replace(/^\uFEFF/, '');
+  need(text.trim(), 'Selecione o config.json existente do ConsoleAgent. O arquivo escolhido está vazio.');
+  let data: unknown;
+  try { data = JSON.parse(text); }
+  catch { throw new Error('O config.json selecionado não contém JSON válido. Confira o arquivo antes de continuar.'); }
   need(data !== null && typeof data === 'object' && !Array.isArray(data), 'O config.json precisa conter um objeto JSON.');
   return data as Record<string, unknown>;
 }
@@ -77,7 +86,7 @@ function formValues<T extends Record<string, string | boolean>>(initial: T, row:
   ])) as T;
 }
 
-const CONFIG_HELP = 'Selecione o config.json no PC do ConsoleAgent. Na instalação padrão deste projeto, ele fica em E:\\LocadoraOnline\\locaplay\\agent\\config.json. O navegador pode pedir autorização para gravar quando você confirmar a ação.';
+const CONFIG_HELP = 'Na janela Salvar como, selecione o config.json existente no PC do ConsoleAgent e confirme a substituição se o navegador perguntar. Na instalação padrão, ele fica em E:\\LocadoraOnline\\locaplay\\agent\\config.json. O painel escreve os tokens somente ao confirmar a ação.';
 
 function AgentFields({ value, onChange }: { value: typeof EMPTY_AGENT; onChange: (value: typeof EMPTY_AGENT) => void }) {
   return <>
@@ -98,31 +107,40 @@ function agentPayload(value: typeof EMPTY_AGENT) {
 }
 
 async function chooseConfig() {
-  const picker = (window as ConfigPickerWindow).showOpenFilePicker;
-  if (!picker) return;
+  const browser = window as ConfigPickerWindow;
+  const types = [{ description: 'Configuração do ConsoleAgent', accept: { 'application/json': ['.json'] } }];
   try {
-    const [handle] = await picker.call(window, {
-      types: [{ description: 'Configuração do ConsoleAgent', accept: { 'application/json': ['.json'] } }],
-    });
+    const selectedForWriting = Boolean(browser.showSaveFilePicker);
+    const handle = browser.showSaveFilePicker
+      ? await browser.showSaveFilePicker({ suggestedName: 'config.json', types })
+      : (await browser.showOpenFilePicker?.({ types }))?.[0];
     need(handle?.name === 'config.json', 'Selecione o arquivo config.json do ConsoleAgent.');
-    return handle;
+    await readConfig(handle);
+    return { handle, selectedForWriting };
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
     throw error;
   }
 }
 
-async function authorizeConfigWrite(file: ConfigHandle) {
-  const permission = await file.requestPermission({ mode: 'readwrite' });
+async function authorizeConfigWrite(file: ConfigTargetFile) {
+  if (file.selectedForWriting) return;
+  const permission = await file.handle.requestPermission({ mode: 'readwrite' });
   need(permission === 'granted',
     'O navegador bloqueou a gravação neste arquivo. Confira as permissões de timedefora.com.br no navegador, selecione o config.json novamente e tente executar. Se o bloqueio continuar, tente no Chrome ou no Edge.');
 }
 
+function supportsConfigPicker() {
+  if (typeof window === 'undefined') return false;
+  const browser = window as ConfigPickerWindow;
+  return Boolean(browser.showSaveFilePicker || browser.showOpenFilePicker);
+}
+
 function ConfigTarget({ file, onFile, disabled }: {
-  file: ConfigHandle | null; onFile: (file: ConfigHandle | null) => void; disabled: boolean;
+  file: ConfigTargetFile | null; onFile: (file: ConfigTargetFile | null) => void; disabled: boolean;
 }) {
   const [feedback, setFeedback] = useState('');
-  const supported = typeof window !== 'undefined' && Boolean((window as ConfigPickerWindow).showOpenFilePicker);
+  const supported = supportsConfigPicker();
   if (!supported) return <p className="small muted">Use Chrome ou Edge para autorizar a gravação no config.json.</p>;
   return <div className="stack">
     <div className="row">
@@ -137,7 +155,7 @@ function ConfigTarget({ file, onFile, disabled }: {
       <FieldHelp text={CONFIG_HELP} />
     </div>
     {file && <div role="status">
-      <strong>Arquivo selecionado</strong> <code>{file.name}</code>
+      <strong>Arquivo selecionado</strong> <code>{file.handle.name}</code>
       <p className="small muted">Ao confirmar a ação, permita a gravação se o navegador solicitar.</p>
     </div>}
     {feedback && <p className="small" role="status">{feedback}</p>}
@@ -159,7 +177,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
   const [action, setAction] = useState('');
   const [record, setRecord] = useState(agent);
   const [draft, setDraft] = useState(() => formValues(EMPTY_AGENT, agent));
-  const [file, setFile] = useState<ConfigHandle | null>(null);
+  const [file, setFile] = useState<ConfigTargetFile | null>(null);
   const [reason, setReason] = useState('');
   const [summary, setSummary] = useState(initialSummary ?? '');
   const [error, setError] = useState('');
@@ -187,8 +205,8 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         case 'rotate': {
           if (!file) throw new Error('Selecione o config.json e autorize a gravação antes de rotacionar.');
           await authorizeConfigWrite(file);
-          const existing = await readConfig(file);
-          const writable = await file.createWritable();
+          const existing = await readConfig(file.handle);
+          const writable = await file.handle.createWritable();
           let tokens: AgentTokens;
           try {
             tokens = await post<AgentTokens>(`${base}/rotate-credentials`);
@@ -200,7 +218,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           onCredentials({ tokens, config });
           try {
             await commitConfig(writable, config);
-            setSummary(`Tokens rotacionados e gravados automaticamente em ${file.name}. Reinicie o ConsoleAgent.`);
+            setSummary(`Tokens rotacionados e gravados automaticamente em ${file.handle.name}. Reinicie o ConsoleAgent.`);
           } catch {
             setError('Os tokens foram rotacionados, mas o navegador não conseguiu concluir a gravação. Selecione Atualizar config.json existente para tentar novamente com os mesmos tokens.');
           }
@@ -215,7 +233,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           if (!credentials) throw new Error('Gere os tokens para atualizar o config.json.');
           if (!file) throw new Error('Selecione o config.json antes de executar.');
           await authorizeConfigWrite(file);
-          await writeConfig(file, agentConfig(credentials.tokens, endpoint, await readConfig(file)));
+          await writeConfig(file.handle, agentConfig(credentials.tokens, endpoint, await readConfig(file.handle)));
           setSummary('Tokens gravados no config.json. Reinicie o ConsoleAgent para aplicar a atualização.');
           break;
         }
@@ -249,7 +267,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           <option value="">Selecione uma ação</option>
           {ACTIONS.map(([value, label]) => <option key={value} value={value}
             disabled={((value === 'download' || value === 'update') && !credentials) ||
-              (value === 'update' && !(window as ConfigPickerWindow).showOpenFilePicker)}>{label}</option>)}
+              (value === 'update' && !supportsConfigPicker())}>{label}</option>)}
         </select></Field>
         {action === 'edit' && <AgentFields value={draft} onChange={setDraft} />}
         {action === 'rotate' && <p className="small muted">Selecione o config.json antes de executar. Depois da autorização de gravação, o sistema substitui os tokens no arquivo e invalida os anteriores.</p>}
@@ -287,7 +305,7 @@ export default function Agents() {
   const [kId, setKId] = useState('');
   const [credentialsByAgent, setCredentialsByAgent] = useState<Record<string, AgentCredentials>>({});
   const [selectedAgent, setSelectedAgent] = useState<{ row: AgentRow; summary?: string } | null>(null);
-  const [configFile, setConfigFile] = useState<ConfigHandle | null>(null);
+  const [configFile, setConfigFile] = useState<ConfigTargetFile | null>(null);
   const { run, msg, busy } = useAction();
   const deletion = useDelete();
   const agentOpts = agents.data?.filter((x) => !x.is_simulated).map((x) => <option key={String(x.id)} value={String(x.id)}>{String(x.name)}</option>);
@@ -321,7 +339,7 @@ export default function Agents() {
             const payload = agentPayload(a);
             const file = a.is_simulated ? null : configFile;
             if (file) await authorizeConfigWrite(file);
-            const existing = file ? await readConfig(file) : undefined;
+            const existing = file ? await readConfig(file.handle) : undefined;
             const result = await post<AgentTokens & { id: string }>('/admin/agents', { ...payload, is_simulated: a.is_simulated });
             let summary = 'Agente cadastrado. Aguardando o primeiro sinal.';
             if (!a.is_simulated) {
@@ -329,7 +347,7 @@ export default function Agents() {
               saveCredentials(result.id, { tokens: { agent_token: result.agent_token, api_to_agent_token: result.api_to_agent_token }, config });
               if (file) {
                 try {
-                  await writeConfig(file, config);
+                  await writeConfig(file.handle, config);
                   summary = 'Agente cadastrado e tokens gravados no config.json. Inicie ou reinicie o ConsoleAgent.';
                 } catch {
                   summary = 'Agente cadastrado. Não foi possível gravar no arquivo selecionado. Use Atualizar config.json existente ou Baixar config.json.';
