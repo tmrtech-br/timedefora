@@ -93,7 +93,12 @@ def _send_agent(target: tuple[str, str], suffix: str, payload: dict | None = Non
 def list_accounts(p: Principal = Depends(OPERATOR)):
     with tx() as conn:
         rows = all_(conn, '''select p.id, p.agent_id, p.owner_user_id, a.name agent_name, p.label, p.online_id, p.account_id, p.status,
-                                    p.last_check_at, p.last_error, p.created_at, p.updated_at
+                                    p.last_check_at, p.last_error, p.created_at, p.updated_at,
+                                    array(select distinct pl.code from console_connection_configs cfg
+                                          join consoles c on c.id=cfg.console_id and c.deleted_at is null
+                                          join platforms pl on pl.id=c.platform_id
+                                          where cfg.psn_account_id=p.id and pl.code in ('PS4', 'PS5')
+                                          order by pl.code) platforms
                              from psn_accounts p left join console_agents a on a.id=p.agent_id
                              order by a.name, p.label''')
         return jsonable(rows)

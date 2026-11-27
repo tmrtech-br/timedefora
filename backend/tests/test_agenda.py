@@ -113,6 +113,19 @@ def test_setup_entre_jogadores_e_manutencao(world, freeze):
         assert one(conn, 'select starts_at from reservations where id=%s', (r2['id'],))['starts_at'] == at(2, 9, 0)
 
 
+def test_limite_agendado_termina_antes_do_bloqueio(world):
+    with tx() as conn:
+        insert(conn, 'blackout_windows', {
+            'console_id': world['console']['id'], 'starts_at': at(2, 8, 45),
+            'ends_at': at(2, 9), 'reason': 'Manutenção programada',
+        })
+    response = Api().get('/catalog/games/gta-vi/quote', params={
+        'minutes': 1, 'mode': 'scheduled', 'start_at': at(2, 8).isoformat(), 'duration_limit': True,
+    })
+    assert response.status_code == 200
+    assert response.json()['max_minutes'] == 45
+
+
 def test_hold_provisorio_bloqueia_e_expira(world, freeze):
     freeze(at(2, 9, 30))
     a = login(make_user('a1'))

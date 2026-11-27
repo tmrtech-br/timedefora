@@ -2,6 +2,7 @@
 Todas as mutações ficam no audit_logs (triggers) e ações sensíveis exigem justificativa."""
 import csv
 import io
+from ipaddress import ip_address
 import re
 import time as time_mod
 import uuid
@@ -20,7 +21,8 @@ from ..core.db import all_, audit_event, insert, one, tx, update
 from ..core.deps import Principal, require_role
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found, unprocessable
 from ..core.permissions import ADMIN_MENUS, action_key, is_allowed, menu_key, route_menu
-from ..gamebridge import METHODS, AdapterError, get_adapter, method_info
+from ..gamebridge import METHODS, AdapterError, ConsoleRef, get_adapter, method_info
+from ..gamebridge.agent_client import AgentDelegatingAdapter
 from ..services import notifications, owner_settlements, payments, scheduling, sessions, support
 from ..services.consoles import console_ref
 from ..services.settings_store import DEFAULTS, get_settings
@@ -117,16 +119,18 @@ def overview(month: str | None = Query(None, pattern=r'^\d{4}-\d{2}$'), p: Princ
           (select count(*) from cancellation_requests where status='requested') cancellation_requests_open""",
                 (n - timedelta(minutes=15), today, first, end, first, end))
         util = all_(conn, """select c.name, coalesce(sum(extract(epoch from (least(r.ends_at,%s)-greatest(r.starts_at,%s))))/60,0)::int minutes
-                             from consoles c left join reservations r on r.console_id=c.id and r.status in ('active','completed','confirmed')
+                             from consoles c join reservations r on r.console_id=c.id and r.status in ('active','completed','confirmed')
                                and r.starts_at < %s and r.ends_at > %s
                              where c.deleted_at is null group by c.name order by c.name""", (end, first, end, first))
         top = all_(conn, """select g.title, count(r.id) reservations, coalesce(sum(p.amount_cents),0) revenue_cents
-                            from games g left join reservations r on r.game_id=g.id and r.confirmed_at >= %s and r.confirmed_at < %s
+                            from games g join reservations r on r.game_id=g.id and r.confirmed_at >= %s and r.confirmed_at < %s
                             left join payments p on p.reservation_id=r.id and p.status='approved'
                             where g.deleted_at is null group by g.title order by 2 desc, g.title""", (first, end))
-        alerts = all_(conn, 'select id, kind, description, started_at from service_incidents where resolved_at is null order by started_at desc')
+        alerts = all_(conn, '''select id, kind, description, started_at from service_incidents
+                              where resolved_at is null and started_at >= %s and started_at < %s
+                              order by started_at desc''', (first, end))
     return {'kpis': jsonable(k), 'utilization_month': jsonable(util), 'top_games_month': jsonable(top), 'alerts': jsonable(alerts),
-            'role': sorted(p.roles)}
+            'role': sorted(p.roles), 'period': f'{first.year:04d}-{first.month:02d}'}
 
 
 # ================================================================== jogos
@@ -143,8 +147,8 @@ class GameIn(BaseModel):
     release_date: date | None = None
     requirements: str = ''
     status: str = 'draft'
-    min_minutes: int = 10
-    max_minutes: int = 120
+    min_minutes: int = Field(default=10, ge=1)
+    max_minutes: int = Field(default=120, ge=1)
     featured_manual: bool = False
     featured_rank: int | None = None
     image_rights_notes: str = ''
@@ -193,6 +197,8 @@ def list_games(p: Principal = Depends(OPERATOR), include_deleted: bool = False):
 
 @router.post('/games', status_code=201)
 def create_game(body: GameIn, p: Principal = Depends(ADMIN)):
+    if body.max_minutes < body.min_minutes:
+        raise unprocessable('validation_error', 'A duração máxima deve ser igual ou maior que a mínima.')
     if not SLUG_RE.match(body.slug):
         raise unprocessable('validation_error', 'Slug inválido (use letras minúsculas, números e hífen).')
     if body.status == 'published':
@@ -221,6 +227,10 @@ def patch_game(gid: uuid.UUID, body: dict, p: Principal = Depends(ADMIN)):
         g = one(conn, 'select * from games where id=%s and deleted_at is null for update', (gid,))
         if not g:
             raise not_found()
+        low = body.get('min_minutes', g['min_minutes'])
+        high = body.get('max_minutes', g['max_minutes'])
+        if type(low) is not int or type(high) is not int or not 1 <= low <= high:
+            raise unprocessable('validation_error', 'Informe durações inteiras positivas, com a máxima igual ou maior que a mínima.')
         if 'slug' in body and not SLUG_RE.match(str(body['slug'])):
             raise unprocessable('validation_error', 'Slug inválido.')
         if body.get('status') == 'published':
@@ -516,7 +526,8 @@ CONSOLE_FIELDS = {'code', 'name', 'manufacturer', 'model', 'serial_number', 'des
 
 def _console_view(conn, c: dict) -> dict:
     out = jsonable(c)
-    cfg = one(conn, 'select * from console_connection_configs where console_id=%s', (c['id'],))
+    cfg = one(conn, '''select cfg.*, ag.name agent_name from console_connection_configs cfg
+                       left join console_agents ag on ag.id=cfg.agent_id where cfg.console_id=%s''', (c['id'],))
     out['platform_code'] = one(conn, 'select code from platforms where id=%s', (c['platform_id'],))['code']
     out['connection'] = jsonable(cfg)
     if cfg:
@@ -546,7 +557,15 @@ def create_console(body: ConsoleIn, p: Principal = Depends(ADMIN)):
     return register_console(body, p.user_id)
 
 
+def _console_name(value) -> str:
+    name = value.strip() if isinstance(value, str) else ''
+    if not 2 <= len(name) <= 60:
+        raise unprocessable('validation_error', 'Informe um nome para o console, de 2 a 60 caracteres.')
+    return name
+
+
 def register_console(body: ConsoleIn, actor_id: str, owner_user_id: str | None = None):
+    name = _console_name(body.name)
     code = body.code.strip().upper()
     if not re.match(r'^[A-Z0-9-]{3,30}$', code):
         raise unprocessable('validation_error', 'Código inválido (ex.: PS5-01).')
@@ -557,7 +576,7 @@ def register_console(body: ConsoleIn, actor_id: str, owner_user_id: str | None =
         if one(conn, 'select 1 from consoles where code=%s and deleted_at is null', (code,)):
             raise conflict('code_taken', 'Já existe console com este código.')
         data = body.model_dump(exclude={'platform_code'})
-        data['code'] = code
+        data.update(code=code, name=name)
         try:
             c = insert(conn, 'consoles', {**data, 'platform_id': plat['id'], 'manufacturer': body.manufacturer or plat['manufacturer'],
                                           'created_by': actor_id, 'updated_by': actor_id, 'owner_user_id': owner_user_id})
@@ -579,8 +598,52 @@ def get_console(cid: uuid.UUID, p: Principal = Depends(OPERATOR)):
         return out
 
 
+class ConsoleDiscoveryIn(BaseModel):
+    agent_id: uuid.UUID
+
+
+@router.post('/consoles/{cid}/discover-lan')
+def discover_console_lan(cid: uuid.UUID, body: ConsoleDiscoveryIn, p: Principal = Depends(ADMIN)):
+    security.rate_limit(f'console-lan-discovery:{p.user_id}', 12, 60)
+    with tx() as conn:
+        console = one(conn, '''
+            select p.code from consoles c join platforms p on p.id=c.platform_id
+            where c.id=%s and c.deleted_at is null
+        ''', (cid,))
+        if not console:
+            raise not_found('Console não encontrado.')
+        if console['code'] not in ('PS4', 'PS5'):
+            raise unprocessable('unsupported_console', 'A pesquisa local de Remote Play está disponível para PS4 e PS5.')
+        agent = one(conn, '''
+            select endpoint_url, outbound_token_enc from console_agents
+            where id=%s and not is_simulated
+        ''', (body.agent_id,))
+        if not agent or not agent['endpoint_url'] or not agent['outbound_token_enc']:
+            raise unprocessable('agent_not_ready', 'Selecione um agente real com endereço e credenciais configurados.')
+        ref = ConsoleRef(str(cid), console['code'], 'remote_play_direct', agent_endpoint=agent['endpoint_url'],
+                         agent_token=security.decrypt(agent['outbound_token_enc']))
+    adapter = get_adapter(ref.method)
+    assert isinstance(adapter, AgentDelegatingAdapter)
+    try:
+        result = adapter.discover_lan(ref)
+    except AdapterError as error:
+        raise AppError(502, 'discovery_unavailable', str(error))
+    if not result.ok:
+        raise AppError(502, 'discovery_failed', result.message)
+    devices = {}
+    for item in result.data.get('devices', []):
+        try:
+            address = str(ip_address(item['address']))
+        except (KeyError, ValueError, TypeError):
+            continue
+        devices[address] = {'address': address, 'name': str(item.get('name') or '')[:120]}
+    return list(devices.values())
+
+
 @router.patch('/consoles/{cid}')
 def patch_console(cid: uuid.UUID, body: dict, p: Principal = Depends(ADMIN)):
+    if 'name' in body:
+        body['name'] = _console_name(body['name'])
     with tx() as conn:
         if 'code' in body:
             body['code'] = str(body['code']).upper()
@@ -1868,13 +1931,17 @@ def decide(crid: uuid.UUID, body: DecideIn, p: Principal = Depends(ADMIN)):
 
 # ================================================================== usuários e papéis
 @router.get('/users')
-def users(q: str = '', p: Principal = Depends(OPERATOR)):
+def users(q: str = '', role: str = '', status: str = '', p: Principal = Depends(OPERATOR)):
     with tx() as conn:
         rows = all_(conn, '''select u.id, u.username, u.full_name, u.email, u.status, u.created_at, u.last_login_at,
                                     coalesce((select array_agg(r.code) from role_assignments ra join roles r on r.id=ra.role_id
                                               where ra.user_id=u.id and ra.revoked_at is null), '{}') roles
                              from users u where u.deleted_at is null and (u.username ilike %s or u.email ilike %s or u.full_name ilike %s)
-                             order by u.created_at desc limit 100''', (f'%{q}%',) * 3)
+                               and (%s='' or u.status=%s)
+                               and (%s='' or exists (select 1 from role_assignments ra join roles r on r.id=ra.role_id
+                                    where ra.user_id=u.id and ra.revoked_at is null and r.code=%s))
+                             order by u.created_at desc limit 100''',
+                    (*(f'%{q.strip()}%',) * 3, status, status, role, role))
     if not p.has('admin'):
         for r in rows:  # operador vê dados mínimos
             r['email'] = r['email'][:2] + '***@' + r['email'].split('@')[-1]

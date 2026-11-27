@@ -90,9 +90,26 @@ export function Field({ label, error, children, hint, help, required }: { label:
 
 export function FieldHelp({ text }: { text: string }) {
   const id = useId();
+  const tooltip = useRef<HTMLSpanElement>(null);
+  function show(anchor: HTMLButtonElement) {
+    const help = tooltip.current;
+    if (!help) return;
+    if (!help.matches(':popover-open')) help.showPopover();
+    const rect = anchor.getBoundingClientRect();
+    const left = Math.max(8, Math.min(rect.left, document.documentElement.clientWidth - help.offsetWidth - 8));
+    const top = rect.top >= help.offsetHeight + 14 ? rect.top - help.offsetHeight - 6 : rect.bottom + 6;
+    help.style.left = `${left}px`;
+    help.style.top = `${top}px`;
+  }
+  function hide() {
+    if (tooltip.current?.matches(':popover-open')) tooltip.current.hidePopover();
+  }
   return <span className="field-help">
-    <button type="button" aria-label="Ajuda sobre o campo" aria-describedby={id}>?</button>
-    <span id={id} role="tooltip">{text}</span>
+    <button type="button" aria-label="Ajuda sobre o campo" aria-describedby={id}
+      onMouseEnter={(e) => show(e.currentTarget)} onMouseLeave={hide}
+      onFocus={(e) => show(e.currentTarget)} onBlur={hide}
+      onKeyDown={(e) => { if (e.key === 'Escape' && tooltip.current?.matches(':popover-open')) { e.preventDefault(); hide(); } }}>?</button>
+    <span id={id} ref={tooltip} popover="manual" role="tooltip">{text}</span>
   </span>;
 }
 

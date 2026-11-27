@@ -70,6 +70,9 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
 
     def discover_console(self, ref):
         return self._res(self._call(ref, 'discover', self._target(ref)))  # campos no topo: compatível com o agente v0.1
+    def discover_lan(self, ref: ConsoleRef) -> AdapterResult:
+        return self._res(self._call(ref, 'discover-lan'))
+
     def pair_console(self, ref, code): return self._res(self._call(ref, 'pair', {'code': code}))
     def connect(self, ref): return self._res(self._call(ref, 'connect', {'settings': ref.settings}))
     def start_stream(self, ref, session_id): return self._res(self._call(ref, 'stream/start', {'session_id': session_id}))

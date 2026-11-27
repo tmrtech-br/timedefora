@@ -4,7 +4,7 @@ import DateFilter from '@/components/DateFilter';
 import styles from '../pagamentos/payments.module.css';
 import Link from 'next/link';
 import RequireAuth from '@/components/RequireAuth';
-import { Empty, ErrorBox, Field, PageHeader, Skeleton, StatusPill } from '@/components/ui';
+import { Empty, ErrorBox, PageHeader, Skeleton, StatusPill } from '@/components/ui';
 import { useApi } from '@/lib/hooks';
 import { ApiError, post } from '@/lib/api';
 import { toast } from '@/components/Toaster';
@@ -32,13 +32,19 @@ function Sessoes() {
       <ErrorBox error={res.error} onRetry={res.reload} />
       <h2>Reservas</h2>
       <form className={styles.filters} onSubmit={(e) => { e.preventDefault(); setFilters({ ...draft, search: draft.search.trim().toLowerCase() }); }}>
-        <Field label="Buscar"><input type="search" placeholder="Código, jogo ou console" value={draft.search} onChange={(e) => setDraft({ ...draft, search: e.target.value })} /></Field>
-        <Field label="Status"><select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+        <label className="field">Buscar
+          <input type="search" maxLength={50} placeholder="Código, jogo ou console" value={draft.search} onChange={(e) => setDraft({ ...draft, search: e.target.value })} />
+        </label>
+        <label className="field">Status
+          <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
           <option value="">Todos</option>{Object.entries(RESERVATION_STATUS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-        </select></Field>
-        <Field label="Tipo de reserva"><select value={draft.mode} onChange={(e) => setDraft({ ...draft, mode: e.target.value })}>
+          </select>
+        </label>
+        <label className="field">Tipo de reserva
+          <select value={draft.mode} onChange={(e) => setDraft({ ...draft, mode: e.target.value })}>
           <option value="">Todos</option><option value="queue">Fila</option><option value="scheduled">Horário fixo</option>
-        </select></Field>
+          </select>
+        </label>
         <DateFilter label="Data inicial" max={draft.to} value={draft.from} onChange={(from) => setDraft({ ...draft, from })} />
         <DateFilter label="Data final" min={draft.from} value={draft.to} onChange={(to) => setDraft({ ...draft, to })} />
         <div className="row">

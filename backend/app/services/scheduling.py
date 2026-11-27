@@ -585,6 +585,15 @@ def availability_summary(conn, game: dict) -> dict:
         maximum = MAX_PRICE_CENTS // platform_rate if platform_rate else game['max_minutes']
         info = {'console_id': str(c['id']), 'console_name': c['name'], 'console_code': c['code'], 'messages': [],
                 'current_window': None, 'next_window': None, 'packages': []}
+        info['scheduled_windows'] = []
+        scheduled_lead = _ceil_minute(n + timedelta(minutes=int(st['scheduled_lead_minutes'])))
+        for window in windows:
+            if window['starts_at'] >= horizon:
+                break
+            start = max(window['starts_at'], scheduled_lead, c['operating_starts_at'] or scheduled_lead)
+            end = min(window['ends_at'], c['operating_ends_at'] or window['ends_at'])
+            if end - start >= timedelta(minutes=1):
+                info['scheduled_windows'].append({'starts_at': start.isoformat(), 'ends_at': end.isoformat()})
         q = public_queue(conn, c['id'])
         info['queue_size'] = len(q)
         info['playing_now'] = next((x['username'] for x in q if x['status'] == 'playing'), None)

@@ -93,6 +93,7 @@ def test_native_internet_ps4_uses_linked_account_without_device_uid(monkeypatch)
     assert result.status_code == 200, result.text
     assert result.json()['connection']['psn_device_uid'] is None
     assert result.json()['connection']['psn_account_id'] == str(account['id'])
+    assert admin.get('/admin/psn-accounts').json()[0]['platforms'] == ['PS4']
     result = admin.put(ps4_url, json={**config, 'psn_device_uid': 'main_ps4'})
     assert result.status_code == 200, result.text
     assert result.json()['connection']['psn_device_uid'] is None

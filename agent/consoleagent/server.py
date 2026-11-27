@@ -149,6 +149,18 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             if current is not None and not current.disconnect_if_idle():
                 return _result(False, 'Há uma sessão de jogo em andamento neste console.', 'streaming')
             return _result(True, 'Conexão com o console encerrada e controle removido.', 'stopped')
+        if action == 'discover-lan':
+            target = body.get('target')
+            platform = target.get('platform_code') if isinstance(target, dict) else None
+            if platform not in ('PS4', 'PS5'):
+                return _result(False, 'Selecione um console PS4 ou PS5.')
+            try:
+                found = discover(None, platform, cfg.discovery_timeout_seconds)
+            except OSError:
+                return _result(False, 'O agente não conseguiu pesquisar na rede local.')
+            return _result(True, 'Pesquisa na rede local concluída.', data={
+                'devices': [{'address': item.address, 'name': item.host_name or ''} for item in found],
+            })
         t = target_from(cfg, console_id, body)
         r = rt(console_id, body)
         sid = str(body.get('session_id') or '')

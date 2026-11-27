@@ -1,6 +1,6 @@
 'use client';
 import DateFilter from '@/components/DateFilter';
-import { exportExcel, printReport } from './exportReport';
+import { exportExcel, printReports } from './exportReport';
 import { useState } from 'react';
 import { Copy } from 'lucide-react';
 import { Alert, Field, Modal, PageHeader } from '@/components/ui';
@@ -8,7 +8,7 @@ import { toast } from '@/components/Toaster';
 import { del, get, patch, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useApi } from '@/lib/hooks';
-import { dateTime } from '@/lib/format';
+import { dateTime, DATA_REQUEST_STATUS, TICKET_CATEGORY, TICKET_STATUS } from '@/lib/format';
 import { permissionLabel } from '@/lib/permissionsLabels';
 import { DataTable, useAction, useAsk } from './common';
 const DR_STATUS_PT = { in_progress: 'Em andamento', completed: 'Concluir', rejected: 'Recusar' } as const;
@@ -21,10 +21,23 @@ type PermissionDocument = {
   catalog: { key: string; label: string; kind: 'menu' | 'level' | 'action'; minimum: string }[];
 };
 
+const ROLE_NAMES: Record<string, string> = {
+  client: 'Cliente', operator: 'Operador', admin: 'Administrador', superadmin: 'Superadministrador', owner: 'Proprietário',
+};
+const USER_STATUS: Record<string, string> = {
+  active: 'Ativo', pending_verification: 'Aguardando verificação', suspended: 'Suspenso', deleted: 'Excluído',
+};
+const TICKET_PRIORITY: Record<string, string> = { low: 'Baixa', normal: 'Normal', high: 'Alta', urgent: 'Urgente' };
+const DATA_REQUEST_TYPE: Record<string, string> = {
+  access: 'Acesso aos dados', rectification: 'Correção de dados', deletion: 'Exclusão da conta',
+  portability: 'Portabilidade', consent_revocation: 'Revogação de consentimento',
+};
+
 export function Users() {
-  const [q, setQ] = useState('');
+  const [filters, setFilters] = useState({ q: '', role: '', status: '' });
+  const [draft, setDraft] = useState(filters);
   const { me } = useAuth();
-  const list = useApi<R[]>(`/admin/users?q=${encodeURIComponent(q)}`);
+  const list = useApi<R[]>(`/admin/users?${new URLSearchParams(filters)}`);
   const { run, msg, busy } = useAction();
   const [ask, askDialog] = useAsk();
   const sup = me?.roles.includes('superadmin');
@@ -33,9 +46,28 @@ export function Users() {
     <div className="stack">
       <PageHeader title="Usuários e permissões" subtitle="Senhas, tokens e dados sensíveis nunca são exibidos." />
       {msg}
-      <input className="btn" placeholder="Buscar por usuário, e-mail ou nome" value={q} onChange={(e) => setQ(e.target.value)} />
-      <section className="card"><DataTable rows={list.data} error={list.error?.message} cols={[['Usuário', (r) => String(r.username)], ['Nome', (r) => String(r.full_name)], ['E-mail', (r) => String(r.email)],
-        ['Papéis', (r) => (r.roles as string[]).join(', ')], ['Status', (r) => String(r.status)], ['Último acesso', (r) => dateTime(r.last_login_at as string)],
+      <form className="card stack audit-filters" onSubmit={(e) => {
+        e.preventDefault();
+        if (filters.q !== draft.q || filters.role !== draft.role || filters.status !== draft.status) list.setData(null);
+        setFilters(draft);
+      }}>
+        <div className="audit-filter-grid">
+          <Field label="Buscar usuário"><input type="search" placeholder="Usuário, e-mail ou nome" value={draft.q} onChange={(e) => setDraft({ ...draft, q: e.target.value })} /></Field>
+          <Field label="Papel"><select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value })}>
+            <option value="">Todos</option>{Object.entries(ROLE_NAMES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select></Field>
+          <Field label="Status"><select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+            <option value="">Todos</option>{Object.entries(USER_STATUS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select></Field>
+        </div>
+        <div className="row"><button className="btn primary">Filtrar</button><button type="button" className="btn" onClick={() => {
+          const empty = { q: '', role: '', status: '' };
+          if (filters.q || filters.role || filters.status) list.setData(null);
+          setDraft(empty); setFilters(empty);
+        }}>Limpar filtros</button></div>
+      </form>
+      <section className="card"><DataTable limit={5} rows={list.data} error={list.error?.message} cols={[['Usuário', (r) => String(r.username)], ['Nome', (r) => String(r.full_name)], ['E-mail', (r) => String(r.email)],
+        ['Papéis', (r) => (r.roles as string[]).map((role) => ROLE_NAMES[role] ?? role).join(', ')], ['Status', (r) => USER_STATUS[String(r.status)] ?? 'Indefinido'], ['Último acesso', (r) => dateTime(r.last_login_at as string)],
         ['Ações', (r) => <div className="row">
           <button className="btn sm" onClick={async () => {
             const susp = r.status !== 'suspended';
@@ -136,13 +168,13 @@ export function Support() {
         <select className="btn" aria-label="Status do chamado" value={status} onChange={(e) => setStatus(e.target.value)}><option value="open">Abertos</option><option value="in_progress">Em andamento</option><option value="resolved">Resolvidos</option><option value="closed">Fechados</option><option value="">Todos</option></select>
         <input className="btn" aria-label="Buscar chamados" placeholder="Assunto, usuário ou ID" value={query} onChange={(e) => { setQuery(e.target.value); if (e.target.value.trim()) setStatus(''); }} />
       </div>
-      <section className="card"><h2>Chamados de suporte</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Assunto', (r) => (
+      <section className="card"><h2>Chamados de suporte</h2><DataTable limit={5} rows={list.data} error={list.error?.message} cols={[['Assunto', (r) => (
         <div><a className="link-purple" href={`/suporte/${r.id}${r.hidden_by_user_at ? '?auditoria=1' : ''}`}>{String(r.subject)}</a>
           {Boolean(r.hidden_by_user_at) && <div className="small muted">Removido da lista pelo usuário em {dateTime(String(r.hidden_by_user_at))}</div>}</div>
-      )], ['Usuário', (r) => String(r.username)], ['Categoria', (r) => String(r.category)],
-        ['Prioridade', (r) => String(r.priority)], ['Atualizado', (r) => dateTime(String(r.updated_at))],
+      )], ['Usuário', (r) => String(r.username)], ['Categoria', (r) => TICKET_CATEGORY[String(r.category)] ?? 'Outra'],
+        ['Prioridade', (r) => TICKET_PRIORITY[String(r.priority)] ?? '—'], ['Atualizado', (r) => dateTime(String(r.updated_at))],
         ['Status', (r) => <select className="btn sm" value={String(r.status)} onChange={(e) => run(async () => { await patch(`/admin/support/tickets/${r.id}`, { status: e.target.value }); list.reload(); })}>
-          {['open', 'in_progress', 'resolved', 'closed'].map((s) => <option key={s}>{s}</option>)}</select>]]} /></section>
+          {Object.entries(TICKET_STATUS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>]]} /></section>
     </div>
   );
 }
@@ -155,8 +187,8 @@ export function Lgpd() {
     <div className="stack">
       <PageHeader title="Solicitações LGPD" subtitle="Exclusão anonimiza dados pessoais e preserva registros financeiros obrigatórios." />
       {msg}
-      <section className="card"><h2>Solicitações LGPD</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Usuário', (r) => String(r.username)], ['Tipo', (r) => String(r.request_type)], ['Detalhes', (r) => String(r.details)],
-        ['Status', (r) => String(r.status)], ['Criada', (r) => dateTime(String(r.created_at))],
+      <section className="card"><h2>Solicitações LGPD</h2><DataTable limit={5} rows={list.data} error={list.error?.message} cols={[['Usuário', (r) => String(r.username)], ['Tipo', (r) => DATA_REQUEST_TYPE[String(r.request_type)] ?? 'Outro'], ['Detalhes', (r) => String(r.details)],
+        ['Status', (r) => DATA_REQUEST_STATUS[String(r.status)] ?? 'Indefinido'], ['Criada', (r) => dateTime(String(r.created_at))],
         ['', (r) => ['open', 'in_progress'].includes(String(r.status)) ? <div className="row">{(['in_progress', 'completed', 'rejected'] as const).map((s) => <button key={s} className="btn sm" onClick={async () => {
           const resolution = await ask({ title: `Solicitação LGPD: ${DR_STATUS_PT[s]}`, label: 'Registro da resolução', confirm: DR_STATUS_PT[s], danger: s === 'rejected' });
           if (resolution) run(async () => { await post(`/admin/data-requests/${r.id}/resolve`, { status: s, resolution }); list.reload(); }, 'Atualizado.');
@@ -174,47 +206,74 @@ export function Audit() {
   const [query, setQuery] = useState('');
   const list = useApi<R[]>(`/admin/audit?limit=300${query}`);
   const report = { title: 'Auditoria', headers: ['Quando', 'Origem', 'Ação', 'Tabela', 'Registro', 'Ator', 'Campos', 'Motivo'],
+    excelWidths: [132, 112, 210, 155, 223, 115, 305, 345],
+    printWidths: [11, 8, 14, 10, 14, 8, 17, 18],
     rows: (list.data ?? []).map((r) => [dateTime(String(r.occurred_at)), AUDIT_SOURCE[String(r.source)] ?? 'Outra',
       String(r.action), String(r.table_name ?? ''), String(r.record_id ?? ''), String(r.actor_username || 'Sistema'),
       ((r.changed_fields as string[]) || []).join(', '), String(r.reason ?? '')]) };
+  const reportHeader = {
+    title: 'Relatório de auditoria', landscape: true,
+    subtitle: `${report.rows.length.toLocaleString('pt-BR')} registros · Emitido em ${dateTime(new Date().toISOString())}`,
+  };
+  function applyQuery(next: string) {
+    if (next === query) return;
+    list.setData(null);
+    setQuery(next);
+  }
   const [detail, setDetail] = useState<{ title: string; json: string } | null>(null);
   const [copied, setCopied] = useState(false);
   return (
     <div className="stack">
       <PageHeader title="Auditoria" subtitle="Alterações no banco de dados e ações administrativas.">
-        <button className="btn" disabled={list.loading || Boolean(list.error) || !report.rows.length} onClick={() => exportExcel('auditoria', [report])}>Exportar para Excel</button>
+        <button className="btn" disabled={list.loading || Boolean(list.error) || !report.rows.length} onClick={() => exportExcel('auditoria', [report], reportHeader)}>Exportar para Excel</button>
         <button className="btn" disabled={list.loading || Boolean(list.error) || !report.rows.length} onClick={() => {
-          if (!printReport(report)) toast('error', 'Permita a abertura da janela para salvar o relatório em PDF.');
+          if (!printReports(reportHeader, [report])) toast('error', 'Permita a abertura da janela para salvar o relatório em PDF.');
         }}>Salvar como PDF</button>
       </PageHeader>
-      <form className="card stack" onSubmit={(e) => {
+      <form className="card stack audit-filters" onSubmit={(e) => {
         e.preventDefault();
         const { from, to, ...fields } = draft;
         const params = new URLSearchParams();
         Object.entries(fields).forEach(([key, value]) => { if (value.trim()) params.set(key, value.trim()); });
         if (from) params.set('date_from', from + 'T00:00:00-03:00');
         if (to) params.set('date_to', new Date(Date.parse(to + 'T00:00:00-03:00') + 86400000).toISOString());
-        setQuery('&' + params.toString());
+        applyQuery(params.size ? '&' + params.toString() : '');
       }}>
-        <div className="grid3">
-          <Field label="Tabela"><input value={draft.table_name} onChange={(e) => setDraft({ ...draft, table_name: e.target.value })} /></Field>
-          <Field label="ID do registro"><input value={draft.record_id} onChange={(e) => setDraft({ ...draft, record_id: e.target.value })} /></Field>
-          <Field label="Ação"><input value={draft.action} onChange={(e) => setDraft({ ...draft, action: e.target.value })} /></Field>
-          <Field label="Origem"><select value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })}>
+        <div className="audit-filter-grid">
+          <label className="field">Tabela<input maxLength={50} value={draft.table_name} onChange={(e) => setDraft({ ...draft, table_name: e.target.value })} /></label>
+          <label className="field">ID do registro<input maxLength={50} value={draft.record_id} onChange={(e) => setDraft({ ...draft, record_id: e.target.value })} /></label>
+          <label className="field">Ação<input maxLength={50} value={draft.action} onChange={(e) => setDraft({ ...draft, action: e.target.value })} /></label>
+          <label className="field">Origem<select value={draft.source} onChange={(e) => setDraft({ ...draft, source: e.target.value })}>
             <option value="">Todas</option>{Object.entries(AUDIT_SOURCE).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-          </select></Field>
+          </select></label>
           <DateFilter label="Data inicial" value={draft.from} max={draft.to} onChange={(from) => setDraft({ ...draft, from })} />
           <DateFilter label="Data final" value={draft.to} min={draft.from} onChange={(to) => setDraft({ ...draft, to })} />
         </div>
         <div className="row"><button className="btn primary">Filtrar</button><button className="btn" type="button" onClick={() => {
-          setDraft(AUDIT_FILTERS); setQuery('');
+          setDraft(AUDIT_FILTERS); applyQuery('');
         }}>Limpar filtros</button></div>
       </form>
-      <section className="card"><h2>Eventos de auditoria</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Quando', (r) => dateTime(String(r.occurred_at))], ['Origem', (r) => <span className="pill">{AUDIT_SOURCE[String(r.source)] ?? 'Outra'}</span>], ['Ação', (r) => String(r.action)],
-        ['Tabela / registro', (r) => `${r.table_name || '—'} · ${String(r.record_id || '').slice(0, 8)}`], ['Ator', (r) => String(r.actor_username || 'sistema')],
-        ['Campos', (r) => ((r.changed_fields as string[]) || []).join(', ')], ['Motivo', (r) => String(r.reason || '')],
-        ['Detalhes', (r) => <button className="btn sm" onClick={() => { setCopied(false); setDetail({ title: `${r.action} · ${r.table_name || '—'} · ${dateTime(String(r.occurred_at))}`,
-          json: JSON.stringify({ antes: r.old_data, depois: r.new_data, ...((r.details as object) || {}) }, null, 2) }); }}>Ver detalhes</button>]]} /></section>
+      <section className="card audit-events">
+        <h2>Eventos de auditoria</h2>
+        <DataTable rows={list.data} error={list.error?.message} cols={[
+          ['Quando', (r) => <time className="audit-date" dateTime={String(r.occurred_at)}>{dateTime(String(r.occurred_at))}</time>],
+          ['Evento', (r) => <div className="audit-cell"><strong>{String(r.action)}</strong>
+            <span className="pill">{AUDIT_SOURCE[String(r.source)] ?? 'Outra'}</span></div>],
+          ['Registro', (r) => <div className="audit-cell"><strong>{String(r.table_name || '—')}</strong>
+            {r.record_id ? <code title={String(r.record_id)}>{String(r.record_id).slice(0, 8)}</code> : null}</div>],
+          ['Ator', (r) => String(r.actor_username || 'Sistema')],
+          ['Alterações', (r) => <div className="audit-cell">
+            <span>{((r.changed_fields as string[]) || []).join(', ') || '—'}</span>
+            {r.reason ? <span className="muted">{String(r.reason)}</span> : null}</div>],
+          ['Detalhes', (r) => <button type="button" className="btn audit-details-button" onClick={() => {
+            setCopied(false);
+            setDetail({
+              title: `${r.action} · ${r.table_name || '—'} · ${dateTime(String(r.occurred_at))}`,
+              json: JSON.stringify({ antes: r.old_data, depois: r.new_data, ...((r.details as object) || {}) }, null, 2),
+            });
+          }}>Ver detalhes</button>],
+        ]} />
+      </section>
       {detail && (
         <Modal title="Detalhes do registro de auditoria" onClose={() => setDetail(null)}>
           <div className="stack">
@@ -275,21 +334,21 @@ export function Settings() {
       <PageHeader title="Configurações operacionais" subtitle="Alterações auditadas. Itens críticos exigem superadministrador." />
       {msg}
       <Alert kind="info"><span>Liga/desliga de funções, plataformas e regras de agenda ficam em <a className="link-purple" href="/admin/parametros">Parâmetros</a>. Aqui ficam os ajustes avançados.</span></Alert>
-      <section className="card"><h2>Configurações</h2><DataTable rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
+      <section className="card operational-settings"><h2>Configurações</h2><DataTable limit={5} error={s.error?.message} rows={s.data ? Object.entries(s.data.values).filter(([k]) => !IN_PARAMS.has(k)).map(([k, v]) => ({ id: k, k, v })) : null} cols={[['Chave', (r) => <span>{String(r.k)}{s.data!.critical.includes(String(r.k)) && <span className="pill amber" style={{ marginLeft: 6 }}>crítica</span>}</span>],
         ['O que é', (r) => <span className="small muted" style={{ display: 'block', maxWidth: 380 }}>{SETTING_HELP[String(r.k)] || 'Ajuste avançado do sistema.'}</span>],
-        ['Valor', (r) => <input className="btn sm" style={{ width: 260, maxWidth: '100%' }} value={vals[String(r.k)] ?? (Array.isArray(r.v) ? (r.v as number[]).join(',') : String(r.v))} onChange={(e) => setVals({ ...vals, [String(r.k)]: e.target.value })} />],
+        ['Valor', (r) => <input className="btn sm operational-setting-value" aria-label={String(r.k)} value={vals[String(r.k)] ?? (Array.isArray(r.v) ? (r.v as number[]).join(',') : String(r.v))} onChange={(e) => setVals({ ...vals, [String(r.k)]: e.target.value })} />],
         ['', (r) => <button className="btn sm" disabled={vals[String(r.k)] === undefined} onClick={async () => {
           const reason = await ask({ title: `Alterar "${String(r.k)}"?`, label: 'Motivo da alteração', minLength: 1, confirm: 'Salvar',
             message: <>Novo valor: <code>{vals[String(r.k)]}</code>. A alteração vale na hora e fica na auditoria.</> });
           if (reason !== null) run(async () => { await put(`/admin/settings/${r.k}`, { value: parse(String(r.k), vals[String(r.k)]), reason }); s.reload(); }, 'Configuração salva.');
         }}>Salvar</button>]]} /></section>
       {askDialog}
-      <section className="card stack"><h2>Políticas (termos, privacidade, cancelamento)</h2>
+      <section className="card stack compact-policy-card"><h2>Políticas (termos, privacidade, cancelamento)</h2>
         <div className="grid3"><Field label="Tipo"><select value={p.kind} onChange={(e) => setP({ ...p, kind: e.target.value })}><option value="terms">Termos</option><option value="privacy">Privacidade</option><option value="cancellation">Cancelamento</option></select></Field>
           <Field label="Versão"><input maxLength={20} value={p.version} onChange={(e) => setP({ ...p, version: e.target.value })} /></Field><Field label="Título"><input maxLength={200} value={p.title} onChange={(e) => setP({ ...p, title: e.target.value })} /></Field></div>
-        <Field label="Texto"><textarea maxLength={50000} style={{ minHeight: 160 }} value={p.body} onChange={(e) => setP({ ...p, body: e.target.value })} /></Field>
+        <Field label="Texto"><textarea maxLength={50000} style={{ minHeight: 108 }} value={p.body} onChange={(e) => setP({ ...p, body: e.target.value })} /></Field>
         <button className="btn primary" onClick={() => run(async () => { await post('/admin/policies', p); pol.reload(); }, 'Nova versão publicada.')}>Publicar nova versão</button>
-        <DataTable rows={pol.data} error={pol.error?.message} cols={[['Tipo', (r) => String(r.kind)], ['Versão', (r) => String(r.version)], ['Atual', (r) => (r.is_current ? 'sim' : 'não')], ['Publicada', (r) => dateTime(r.published_at as string)]]} /></section>
+        <DataTable limit={5} rows={pol.data} error={pol.error?.message} cols={[['Tipo', (r) => String(r.kind)], ['Versão', (r) => String(r.version)], ['Atual', (r) => (r.is_current ? 'sim' : 'não')], ['Publicada', (r) => dateTime(r.published_at as string)]]} /></section>
     </div>
   );
 }

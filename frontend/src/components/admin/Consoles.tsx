@@ -1,4 +1,6 @@
 'use client';
+import DateFilter from '@/components/DateFilter';
+import switchStyles from '@/app/configuracoes/settings.module.css';
 import { ProgressModal } from '@/components/admin/ProgressModal';
 import { useEffect, useId, useState } from 'react';
 import { Eraser } from 'lucide-react';
@@ -56,17 +58,61 @@ function ConsoleSection({ group, title, summary, children }: { group: string; ti
   </details>;
 }
 
-function ConsoleWindows({ c, onChange }: { c: AdminConsole; onChange: () => void }) {
+function ConnectionSwitch({ label, help, checked, onChange }: {
+  label: string; help: string; checked: boolean; onChange: (checked: boolean) => void;
+}) {
+  return <div className="console-toggle">
+    <label className={switchStyles.switchRow}>
+      <input type="checkbox" role="switch" className={`switch ${switchStyles.toggle}`} checked={checked} onChange={(e) => onChange(e.target.checked)} />{label}
+    </label>
+    <FieldHelp text={help} />
+  </div>;
+}
+
+function LanConsolePicker({ consoleId, agentId, address, label, help, onSelect }: {
+  consoleId: string; agentId: string; address: string; label: string; help: string;
+  onSelect: (address: string) => void;
+}) {
+  const [devices, setDevices] = useState<{ address: string; name: string }[] | null>(null);
+  const { run, msg, busy } = useAction();
+  return <div className="console-lan-picker">
+    <div className="field-label"><span>{label}</span><FieldHelp text={help} /></div>
+    {msg}
+    <div><button type="button" className="btn sm" disabled={!agentId || busy} onClick={() => void run(async () => {
+      setDevices(null);
+      setDevices(await post(`/admin/consoles/${consoleId}/discover-lan`, { agent_id: agentId }));
+    })}>{busy ? 'Pesquisando…' : 'Pesquisar consoles na rede local'}</button></div>
+    {devices && (devices.length ? <Field label="Consoles encontrados">
+      <select value={devices.some((device) => device.address === address) ? address : ''} onChange={(e) => { if (e.target.value) onSelect(e.target.value); }}>
+        <option value="">Selecione para preencher o IP</option>
+        {devices.map(({ address, name }) => <option value={address} key={address}>{name ? `${name} · ${address}` : address}</option>)}
+      </select>
+    </Field> : <p className="small muted">Nenhum console respondeu ao agente na rede local.</p>)}
+  </div>;
+}
+
+function ConsoleDateTime({ label, value, min, onChange }: {
+  label: string; value: string; min?: string; onChange: (value: string) => void;
+}) {
+  const [date = '', time = ''] = value.split('T');
+  return <div className="grid2">
+    <DateFilter label={`Data ${label}`} value={date} min={min?.split('T')[0]} onChange={(next) => onChange(`${next}T${time}`)} />
+    <Field label={`Hora ${label}`} required><input type="time" required value={time} onChange={(e) => onChange(`${date}T${e.target.value}`)} /></Field>
+  </div>;
+}
+
+function ConsoleWindows({ c, group, onChange }: { c: AdminConsole; group: string; onChange: () => void }) {
   const [window, setWindow] = useState(EMPTY_WINDOW);
   const [now] = useState(() => new Date().toISOString());
   const games = useApi<{ id: string; title: string; platform_codes: string[] }[]>('/admin/games');
   const assignments = useApi<{ id: string; game_title: string; starts_at: string; ends_at: string }[]>(`/admin/assignments?console_id=${c.id}&date_from=${now}`);
   const { run, msg, busy } = useAction();
-  return <section className="card stack">
-    <h2>Vínculos e calendário</h2>
+  const validWindow = window.starts_at.length === 16 && window.ends_at.length === 16 && window.starts_at < window.ends_at;
+  return <ConsoleSection group={group} title="Vínculo de jogos" summary={assignments.data?.length ? `${assignments.data.length} vínculo(s)` : 'Sem vínculos'}>
     {msg}
     <form className="stack" onSubmit={(e) => {
       e.preventDefault();
+      if (!validWindow) return;
       void run(async () => {
         await post('/admin/assignments', { console_id: c.id, game_id: window.game_id,
           starts_at: fromLocalInput(window.starts_at), ends_at: fromLocalInput(window.ends_at) });
@@ -75,18 +121,18 @@ function ConsoleWindows({ c, onChange }: { c: AdminConsole; onChange: () => void
         onChange();
       }, 'Jogo vinculado.');
     }}>
-      <div className="grid3">
+      <div className="stack">
         <Field label="Jogo" required><select required value={window.game_id} onChange={(e) => setWindow({ ...window, game_id: e.target.value })}>
           <option value="">Selecione</option>{games.data?.filter((g) => g.platform_codes.includes(c.platform_code)).map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}
         </select></Field>
-        <Field label="Início (Fortaleza)" required><input type="datetime-local" required value={window.starts_at} onChange={(e) => setWindow({ ...window, starts_at: e.target.value })} /></Field>
-        <Field label="Fim (Fortaleza)" required><input type="datetime-local" required min={window.starts_at || undefined} value={window.ends_at} onChange={(e) => setWindow({ ...window, ends_at: e.target.value })} /></Field>
+        <ConsoleDateTime label="inicial" value={window.starts_at} onChange={(starts_at) => setWindow({ ...window, starts_at })} />
+        <ConsoleDateTime label="final" value={window.ends_at} min={window.starts_at || undefined} onChange={(ends_at) => setWindow({ ...window, ends_at })} />
       </div>
-      <div><button className="btn primary" disabled={busy}>Vincular jogo</button></div>
+      <div><button className="btn primary" disabled={busy || !window.game_id || !validWindow}>Vincular jogo</button></div>
     </form>
     <DataTable rows={assignments.data} error={assignments.error?.message ?? games.error?.message} empty="Nenhum vínculo na agenda."
       cols={[[ 'Jogo', (r) => r.game_title ], ['Início', (r) => dateTime(r.starts_at)], ['Fim', (r) => dateTime(r.ends_at)]]} />
-  </section>;
+  </ConsoleSection>;
 }
 
 export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publication = true }: {
@@ -113,7 +159,14 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
   const [hours, setHours] = useState(c.hours || []);
   const { run, msg, busy } = useAction();
   const [sure, confirmation] = useConfirm();
-  const [opening, setOpening] = useState({ starts_at: localInput(c.operating_starts_at), ends_at: localInput(c.operating_ends_at) });
+  const [opening, setOpening] = useState(() => {
+    const [startDate = '', startTime = ''] = localInput(c.operating_starts_at).split('T');
+    const [endDate = '', endTime = ''] = localInput(c.operating_ends_at).split('T');
+    return { startDate, startTime, endDate, endTime };
+  });
+  const openingStart = opening.startDate && opening.startTime ? `${opening.startDate}T${opening.startTime}` : '';
+  const openingEnd = opening.endDate && opening.endTime ? `${opening.endDate}T${opening.endTime}` : '';
+  const openingValid = !Object.values(opening).some(Boolean) || Boolean(openingStart && openingEnd && openingStart < openingEnd);
   useEffect(() => {
     if (!activeRun || !['completed', 'failed', 'cancelled'].includes(activeRun.status)) return;
     setFinishedRun(activeRun);
@@ -182,7 +235,7 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
         <div className="spread"><h2 style={{ margin: 0 }}>{c.name} <span className="small muted">{c.code} · {c.platform_code}</span></h2>
           <div className="row"><StatusPill status={c.status} />{c.is_published ? <span className="pill green">publicado</span> : <span className="pill amber">não publicado</span>}</div></div>
         <div className="grid3" style={{ marginTop: 12 }}>
-          <Field label="Nome"><input value={basic.name} onChange={(e) => setBasic({ ...basic, name: e.target.value })} /></Field>
+          <Field label="Nome" required><input maxLength={60} value={basic.name} onChange={(e) => setBasic({ ...basic, name: e.target.value })} /></Field>
           <Field label="Tipo de console"><select value={basic.platform_code} onChange={(e) => setBasic({ ...basic, platform_code: e.target.value })}>
             {PLATFORMS.map((code) => <option key={code}>{code}</option>)}
           </select></Field>
@@ -191,7 +244,7 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
           <Field label="Localização operacional"><input maxLength={120} value={basic.location} onChange={(e) => setBasic({ ...basic, location: e.target.value })} /></Field>
           <Field label="Descrição / observações"><input maxLength={500} value={basic.description} onChange={(e) => setBasic({ ...basic, description: e.target.value })} /></Field>
         </div>
-        <button className="btn" style={{ marginTop: 10 }} disabled={busy} onClick={() => run(async () => { await patch(`/admin/consoles/${c.id}`, { ...basic, serial_number: basic.serial_number || null }); onChange(); }, 'Dados salvos.')}>Salvar dados</button>
+        <button className="btn" style={{ marginTop: 10 }} disabled={busy || basic.name.trim().length < 2} onClick={() => run(async () => { await patch(`/admin/consoles/${c.id}`, { ...basic, name: basic.name.trim(), serial_number: basic.serial_number || null }); onChange(); }, 'Dados salvos.')}>Salvar dados</button>
       </section>
 
       <ConsoleSection group={group} title="Método de conexão e transmissão" summary={savedMethod === 'unconfigured' ? 'Não configurado' : 'Configurado'}>
@@ -214,7 +267,8 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
         {m !== 'unconfigured' && <div className="grid3">
           <Field label="Agente local / PC host" help="PC que executa o agente e se conecta ao console."><select value={String(cfg.agent_id)} onChange={(e) => set('agent_id', e.target.value)}><option value="">Selecione</option>
             {agents?.filter((a) => (m === 'simulated') === a.is_simulated).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
-          <fieldset className="grid3 console-fields" disabled={!cfg.agent_id && m !== 'simulated'}>
+          {!cfg.agent_id && m !== 'simulated' && <p className="small muted console-connection-hint">Selecione o agente local para habilitar os campos de conexão.</p>}
+          <fieldset className="grid3 console-fields console-connection-fields" disabled={!cfg.agent_id && m !== 'simulated'}>
           {m === 'remote_play_chiaki' && <>
             <Field label="Rota de rede (onde o console está)" help="Especifica se o acesso ocorre na rede local ou pela internet." hint={ROUTE_HINT[String(cfg.network_route)]}>
               <select value={String(cfg.network_route)} onChange={(e) => setCfg({ ...cfg, network_route: e.target.value, ...(e.target.value !== 'lan' ? { discovery_mode: 'manual' } : {}) })}>
@@ -223,7 +277,9 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
                 <option value="internet_port_forward">Outra rede — pela internet com portas abertas</option></select></Field>
             {cfg.network_route === 'lan' && <>
               <Field label="Descoberta" help="Escolhe como localizar o console na rede local."><select value={String(cfg.discovery_mode)} onChange={(e) => set('discovery_mode', e.target.value)}><option value="manual">IP/hostname manual</option><option value="lan_discovery">Descoberta na LAN</option></select></Field>
-              <Field label="IP / hostname interno" help="Endereço do console na rede privada."><input maxLength={253} value={String(cfg.internal_host)} onChange={(e) => set('internal_host', e.target.value)} placeholder="192.168.0.20" /></Field>
+              <LanConsolePicker key={String(cfg.agent_id)} consoleId={c.id} agentId={String(cfg.agent_id || '')}
+              address={String(cfg.internal_host || '')} label="IP / hostname interno" help="Endereço do console na rede privada."
+              onSelect={(address) => setCfg({ ...cfg, internal_host: address, discovery_mode: 'manual' })} />
             </>}
             {cfg.network_route === 'internet_port_forward' && <>
               <Field label="IP público ou DDNS do roteador do console" help="Endereço público pelo qual o agente alcança o roteador." required><input maxLength={253} value={String(cfg.public_host)} onChange={(e) => set('public_host', e.target.value)} placeholder="meuconsole.ddns.net" /></Field>
@@ -233,7 +289,9 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
               <input maxLength={120} value={String(cfg.console_identifier)} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
           </>}
           {m === 'remote_play_direct' && <>
-            <Field label="IP do console na rede local" help="IP fixo do console na rede do agente." required hint="Fixe esse IP no roteador (reserva DHCP) para não mudar."><input maxLength={253} value={String(cfg.internal_host)} onChange={(e) => set('internal_host', e.target.value)} placeholder="192.168.0.20" /></Field>
+            <LanConsolePicker key={String(cfg.agent_id)} consoleId={c.id} agentId={String(cfg.agent_id || '')}
+              address={String(cfg.internal_host || '')} label="IP do console na rede local" help="Pesquise e selecione o console na rede do agente."
+              onSelect={(address) => setCfg({ ...cfg, internal_host: address, discovery_mode: 'manual' })} />
             <Field label="Identificação do console" help="Nome ou identificador usado pelo agente para localizar o console." required hint='Mesmo nome usado em "consoles" no config.json do agente (ex.: PS4-118).'>
               <input maxLength={120} value={String(cfg.console_identifier)} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
           </>}
@@ -242,24 +300,22 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
               <option value="lan">Mesma rede (LAN)</option>
               <option value="internet_psn" disabled={c.platform_code !== 'PS4'}>Outra rede (PSN) — PS4</option>
             </select></Field>
-            <Field label="Identificação do console" help="Nome do console cadastrado na rede local. Na rota PSN, a conta seleciona o PS4 principal.">
-              <input disabled={cfg.network_route !== 'lan'} value={String(cfg.console_identifier || '')} onChange={(e) => set('console_identifier', e.target.value)} />
+            <Field label="Identificação do console" help="Identificação local do console. Pela PSN, o acesso é feito ao PS4 principal da conta vinculada.">
+              <input maxLength={120} value={String(cfg.console_identifier || '')} onChange={(e) => set('console_identifier', e.target.value)} />
             </Field>
             {cfg.network_route === 'lan' ? <>
-              <Field label="IP / hostname LAN do console" help="Endereço do console na mesma rede do agente."><input value={String(cfg.internal_host || '')} onChange={(e) => set('internal_host', e.target.value)} /></Field>
+              <LanConsolePicker key={String(cfg.agent_id)} consoleId={c.id} agentId={String(cfg.agent_id || '')}
+              address={String(cfg.internal_host || '')} label="IP / hostname LAN do console" help="Endereço do console na mesma rede do agente."
+              onSelect={(address) => setCfg({ ...cfg, internal_host: address, discovery_mode: 'manual' })} />
             </> : <>
               <Field label="Conta PSN vinculada" help="Conta que possui o PS4 principal para uso remoto via internet."><select value={String(cfg.psn_account_id || '')} onChange={(e) => set('psn_account_id', e.target.value)}>
                 <option value="">Selecione uma conta</option>
                 {psnAccounts?.filter((a) => a.agent_id === cfg.agent_id && a.status === 'linked' &&
                   (a.owner_user_id ?? null) === (c.owner_user_id ?? null)).map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
               </select></Field>
-              {c.platform_code === 'PS4' ? (
-                <p className="small muted">Usar o PS4 principal da conta selecionada.</p>
-              ) : (
-                <Alert kind="warn">Remote Play nativo pela PSN ainda funciona só com PS4. Use a rota “Mesma rede” para o PS5.</Alert>
-              )}
             </>}
-            <div className="row"><label className="check"><input type="checkbox" checked={!!cfg.standby_after_session} onChange={(e) => set('standby_after_session', e.target.checked)} />Hibernar ao terminar (rota PSN do PS4)</label><FieldHelp text="Envia o PS4 para o modo de repouso após o jogo, salvo reserva próxima." /></div>
+              <ConnectionSwitch label="Hibernar ao terminar (rota PSN do PS4)" help="Coloca o PS4 em repouso após o jogo pela PSN, salvo se houver uma reserva próxima."
+              checked={!!cfg.standby_after_session} onChange={(checked) => set('standby_after_session', checked)} />
             <Field label="Manter acordado se houver reserva em X minutos" help="Tempo em que o console permanece ligado entre reservas próximas."><input type="number" min={0} max={240} value={Number(cfg.keep_awake_minutes ?? 15)} onChange={(e) => set('keep_awake_minutes', Number(e.target.value))} /></Field>
           </>}
           {m === 'hdmi_capture' && <>
@@ -273,8 +329,10 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
           <Field label="FPS" help="Quantidade de quadros por segundo."><select value={String(cfg.fps)} onChange={(e) => set('fps', e.target.value)}><option>30</option><option>60</option></select></Field>
           <Field label="Codec" help="Formato de compressão do vídeo."><select value={String(cfg.codec)} onChange={(e) => set('codec', e.target.value)}><option value="h264">H.264</option><option value="h265">H.265</option></select></Field>
           <Field label="Bitrate (kbps)" help="Taxa alvo de transmissão. Em novos consoles o padrão é 6000 kbps."><input type="number" value={String(cfg.bitrate_kbps)} onChange={(e) => set('bitrate_kbps', e.target.value)} /></Field>
-          <div className="row"><label className="check"><input type="checkbox" checked={!!cfg.low_latency} onChange={(e) => set('low_latency', e.target.checked)} />Perfil de baixa latência</label><FieldHelp text="Prioriza resposta rápida aos comandos durante o jogo." /></div>
-          <div className="row"><label className="check"><input type="checkbox" checked={!!cfg.audio_enabled} onChange={(e) => set('audio_enabled', e.target.checked)} />Áudio</label><FieldHelp text="Ativa o canal de som do console na transmissão." /></div>
+          <ConnectionSwitch label="Perfil de baixa latência" help="Prioriza resposta rápida aos comandos durante o jogo."
+            checked={!!cfg.low_latency} onChange={(checked) => set('low_latency', checked)} />
+          <ConnectionSwitch label="Áudio" help="Ativa o canal de som do console na transmissão."
+            checked={!!cfg.audio_enabled} onChange={(checked) => set('audio_enabled', checked)} />
           </fieldset>
         </div>}
         <Field label="Motivo da alteração (registrado na auditoria)" help="Justificativa registrada junto às alterações de conexão."><input maxLength={500} value={String(cfg.reason || '')} onChange={(e) => set('reason', e.target.value)} /></Field>
@@ -348,6 +406,24 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
         <p className="small muted">Jogo vinculado agora: {c.current_assignment ? `${c.current_assignment.title} até ${dateTime(c.current_assignment.ends_at)}` : 'nenhum'} · Sessão ativa: {c.active_session ? 'sim' : 'não'} · Pareamento: {c.pairing?.status || '—'}</p>
       </ConsoleSection>
 
+      <ConsoleWindows c={c} group={group} onChange={onChange} />
+      <ConsoleSection group={group} title="Horário de funcionamento" summary={hours.length || openingStart ? 'Configurado' : 'Sem restrição'}>
+        <div className="grid2">
+          <DateFilter label="Data inicial" max={opening.endDate} value={opening.startDate} onChange={(startDate) => setOpening({ ...opening, startDate })} />
+          <Field label="Hora inicial"><input type="time" value={opening.startTime} onChange={(e) => setOpening({ ...opening, startTime: e.target.value })} /></Field>
+          <DateFilter label="Data final" min={opening.startDate} value={opening.endDate} onChange={(endDate) => setOpening({ ...opening, endDate })} />
+          <Field label="Hora final"><input type="time" value={opening.endTime} onChange={(e) => setOpening({ ...opening, endTime: e.target.value })} /></Field>
+        </div>
+        {!openingValid && <p className="small muted">Informe as duas datas e horas, com o fim após o início, ou deixe o período todo em branco.</p>}
+          {hours.map((h, i) => <div key={i} className="row">
+            <select className="btn sm" value={h.weekday} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, weekday: Number(e.target.value) } : x))}>{DAYS.map((d, k) => <option key={k} value={k}>{d}</option>)}</select>
+            <input className="btn sm" type="time" value={h.opens_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, opens_at: e.target.value } : x))} />
+            <input className="btn sm" type="time" value={h.closes_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, closes_at: e.target.value } : x))} />
+            <button className="btn sm danger" onClick={() => setHours(hours.filter((_, j) => j !== i))}>Remover</button></div>)}
+          <div className="row"><button className="btn sm" onClick={() => setHours([...hours, { weekday: 1, opens_at: '08:00', closes_at: '22:00' }])}>Adicionar faixa</button>
+            <button className="btn sm primary" disabled={busy || !openingValid} onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/hours`, { hours, starts_at: fromLocalInput(openingStart), ends_at: fromLocalInput(openingEnd) }); onChange(); }, 'Horários salvos.')}>Salvar horários</button></div>
+          <p className="small dim">As faixas semanais e o período informado limitam a disponibilidade dos vínculos.</p>
+        </ConsoleSection>
       {!onboarding && <ConsoleSection group={group} title="Manutenção / status" summary={c.status === 'maintenance' ? 'Em manutenção' : 'Sem manutenção'}>
           
           <Field label="Justificativa"><input maxLength={500} value={statusReason} onChange={(e) => setStatusReason(e.target.value)} /></Field>
@@ -365,21 +441,6 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
             <button className="btn" disabled={busy || statusReason.length < 3} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/status`, { status: 'online', reason: statusReason }); onChange(); }, 'Retornou à operação.')}>Retornar à operação</button>
           </div>
         </ConsoleSection>}
-        <ConsoleSection group={group} title="Horário de funcionamento" summary={hours.length || opening.starts_at ? 'Configurado' : 'Sem restrição'}>
-          <div className="grid2">
-            <Field label="Data e hora inicial (Fortaleza)"><input type="datetime-local" value={opening.starts_at} onChange={(e) => setOpening({ ...opening, starts_at: e.target.value })} /></Field>
-            <Field label="Data e hora final (Fortaleza)"><input type="datetime-local" min={opening.starts_at || undefined} value={opening.ends_at} onChange={(e) => setOpening({ ...opening, ends_at: e.target.value })} /></Field>
-          </div>
-          
-          {hours.map((h, i) => <div key={i} className="row">
-            <select className="btn sm" value={h.weekday} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, weekday: Number(e.target.value) } : x))}>{DAYS.map((d, k) => <option key={k} value={k}>{d}</option>)}</select>
-            <input className="btn sm" type="time" value={h.opens_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, opens_at: e.target.value } : x))} />
-            <input className="btn sm" type="time" value={h.closes_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, closes_at: e.target.value } : x))} />
-            <button className="btn sm danger" onClick={() => setHours(hours.filter((_, j) => j !== i))}>Remover</button></div>)}
-          <div className="row"><button className="btn sm" onClick={() => setHours([...hours, { weekday: 1, opens_at: '08:00', closes_at: '22:00' }])}>Adicionar faixa</button>
-            <button className="btn sm primary" onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/hours`, { hours, starts_at: fromLocalInput(opening.starts_at), ends_at: fromLocalInput(opening.ends_at) }); onChange(); }, 'Horários salvos.')}>Salvar horários</button></div>
-          <p className="small dim">As faixas semanais e o período informado limitam a disponibilidade dos vínculos.</p>
-        </ConsoleSection>
       {!onboarding && <ConsoleSection group={group} title="Histórico de métodos (rollback)" summary={`${c.method_history?.length ?? 0} alterações`}>
         <DataTable rows={c.method_history ?? []} cols={[['De', (r) => methods?.find((m) => m.method === r.from_method)?.label ?? 'Método anterior'], ['Para', (r) => methods?.find((m) => m.method === r.to_method)?.label ?? 'Método novo'], ['Motivo', (r) => String(r.reason)],
           ['Quando', (r) => dateTime(String(r.created_at))], ['', (r) => <button className="btn sm" onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/connection/rollback/${r.id}`); onChange(); }, 'Configuração anterior restaurada (requer nova validação).')}>Restaurar</button>]]} /></ConsoleSection>}
@@ -389,13 +450,47 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
           Bloqueado se houver sessão ativa ou reservas futuras.</p>
         {onDelete && <div><button className="btn danger" onClick={onDelete}>Excluir este console</button></div>}
       </ConsoleSection>}
-      <ConsoleWindows c={c} onChange={onChange} />
         {publication && <div className="row">
           <button className="btn primary" disabled={busy || c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/publish`); onChange(); }, 'Console publicado para vendas.')}>Publicar</button>
           <button className="btn" disabled={busy || !c.is_published} onClick={() => run(async () => { await post(`/admin/consoles/${c.id}/unpublish`); onChange(); }, 'Console despublicado.')}>Despublicar</button>
         </div>}
     </div>
   );
+}
+
+function ConsoleSummary({ console: c }: { console: AdminConsole }) {
+  const connection = c.connection;
+  const routes: Record<string, string> = { lan: 'Mesma rede (LAN)', internet_psn: 'Outra rede (PSN)', internet_port_forward: 'Outra rede (portas abertas)' };
+  const value = (data: unknown) => typeof data === 'number' || (typeof data === 'string' && data.trim()) ? String(data) : '—';
+  const fields: { title: string; rows: [string, React.ReactNode][] }[] = [
+    { title: 'Console', rows: [
+      ['Código', c.code], ['Plataforma', c.platform_code], ['Modelo', value(c.model)], ['Número de série', value(c.serial_number)],
+      ['Localização', value(c.location)], ['Descrição', value(c.description)],
+    ] },
+    { title: 'Conexão e transmissão', rows: [
+      ['Método', connection.method_label ?? 'Não configurado'],
+      ['Rota', connection.method !== 'unconfigured' ? routes[String(connection.network_route)] ?? '—' : '—'],
+      ['Identificação', value(connection.console_identifier)],
+      ['IP ou hostname', value(connection.network_route === 'internet_port_forward' ? connection.public_host : connection.internal_host)],
+      ['Conta PSN', connection.psn_account_id ? 'Vinculada' : 'Sem vínculo'], ['Agente', value(connection.agent_name)],
+      ['Resolução', value(connection.resolution)], ['FPS', value(connection.fps)], ['Codec', value(connection.codec)],
+      ['Bitrate', connection.bitrate_kbps ? `${value(connection.bitrate_kbps)} kbps` : '—'],
+      ['Áudio', connection.audio_enabled ? 'Ativado' : 'Desativado'], ['Baixa latência', connection.low_latency ? 'Ativada' : 'Desativada'],
+    ] },
+    { title: 'Disponibilidade e diagnóstico', rows: [
+      ['Jogo vinculado agora', c.current_assignment?.title ?? '—'], ['Sessão ativa', c.active_session ? 'Sim' : 'Não'],
+      ['Período de operação', c.operating_starts_at && c.operating_ends_at
+        ? `${dateTime(c.operating_starts_at)} a ${dateTime(c.operating_ends_at)}` : 'Sem período específico'],
+      ['Última validação', dateTime(connection.validated_at)],
+    ] },
+  ];
+  return <div className="stack">
+    <div className="row"><StatusPill status={c.status} /><span className={`pill ${c.is_published ? 'green' : 'amber'}`}>{c.is_published ? 'Publicado' : 'Não publicado'}</span></div>
+    {fields.map(({ title, rows }) => <section className="card" key={title}>
+      <h3>{title}</h3>
+      <dl className="console-summary-grid">{rows.map(([label, detail]) => <div key={label}><dt>{label}</dt><dd>{detail}</dd></div>)}</dl>
+    </section>)}
+  </div>;
 }
 
 export default function Consoles({ registration = false }: { registration?: boolean }) {
@@ -425,9 +520,9 @@ export default function Consoles({ registration = false }: { registration?: bool
       {!delC && del_.msg}
       <NewRecord title="Novo console">{(close) => <div className="grid3">
         <input className="btn" placeholder="Código (PS5-05)" value={nc.code} onChange={(e) => setNc({ ...nc, code: e.target.value.toUpperCase() })} />
-        <input className="btn" placeholder="Nome (PS5 nº 05)" value={nc.name} onChange={(e) => setNc({ ...nc, name: e.target.value })} />
+        <input className="btn" aria-label="Nome do console" placeholder="Nome (PS5 nº 05)" value={nc.name} onChange={(e) => setNc({ ...nc, name: e.target.value })} />
         <select className="btn" value={nc.platform_code} onChange={(e) => setNc({ ...nc, platform_code: e.target.value })}>{['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((p) => <option key={p}>{p}</option>)}</select>
-        <button className="btn primary" onClick={() => run(async () => { const c = await post<AdminConsole>('/admin/consoles', nc); list.reload(); setOnboarding(true); setSel(c.id); setNc({ code: '', name: '', platform_code: 'PS5' }); close(); }, 'Console criado como "não configurado".')}>Cadastrar</button></div>}</NewRecord>
+        <button className="btn primary" disabled={nc.name.trim().length < 2} onClick={() => run(async () => { const c = await post<AdminConsole>('/admin/consoles', { ...nc, name: nc.name.trim() }); list.reload(); setOnboarding(true); setSel(c.id); setNc({ code: '', name: '', platform_code: 'PS5' }); close(); }, 'Console criado como "não configurado".')}>Cadastrar</button></div>}</NewRecord>
       <section className="card"><h2>Consoles cadastrados</h2><DataTable rows={list.data as unknown as Record<string, unknown>[] | null} cols={[
         ['Nome', (r) => String(r.name)], ['Modelo', (r) => String(r.model || '—')], ['Plataforma', (r) => String(r.platform_code)],
         ['Método', (r) => String((r.connection as Conn)?.method_label || '—')], ['Status', (r) => <StatusPill status={String(r.status)} />],
@@ -438,9 +533,7 @@ export default function Consoles({ registration = false }: { registration?: bool
           <button className="btn sm danger" onClick={() => askDelete({ id: String(r.id), code: String(r.code), name: String(r.name) })}>Excluir</button>
         </div>]]} /></section>
       {viewing && <Modal title={viewing.name} onClose={() => setViewing(null)} allowEscape>
-        <dl><dt>Código</dt><dd>{viewing.code}</dd><dt>Plataforma</dt><dd>{viewing.platform_code}</dd>
-          <dt>Conexão</dt><dd>{viewing.connection.method_label ?? viewing.connection.method}</dd>
-          <dt>Status</dt><dd><StatusPill status={viewing.status} /></dd></dl>
+        <ConsoleSummary console={viewing} />
       </Modal>}
       {detail && detail.id === sel && !delC && <Modal title={`${onboarding ? "Configurar" : "Editar"} ${detail.name}`} onClose={() => { setSel(null); setDetail(null); }}>
         <ConsoleEditor key={detail.id + JSON.stringify(detail.connection.version)} c={detail} onboarding={onboarding} publication={!registration} onChange={() => { load(detail.id); list.reload(); }} onDelete={() => askDelete(detail)} />

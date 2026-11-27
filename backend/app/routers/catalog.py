@@ -164,7 +164,7 @@ def game_detail(slug: str, p: Principal | None = Depends(optional_user)):
 
 
 @router.get('/catalog/games/{slug}/quote')
-def quote(slug: str, minutes: int = Query(ge=1, le=scheduling.MAX_RESERVATION_MINUTES), mode: str = 'queue', start_at: str | None = None):
+def quote(slug: str, minutes: int = Query(ge=1, le=scheduling.MAX_RESERVATION_MINUTES), mode: str = 'queue', start_at: str | None = None, duration_limit: bool = False):
     """Cotação servidor: início estimado/confirmável e preço para o pacote escolhido."""
     from datetime import datetime
     with tx() as conn:
@@ -181,6 +181,17 @@ def quote(slug: str, minutes: int = Query(ge=1, le=scheduling.MAX_RESERVATION_MI
         if flags['sales_paused'] or not flags[f'{mode}_mode_enabled']:
             return {'available': False, 'message': 'Reservas neste modo estão temporariamente indisponíveis.'}
         slots = scheduling.find_slots(conn, g['id'], minutes, mode, s)
+        if duration_limit and mode == 'scheduled':
+            # A duração é contínua até a primeira reserva, bloqueio ou fechamento.
+            low = 0
+            high = max((int((slot.window_end - s).total_seconds() // 60) for slot in slots), default=0)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if scheduling.find_slots(conn, g['id'], middle, mode, s):
+                    low = middle
+                else:
+                    high = middle - 1
+            return {'start_at': start_at, 'max_minutes': low}
         if not slots:
             return {'available': False, 'message': scheduling.explain_unavailable(conn, g['id'], minutes, mode, s)}
         for sl in slots:

@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Bell, CirclePlay, CreditCard, Gamepad2, Headphones, Heart, Home, Info, Keyboard, ListOrdered, LogOut, Menu, Monitor, Receipt,
-  Settings, ShieldCheck, ShieldHalf, Smartphone, Tablet, UserRound, UserRoundPlus, X, Zap,
+  PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, ShieldHalf, Smartphone, Tablet, UserRound, UserRoundPlus, X, Zap,
 } from 'lucide-react';
 import { useAuth, isStaff } from '@/lib/auth';
 import { get } from '@/lib/api';
@@ -86,19 +86,27 @@ export function Header({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
   );
 }
 
-export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {
+export function Sidebar({ open, collapsed, onToggle, onNavigate }: {
+  open: boolean; collapsed: boolean; onToggle: () => void; onNavigate: () => void;
+}) {
   const path = usePathname();
   const router = useRouter();
   const { me, logout } = useAuth();
   const features = useFeatures();
   const link = (i: { href: string; label: string; icon: typeof Home; also?: string[] }) => (
-    <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''} aria-current={isActive(path, i.href) ? 'page' : undefined}>
-      <i.icon aria-hidden />{i.label}
+    <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''}
+      aria-current={isActive(path, i.href, i.also) ? 'page' : undefined} aria-label={i.label} title={collapsed ? i.label : undefined}>
+      <i.icon aria-hidden /><span className="sidebar-label">{i.label}</span>
     </Link>
   );
   return (
     <aside id="player-sidebar" className={`sidebar ${open ? 'open' : ''}`} aria-label="Menu do jogador">
-      <nav className="side-links">
+      <button className="btn sm sidebar-toggle" type="button" aria-controls="player-sections" aria-expanded={!collapsed}
+        aria-label={collapsed ? 'Expandir menu principal' : 'Recolher menu principal'}
+        title={collapsed ? 'Expandir menu principal' : 'Recolher menu principal'} onClick={onToggle}>
+        {collapsed ? <PanelLeftOpen size={18} aria-hidden /> : <PanelLeftClose size={18} aria-hidden />}
+      </button>
+      <nav id="player-sections" className="side-links">
         <div className="mobile-only">{TOP.filter((t) => t.href !== '/jogos').map(link)}{!me && link({ href: '/cadastrar', label: 'Cadastrar', icon: UserRoundPlus })}<div className="side-divider" /></div>
         {SIDE_MAIN.map(link)}
         <div className="side-divider" />
@@ -111,7 +119,10 @@ export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () =>
             {link({ href: '/pagamentos', label: 'Pagamentos', icon: Receipt })}
             {isStaff(me) && link({ href: '/admin', label: 'Painel administrativo', icon: ShieldHalf })}
             {me.roles.includes('owner') && link({ href: '/proprietario', label: 'Portal do proprietário', icon: Monitor })}
-            <a href="#sair" onClick={async (e) => { e.preventDefault(); await logout(); onNavigate(); router.push('/'); }}><LogOut aria-hidden />Sair</a>
+            <a href="#sair" aria-label="Sair" title={collapsed ? 'Sair' : undefined}
+              onClick={async (e) => { e.preventDefault(); await logout(); onNavigate(); router.push('/'); }}>
+              <LogOut aria-hidden /><span className="sidebar-label">Sair</span>
+            </a>
           </div>
         )}
       </nav>
@@ -150,6 +161,7 @@ export function Footer() {
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const path = usePathname();
   useEffect(() => setOpen(false), [path]);
   useEffect(() => {
@@ -167,8 +179,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     <Toaster>
       <a href="#conteudo" className="skip-link">Pular para o conteúdo</a>
       <Header onMenu={() => setOpen(!open)} menuOpen={open} />
-      <div className="shell">
-        <Sidebar open={open} onNavigate={() => setOpen(false)} />
+      <div className={`shell${collapsed ? ' shell-sidebar-collapsed' : ''}`}>
+        <Sidebar open={open} collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} onNavigate={() => setOpen(false)} />
         <div className="main">
           <main id="conteudo" tabIndex={-1} className={path === '/' ? 'content' : 'content pad'}>{children}</main>
           <Footer />

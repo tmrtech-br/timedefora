@@ -79,7 +79,7 @@ export default function Params() {
       <PageHeader title="Parâmetros do sistema" subtitle="Ligue e desligue funções. Cada alteração vale na hora, é aplicada no servidor e fica registrada na auditoria." />
       {msg}
 
-      <div className="grid2" style={{ alignItems: 'start' }}>
+      <div className="parameter-cards">
       <section className="card stack"><h2>Plataformas e consoles</h2>
         <p className="small muted" style={{ margin: 0 }}>Desligar uma plataforma tira da venda todos os consoles dela e esconde do catálogo os jogos que só existem nela. Reservas já pagas continuam valendo.</p>
         <div className="params">
@@ -124,7 +124,7 @@ export default function Params() {
         </div>
       </section>
 
-      <section className="card stack"><h2>Regras de agenda e limites</h2>
+      <section className="card stack parameter-rules"><h2>Regras de agenda e limites</h2>
         <div className="params">
           {NUMBERS.filter((n) => n.key in v).map((n) => {
             const cur = String(v[n.key]);
