@@ -1,18 +1,17 @@
-﻿.compact:global(.stack), .form { gap: 8px; }
+﻿.compact:global(.stack), .form { gap: 6px; }
 .compact > h2 { margin-bottom: 0; }
 .form { display: grid; }
 .form button { justify-self: start; }
-.compact :global(.field) { gap: 4px; }
+.compact :global(.field) { gap: 3px; }
 .compact :global(.field-foot):has(> span:only-child:empty) { display: none; }
 @media (max-width: 900px) {
   .profileForms:global(.grid2) { grid-template-columns: minmax(0, 1fr); }
 }
 @media (min-width: 901px) {
-  .profileForms:global(.grid2) { row-gap: 8px; }
+  .profileForms:global(.grid2) { align-items: start; gap: 10px; }
   .profileForms > .compact:global(.stack) {
     display: grid;
-    grid-row: span 5;
-    grid-template-rows: subgrid;
+    align-content: start;
     min-width: 0;
   }
   .personal {
@@ -24,9 +23,7 @@
   .personal > :global(.field) { grid-column: 2; grid-row: 2; }
   .personal > :global(.field) + :global(.field) { grid-row: 3; }
   .personal > a { grid-column: 2; grid-row: 4; align-self: start; }
-  .personal > .save { grid-row: 5; }
-  .profileForms .form { grid-row: 2 / 6; grid-template-rows: subgrid; }
-  .profileForms .form > button { grid-row: 4; justify-self: stretch; }
+  .personal > .save { grid-column: 2; }
   .profileForms :global(.field) { align-self: start; min-width: 0; }
 }
 .avatarButton {

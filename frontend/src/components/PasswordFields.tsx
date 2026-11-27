@@ -16,11 +16,12 @@ const rules = [
 
 const strengthLabels = ['Muito fraca', 'Muito fraca', 'Fraca', 'Regular', 'Boa', 'Forte'];
 
-export function PasswordField({ label, value, onChange, describedBy, invalid, error }: {
+export function PasswordField({ label, value, onChange, describedBy, invalid, error, autoComplete = 'new-password' }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
-  describedBy: string;
+  describedBy?: string;
+  autoComplete?: 'current-password' | 'new-password';
   invalid?: boolean;
   error?: string;
 }) {
@@ -32,8 +33,8 @@ export function PasswordField({ label, value, onChange, describedBy, invalid, er
     <div className="field">
       <label htmlFor={id}>{label}</label>
       <div className={styles.input}>
-        <input id={id} type={visible ? 'text' : 'password'} autoComplete="new-password"
-          autoCapitalize="none" spellCheck={false} value={value} required aria-describedby={[describedBy, error && id + '-error'].filter(Boolean).join(' ')}
+        <input id={id} type={visible ? 'text' : 'password'} autoComplete={autoComplete}
+          autoCapitalize="none" spellCheck={false} value={value} required aria-describedby={[describedBy, error && id + '-error'].filter(Boolean).join(' ') || undefined}
           aria-invalid={Boolean(error) || invalid || undefined} onChange={(event) => onChange(event.target.value)} />
         <button type="button" className={styles.visibility} aria-controls={id}
           aria-label={`${visible ? 'Ocultar' : 'Mostrar'}: ${label.toLowerCase()}`}

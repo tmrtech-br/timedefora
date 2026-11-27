@@ -1,11 +1,11 @@
 ﻿'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { ApiError, post } from '@/lib/api';
-import { Alert, Field } from './ui';
+import { PasswordConfirmation, PasswordField, PasswordRequirements, passwordMeetsRequirements } from './PasswordFields';
+import { Alert } from './ui';
 
 const EMPTY = { current_password: '', new_password: '', new_password_confirm: '' };
-const MAX_LENGTH = 128;
 
 export default function PasswordForm({ hasPassword, onChanged, className }: {
   hasPassword: boolean;
@@ -18,6 +18,11 @@ export default function PasswordForm({ hasPassword, onChanged, className }: {
   const [saving, setSaving] = useState(false);
   const [version, setVersion] = useState(0);
 
+  const requirementsId = useId();
+  const confirmationId = useId();
+  const meetsRequirements = passwordMeetsRequirements(form.new_password);
+  const mismatch = Boolean(form.new_password_confirm) && form.new_password_confirm !== form.new_password;
+
   function setField(field: keyof typeof EMPTY, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: '' }));
@@ -29,8 +34,8 @@ export default function PasswordForm({ hasPassword, onChanged, className }: {
     setFeedback(undefined);
     const issues: Record<string, string> = {};
     if (hasPassword && !form.current_password) issues.current_password = 'Informe a senha atual.';
-    if (form.new_password.length < 10 || !/\p{L}/u.test(form.new_password) || !/\p{Nd}/u.test(form.new_password)) {
-      issues.new_password = 'Use pelo menos 10 caracteres, com letras e números.';
+    if (!meetsRequirements) {
+      issues.new_password = 'Atenda aos requisitos da nova senha.';
     } else if (hasPassword && form.new_password === form.current_password) {
       issues.new_password = 'Escolha uma senha diferente da atual.';
     }
@@ -61,16 +66,17 @@ export default function PasswordForm({ hasPassword, onChanged, className }: {
   return (
     <form key={version} className={className} onSubmit={submit} noValidate>
       {feedback && <Alert kind={feedback.kind}>{feedback.message}</Alert>}
-      {hasPassword && <Field label="Senha atual" required error={errors.current_password}>
-        <input type="password" autoComplete="current-password" maxLength={MAX_LENGTH} value={form.current_password} onChange={(event) => setField('current_password', event.target.value)} />
-      </Field>}
-      <Field label="Nova senha" required hint="Mínimo de 10 caracteres, com letras e números." error={errors.new_password}>
-        <input type="password" autoComplete="new-password" maxLength={MAX_LENGTH} value={form.new_password} onChange={(event) => setField('new_password', event.target.value)} />
-      </Field>
-      <Field label="Confirmar nova senha" required error={errors.new_password_confirm}>
-        <input type="password" autoComplete="new-password" maxLength={MAX_LENGTH} value={form.new_password_confirm} onChange={(event) => setField('new_password_confirm', event.target.value)} />
-      </Field>
-      <button className="btn primary" type="submit" disabled={saving}>{saving ? 'Salvando…' : hasPassword ? 'Alterar senha' : 'Definir senha'}</button>
+      {hasPassword && <PasswordField label="Senha atual" autoComplete="current-password" value={form.current_password}
+        error={errors.current_password} onChange={(value) => setField('current_password', value)} />}
+      <PasswordField label="Nova senha" value={form.new_password} describedBy={requirementsId}
+        error={errors.new_password} onChange={(value) => setField('new_password', value)} />
+      <PasswordRequirements password={form.new_password} id={requirementsId} />
+      <PasswordField label="Confirmar nova senha" value={form.new_password_confirm} describedBy={confirmationId}
+        invalid={mismatch} error={errors.new_password_confirm} onChange={(value) => setField('new_password_confirm', value)} />
+      <PasswordConfirmation id={confirmationId} value={form.new_password_confirm} mismatch={mismatch} />
+      <button className="btn primary" type="submit" disabled={saving || !meetsRequirements || form.new_password !== form.new_password_confirm}>
+        {saving ? 'Salvando?' : hasPassword ? 'Alterar senha' : 'Definir senha'}
+      </button>
     </form>
   );
 }
