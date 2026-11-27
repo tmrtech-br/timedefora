@@ -22,7 +22,6 @@ from ..core.deps import Principal, require_role
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found, unprocessable
 from ..core.permissions import ADMIN_MENUS, action_key, is_allowed, menu_key, route_menu
 from ..gamebridge import METHODS, AdapterError, ConsoleRef, get_adapter, method_info
-from ..gamebridge.agent_client import AgentDelegatingAdapter
 from ..services import notifications, owner_settlements, payments, scheduling, sessions, support
 from ..services.consoles import console_ref
 from ..services.settings_store import DEFAULTS, get_settings
@@ -623,7 +622,6 @@ def discover_console_lan(cid: uuid.UUID, body: ConsoleDiscoveryIn, p: Principal 
         ref = ConsoleRef(str(cid), console['code'], 'remote_play_direct', agent_endpoint=agent['endpoint_url'],
                          agent_token=security.decrypt(agent['outbound_token_enc']))
     adapter = get_adapter(ref.method)
-    assert isinstance(adapter, AgentDelegatingAdapter)
     try:
         result = adapter.discover_lan(ref)
     except AdapterError as error:
