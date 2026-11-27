@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
-import { Alert, Field, FieldHelp, PageHeader, StatusPill } from '@/components/ui';
-import { patch, post } from '@/lib/api';
+import { Alert, Field, FieldHelp, Modal, PageHeader, StatusPill } from '@/components/ui';
+import { del, patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
 import { DataTable, need, NewRecord, useAction, useDelete } from './common';
@@ -13,6 +13,8 @@ const EMPTY_CAPTURE = { agent_id: '', manufacturer: '', model: '', device_identi
 const EMPTY_CONTROL = { agent_id: '', adapter_type: 'usb_controller_interface', identifier: '', manufacturer: '', model: '', authorized: false };
 
 type AgentTokens = { agent_token: string; api_to_agent_token: string };
+type AgentCredentials = { tokens: AgentTokens; config?: Record<string, unknown> };
+type AgentRow = Record<string, unknown>;
 type ConfigHandle = FileSystemFileHandle & {
   requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
 };
@@ -72,6 +74,196 @@ function formValues<T extends Record<string, string | boolean>>(initial: T, row:
   ])) as T;
 }
 
+const CONFIG_HELP = 'No PC do ConsoleAgent, o arquivo fica na pasta locaplay\\agent. Exemplo: E:\\LocadoraOnline\\locaplay\\agent\\config.json. Use o caminho completo, sem aspas. Após digitar, clique em Selecionar arquivo e cole o caminho no campo Nome do arquivo da janela do Windows. Autorize a gravação. O navegador não disponibiliza o caminho absoluto do arquivo selecionado ao site.';
+
+function AgentFields({ value, onChange }: { value: typeof EMPTY_AGENT; onChange: (value: typeof EMPTY_AGENT) => void }) {
+  return <>
+    <Field label="Nome" help="Nome exibido no painel."><input value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} /></Field>
+    <Field label="Host" help="Nome de rede ou IP do computador do agente."><input maxLength={253} value={value.host_name} onChange={(e) => onChange({ ...value, host_name: e.target.value })} /></Field>
+    <Field label="Endpoint do agente" help="Endereço que o FastAPI consegue alcançar. Para outro PC, use HTTPS acessível pela rede ou VPN." hint="No mesmo PC do FastAPI em homologação: http://127.0.0.1:8765"><input maxLength={500} value={value.endpoint_url} onChange={(e) => onChange({ ...value, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
+    <Field label="Localização" help="Local físico do agente."><input maxLength={120} value={value.location} onChange={(e) => onChange({ ...value, location: e.target.value })} /></Field>
+  </>;
+}
+
+function agentPayload(value: typeof EMPTY_AGENT) {
+  const { is_simulated, ...agent } = value;
+  need(agent.name.trim().length >= 2, 'Informe o nome do agente (mínimo 2 caracteres).');
+  need(agent.host_name.trim(), 'Informe o host do agente.');
+  const endpoint = agent.endpoint_url.trim();
+  need(!endpoint || endpoint.startsWith('https://') || isLocalAgent(endpoint), 'Use HTTPS ou o endereço local do FastAPI em homologação.');
+  return { ...agent, endpoint_url: endpoint || null };
+}
+
+async function chooseConfig() {
+  const picker = (window as ConfigPickerWindow).showOpenFilePicker;
+  if (!picker) return;
+  try {
+    const [handle] = await picker.call(window, {
+      types: [{ description: 'Configuração do ConsoleAgent', accept: { 'application/json': ['.json'] } }],
+    });
+    need(handle?.name === 'config.json', 'Selecione o arquivo config.json do ConsoleAgent.');
+    need(await handle.requestPermission({ mode: 'readwrite' }) === 'granted', 'Permita a gravação para atualizar o arquivo selecionado.');
+    return handle;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    throw error;
+  }
+}
+
+function ConfigTarget({ file, path, onPath, onFile, disabled }: {
+  file: ConfigHandle | null; path: string; onPath: (path: string) => void; onFile: (file: ConfigHandle | null) => void; disabled: boolean;
+}) {
+  const [feedback, setFeedback] = useState('');
+  const supported = typeof window !== 'undefined' && Boolean((window as ConfigPickerWindow).showOpenFilePicker);
+  if (!supported) return <p className="small muted">Este navegador permite baixar o config.json. Use Chrome ou Edge para substituir o arquivo existente.</p>;
+  return <div className="stack">
+    <Field label="Caminho do config.json" help={CONFIG_HELP} hint={file ? 'Arquivo selecionado e autorizado para gravação.' : 'Selecione o arquivo no navegador para autorizar a gravação.'}>
+      <input value={path} disabled={disabled} autoComplete="off" placeholder={'E:\\LocadoraOnline\\locaplay\\agent\\config.json'} onChange={(event) => { onPath(event.target.value); onFile(null); setFeedback(''); }} />
+    </Field>
+    <div className="row">
+      {path.trim() && <button type="button" className="btn sm" disabled={disabled} onClick={async () => {
+        try { await navigator.clipboard.writeText(path.trim()); setFeedback('Caminho copiado.'); }
+        catch { setFeedback('Copie o caminho diretamente do campo.'); }
+      }}>Copiar caminho</button>}
+      <button type="button" className="btn sm" disabled={disabled} onClick={async () => {
+        try {
+          const selected = await chooseConfig();
+          if (!selected) return;
+          onFile(selected);
+          setFeedback('');
+        } catch (error) { setFeedback(error instanceof Error ? error.message : 'Não foi possível selecionar o arquivo.'); }
+      }}>{file ? 'Trocar arquivo selecionado' : 'Selecionar arquivo'}</button>
+    </div>
+    {feedback && <p className="small" role="status">{feedback}</p>}
+  </div>;
+}
+
+const ACTIONS = [
+  ['edit', 'Editar agente'],
+  ['rotate', 'Rotacionar tokens'],
+  ['download', 'Baixar config.json'],
+  ['update', 'Atualizar config.json existente'],
+  ['delete', 'Excluir agente'],
+] as const;
+
+function AgentActions({ agent, credentials, onCredentials, onChange, onClose, initialSummary }: {
+  agent: AgentRow; credentials?: AgentCredentials; onCredentials: (value: AgentCredentials | null) => void;
+  onChange: () => void; onClose: () => void; initialSummary?: string;
+}) {
+  const [action, setAction] = useState('');
+  const [record, setRecord] = useState(agent);
+  const [draft, setDraft] = useState(() => formValues(EMPTY_AGENT, agent));
+  const [path, setPath] = useState('');
+  const [file, setFile] = useState<ConfigHandle | null>(null);
+  const [reason, setReason] = useState('');
+  const [summary, setSummary] = useState(initialSummary ?? '');
+  const [error, setError] = useState('');
+  const [copy, setCopy] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [deleted, setDeleted] = useState(false);
+  const endpoint = String(record.endpoint_url ?? '');
+
+  async function execute() {
+    if (!action || busy || deleted) return;
+    setBusy(true);
+    setError('');
+    setSummary('');
+    setCopy('');
+    try {
+      const base = `/admin/agents/${agent.id}`;
+      switch (action) {
+        case 'edit': {
+          const payload = agentPayload(draft);
+          await patch(base, payload);
+          setRecord({ ...record, ...payload });
+          setSummary('Dados do agente atualizados.');
+          break;
+        }
+        case 'rotate': {
+          const existing = file ? await readConfig(file) : undefined;
+          const tokens = await post<AgentTokens>(`${base}/rotate-credentials`);
+          const config = agentConfig(tokens, endpoint, existing);
+          onCredentials({ tokens, config });
+          if (file) {
+            try {
+              await writeConfig(file, config);
+              setSummary('Tokens rotacionados e gravados no config.json. Reinicie o ConsoleAgent.');
+            } catch {
+              setSummary('Tokens rotacionados. A gravação falhou. Use Atualizar config.json existente ou Baixar config.json.');
+            }
+          } else {
+            setSummary('Tokens rotacionados. Os anteriores foram invalidados. Atualize o config.json e reinicie o ConsoleAgent.');
+          }
+          break;
+        }
+        case 'download':
+          if (!credentials) throw new Error('Rotacione os tokens para gerar o arquivo.');
+          downloadConfig(credentials.config ?? agentConfig(credentials.tokens, endpoint));
+          setSummary('Download do config.json iniciado.');
+          break;
+        case 'update':
+          if (!credentials || !file) throw new Error('Gere os tokens e selecione o config.json.');
+          await writeConfig(file, agentConfig(credentials.tokens, endpoint, await readConfig(file)));
+          setSummary('Tokens gravados no config.json. Reinicie o ConsoleAgent para aplicar a atualização.');
+          break;
+        case 'delete':
+          need(reason.trim(), 'Informe o motivo da exclusão.');
+          await del(base, { reason: reason.trim() });
+          setDeleted(true);
+          onCredentials(null);
+          setSummary('Agente excluído.');
+          break;
+      }
+      setAction('');
+      onChange();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Não foi possível executar a ação.');
+    } finally { setBusy(false); }
+  }
+
+  return <Modal title="Ações do agente" onClose={() => { if (!busy) onClose(); }}>
+    <div className="stack">
+      <dl className="kv">
+        <dt>Nome</dt><dd>{String(record.name)}</dd>
+        <dt>Host</dt><dd>{String(record.host_name)}</dd>
+        <dt>Endpoint</dt><dd style={{ overflowWrap: 'anywhere' }}>{endpoint || '—'}</dd>
+        <dt>Localização</dt><dd>{String(record.location || '—')}</dd>
+        <dt>Status</dt><dd><StatusPill status={String(record.status)} map={AGENT_STATUS} /></dd>
+        <dt>Último heartbeat</dt><dd>{dateTime(record.last_heartbeat_at as string)}</dd>
+      </dl>
+      {!deleted && <form className="stack" onSubmit={(event) => { event.preventDefault(); void execute(); }}>
+        <Field label="Ação"><select value={action} disabled={busy} onChange={(event) => setAction(event.target.value)}>
+          <option value="">Selecione uma ação</option>
+          {ACTIONS.map(([value, label]) => <option key={value} value={value}
+            disabled={((value === 'download' || value === 'update') && !credentials) ||
+              (value === 'update' && !(window as ConfigPickerWindow).showOpenFilePicker)}>{label}</option>)}
+        </select></Field>
+        {action === 'edit' && <AgentFields value={draft} onChange={setDraft} />}
+        {action === 'rotate' && <p className="small muted">A rotação invalida os tokens que o agente usa hoje.</p>}
+        {(action === 'update' || action === 'rotate') && <ConfigTarget file={file} path={path} onPath={setPath} onFile={setFile} disabled={busy} />}
+        {action === 'delete' && <Field label="Motivo da exclusão" required>
+          <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} rows={3} />
+        </Field>}
+        <button className={`btn ${action === 'delete' ? 'danger' : 'primary'}`} type="submit"
+          disabled={!action || busy || (action === 'update' && !file) || (action === 'rotate' && Boolean(path.trim()) && !file) ||
+            (action === 'delete' && !reason.trim())}>{busy ? 'Executando…' : 'Executar'}</button>
+      </form>}
+      {summary && <p role="status">{summary}</p>}
+      {error && <p role="alert" className="field invalid"><span className="err">{error}</span></p>}
+      {credentials && !deleted && <section className="stack" aria-label="Credenciais do agente">
+        {([['agent_token', 'Token agente → API'], ['api_to_agent_token', 'Token API → agente']] as const).map(([key, label]) => <div key={key} className="row">
+          <div style={{ flex: '1 1 240px', minWidth: 0 }}><Field label={label}><input readOnly value={credentials.tokens[key]} spellCheck={false} autoComplete="off" /></Field></div>
+          <button className="btn sm" type="button" aria-label={`Copiar ${label.toLowerCase()}`} onClick={async () => {
+            try { await navigator.clipboard.writeText(credentials.tokens[key]); setCopy(`${label} copiado.`); }
+            catch { setCopy('Selecione e copie o token no campo.'); }
+          }}>Copiar</button>
+        </div>)}
+        {copy && <p className="small" role="status">{copy}</p>}
+      </section>}
+    </div>
+  </Modal>;
+}
+
 export default function Agents() {
   const agents = useApi<Record<string, unknown>[]>('/admin/agents', 15000);
   const caps = useApi<Record<string, unknown>[]>('/admin/capture-devices');
@@ -79,32 +271,23 @@ export default function Agents() {
   const [a, setA] = useState(EMPTY_AGENT);
   const [c, setC] = useState(EMPTY_CAPTURE);
   const [k, setK] = useState(EMPTY_CONTROL);
-  const [aId, setAId] = useState('');
   const [cId, setCId] = useState('');
   const [kId, setKId] = useState('');
-  const [secret, setSecret] = useState<{ tokens: AgentTokens; endpoint: string; config?: Record<string, unknown> } | null>(null);
+  const [credentialsByAgent, setCredentialsByAgent] = useState<Record<string, AgentCredentials>>({});
+  const [selectedAgent, setSelectedAgent] = useState<{ row: AgentRow; summary?: string } | null>(null);
   const [configFile, setConfigFile] = useState<ConfigHandle | null>(null);
+  const [configPath, setConfigPath] = useState('');
   const { run, msg, busy } = useAction();
   const deletion = useDelete();
   const agentOpts = agents.data?.filter((x) => !x.is_simulated).map((x) => <option key={String(x.id)} value={String(x.id)}>{String(x.name)}</option>);
-  const canSelectConfig = typeof window !== 'undefined' && Boolean((window as ConfigPickerWindow).showOpenFilePicker);
 
-  async function chooseConfig() {
-    const picker = (window as ConfigPickerWindow).showOpenFilePicker;
-    if (!picker) return;
-    try {
-      const [handle] = await picker.call(window, {
-        types: [{ description: 'Configuração do ConsoleAgent', accept: { 'application/json': ['.json'] } }],
-      });
-      if (handle.name !== 'config.json') throw new Error('Selecione o arquivo config.json do ConsoleAgent.');
-      if (await handle.requestPermission({ mode: 'readwrite' }) !== 'granted') {
-        throw new Error('Permita a gravação para atualizar o arquivo selecionado.');
-      }
-      return handle;
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      throw error;
-    }
+  function saveCredentials(id: string, value: AgentCredentials | null) {
+    setCredentialsByAgent((current) => {
+      const next = { ...current };
+      if (value) next[id] = value;
+      else delete next[id];
+      return next;
+    });
   }
 
   return (
@@ -112,68 +295,44 @@ export default function Agents() {
       <PageHeader title="Agentes locais e dispositivos" subtitle="PC ao lado dos consoles: captura, encode, stream e interfaces de controle." />
       {msg}
       {deletion.dialog}
-      {secret && <Alert kind="warn" dismissible={false}>
-        <span>O config.json contém credenciais. Mantenha-o no computador do agente.{' '}
-          <button type="button" className="btn sm" onClick={() => downloadConfig(secret.config ?? agentConfig(secret.tokens, secret.endpoint))}>Baixar config.json</button>{' '}
-          {canSelectConfig && <button type="button" className="btn sm" disabled={busy} onClick={() => run(async () => {
-            const file = await chooseConfig();
-            if (!file) return;
-            await writeConfig(file, agentConfig(secret.tokens, secret.endpoint, await readConfig(file)));
-            setSecret(null);
-          }, '')}>Atualizar config.json existente</button>}{' '}
-          <button type="button" className="btn sm" onClick={() => setSecret(null)}>Fechar</button>
-        </span>
-      </Alert>}
-      <section className="card stack"><h2>Agentes</h2><NewRecord title="Novo agente" editingTitle={aId ? "Editar agente" : undefined} onClose={() => { setAId(''); setA(EMPTY_AGENT); setConfigFile(null); }}>{(close) => <><div className="grid3">
-        <Field label="Nome" help="Nome exibido no painel."><input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value })} /></Field>
-        <Field label="Host" help="Nome de rede ou IP do computador do agente."><input maxLength={253} value={a.host_name} onChange={(e) => setA({ ...a, host_name: e.target.value })} /></Field>
-        <Field label="Endpoint do agente" help="Endereço que o FastAPI consegue alcançar. Para outro PC, use HTTPS acessível pela rede ou VPN." hint="Em homologação, com o agente no mesmo PC do FastAPI: http://127.0.0.1:8765"><input maxLength={500} value={a.endpoint_url} onChange={(e) => setA({ ...a, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
-        <Field label="Localização" help="Local físico do agente."><input maxLength={120} value={a.location} onChange={(e) => setA({ ...a, location: e.target.value })} /></Field>
-        {!aId && <div className="row"><label className="check"><input type="checkbox" checked={a.is_simulated} onChange={(e) => setA({ ...a, is_simulated: e.target.checked })} />Agente SIMULADO (desenvolvimento)</label><FieldHelp text="Agente de desenvolvimento que opera sem console físico." /></div>}</div>
-        {!aId && !a.is_simulated && canSelectConfig && <div className="row">
-          <button type="button" className="btn" disabled={busy} onClick={() => run(async () => {
-            const file = await chooseConfig();
-            if (file) setConfigFile(file);
-          }, '')}>
-            {configFile ? 'Trocar config.json selecionado' : 'Selecionar config.json existente'}
-          </button>
-          {configFile && <button type="button" className="btn sm" onClick={() => setConfigFile(null)}>Usar download</button>}
-        </div>}
-        <button className="btn primary" disabled={busy} onClick={() => run(async () => {
-          need(a.name.trim().length >= 2, 'Informe o nome do agente (mínimo 2 caracteres).');
-          need(a.host_name.trim(), 'Informe o host do agente.');
-          need(!a.endpoint_url || /^https?:\/\//.test(a.endpoint_url), 'O endpoint deve começar com https:// (ou http:// em desenvolvimento).');
-          const { is_simulated, ...agent } = a;
-          const payload = { ...agent, endpoint_url: a.endpoint_url || null };
-          const file = is_simulated ? null : configFile;
-          const existing = file ? await readConfig(file) : undefined;
-          if (aId) {
-            await patch(`/admin/agents/${aId}`, payload);
-          } else {
-            const tokens = await post<AgentTokens>('/admin/agents', { ...payload, is_simulated });
-            if (!is_simulated) {
-              const config = agentConfig(tokens, a.endpoint_url, existing);
+      {selectedAgent && <AgentActions key={String(selectedAgent.row.id)} agent={selectedAgent.row}
+        credentials={credentialsByAgent[String(selectedAgent.row.id)]}
+        onCredentials={(value) => saveCredentials(String(selectedAgent.row.id), value)}
+        initialSummary={selectedAgent.summary} onChange={agents.reload} onClose={() => setSelectedAgent(null)} />}
+      <section className="card stack"><h2>Agentes</h2>
+        <NewRecord title="Novo agente" onClose={() => { setA(EMPTY_AGENT); setConfigFile(null); setConfigPath(''); }}>{(close) => <>
+          <div className="grid3">
+            <AgentFields value={a} onChange={setA} />
+            <div className="row"><label className="check"><input type="checkbox" checked={a.is_simulated} onChange={(e) => setA({ ...a, is_simulated: e.target.checked })} />Agente SIMULADO (desenvolvimento)</label><FieldHelp text="Agente de desenvolvimento que opera sem console f?sico." /></div>
+          </div>
+          {!a.is_simulated && <ConfigTarget file={configFile} path={configPath} onPath={setConfigPath} onFile={setConfigFile} disabled={busy} />}
+          <button className="btn primary" disabled={busy || (!a.is_simulated && Boolean(configPath.trim()) && !configFile)} onClick={() => run(async () => {
+            const payload = agentPayload(a);
+            const file = a.is_simulated ? null : configFile;
+            const existing = file ? await readConfig(file) : undefined;
+            const result = await post<AgentTokens & { id: string }>('/admin/agents', { ...payload, is_simulated: a.is_simulated });
+            let summary = 'Agente cadastrado. Aguardando o primeiro sinal.';
+            if (!a.is_simulated) {
+              const config = agentConfig(result, payload.endpoint_url ?? '', existing);
+              saveCredentials(result.id, { tokens: { agent_token: result.agent_token, api_to_agent_token: result.api_to_agent_token }, config });
               if (file) {
                 try {
                   await writeConfig(file, config);
+                  summary = 'Agente cadastrado e tokens gravados no config.json. Inicie ou reinicie o ConsoleAgent.';
                 } catch {
-                  setSecret({ tokens, endpoint: a.endpoint_url, config });
-                  downloadConfig(config);
+                  summary = 'Agente cadastrado. N?o foi poss?vel gravar no arquivo selecionado. Use Atualizar config.json existente ou Baixar config.json.';
                 }
               } else {
-                setSecret({ tokens, endpoint: a.endpoint_url });
-                downloadConfig(config);
+                summary = 'Agente cadastrado. Escolha Baixar config.json para transferir as credenciais ao PC do agente.';
               }
             }
-          }
-          agents.reload();
-          close();
-        }, aId ? 'Agente atualizado.' : 'Agente cadastrado.')}>{aId ? 'Salvar' : 'Cadastrar'}</button></>}</NewRecord>
-        <DataTable rows={agents.data} error={agents.error?.message} cols={[['Nome', (r) => String(r.name)], ['Host', (r) => String(r.host_name)], ['Status', (r) => <StatusPill status={String(r.status)} map={AGENT_STATUS} tone={({ online: 'green', offline: 'red', degraded: 'amber', unknown: '' } as Record<string, string>)[String(r.status)]} />], ['Simulado', (r) => (r.is_simulated ? 'sim' : 'não')],
-          ['Último heartbeat', (r) => dateTime(r.last_heartbeat_at as string)], ['Ações', (r) => <div className="row"><button className="btn sm" disabled={busy} onClick={() => run(async () => {
-            const tokens = await post<AgentTokens>(`/admin/agents/${r.id}/rotate-credentials`);
-            setSecret({ tokens, endpoint: String(r.endpoint_url ?? '') });
-          }, 'Credenciais rotacionadas.')}>Rotacionar tokens</button><button className="btn sm" onClick={() => { setA(formValues(EMPTY_AGENT, r)); setAId(String(r.id)); }}>Editar</button><button className="btn sm danger" onClick={() => deletion.remove(`/admin/agents/${r.id}`, 'Excluir agente?', (request) => run(async () => { await request(); agents.reload(); }, 'Exclusão concluída.'))}>Excluir</button></div>]]} />
+            agents.reload();
+            close();
+            setSelectedAgent({ row: { ...payload, id: result.id, status: 'unknown' }, summary });
+          })}>{configFile && !a.is_simulated ? 'Cadastrar e atualizar config.json' : 'Cadastrar'}</button>
+        </>}</NewRecord>
+        <DataTable rows={agents.data} error={agents.error?.message} cols={[['Nome', (r) => String(r.name)], ['Host', (r) => String(r.host_name)], ['Status', (r) => <StatusPill status={String(r.status)} map={AGENT_STATUS} tone={({ online: 'green', offline: 'red', degraded: 'amber', unknown: '' } as Record<string, string>)[String(r.status)]} />], ['Simulado', (r) => (r.is_simulated ? 'sim' : 'n?o')],
+          ['?ltimo heartbeat', (r) => dateTime(r.last_heartbeat_at as string)], ['A??es', (r) => <button className="btn sm" onClick={() => setSelectedAgent({ row: r })}>A??es</button>]]} />
       </section>
       <section className="card stack"><h2>Capturadoras HDMI</h2>
         <p className="small muted">Cada console precisa de uma entrada de captura independente. Saída HDMI de notebook não é capturadora. Respeite HDCP/DRM.</p>
