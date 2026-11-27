@@ -13,7 +13,6 @@ const EMPTY_CAPTURE = { agent_id: '', manufacturer: '', model: '', device_identi
 const EMPTY_CONTROL = { agent_id: '', adapter_type: 'usb_controller_interface', identifier: '', manufacturer: '', model: '', authorized: false };
 
 type AgentTokens = { agent_token: string; api_to_agent_token: string };
-type AgentCredentials = { tokens: AgentTokens; config?: Record<string, unknown> };
 type AgentRow = Record<string, unknown>;
 type ConfigTargetFile = { handle: FileSystemFileHandle; directory: string; empty: boolean };
 type ConfigPickerWindow = Window & {
@@ -33,18 +32,6 @@ function agentConfig(tokens: AgentTokens, endpoint: string, existing: Record<str
     agent_token: tokens.agent_token,
     api_to_agent_token: tokens.api_to_agent_token,
   };
-}
-
-function downloadConfig(config: Record<string, unknown>) {
-  const file = new Blob([JSON.stringify(config, null, 2) + '\n'], { type: 'application/json' });
-  const url = URL.createObjectURL(file);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'config.json';
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 async function readConfig(file: FileSystemFileHandle) {
@@ -164,20 +151,16 @@ function ConfigTarget({ file, onFile, disabled }: {
 const ACTIONS = [
   ['edit', 'Editar agente'],
   ['rotate', 'Rotacionar tokens'],
-  ['rotate-download', 'Rotacionar tokens e baixar config.json'],
-  ['download', 'Baixar config.json'],
-  ['update', 'Atualizar config.json existente'],
   ['delete', 'Excluir agente'],
 ] as const;
 
 function AgentActions({ agent, credentials, onCredentials, onChange, onClose, initialSummary }: {
-  agent: AgentRow; credentials?: AgentCredentials; onCredentials: (value: AgentCredentials | null) => void;
+  agent: AgentRow; credentials?: AgentTokens; onCredentials: (value: AgentTokens | null) => void;
   onChange: () => void; onClose: () => void; initialSummary?: string;
 }) {
   const [action, setAction] = useState('');
   const [record, setRecord] = useState(agent);
   const [draft, setDraft] = useState(() => formValues(EMPTY_AGENT, agent));
-  const [file, setFile] = useState<ConfigTargetFile | null>(null);
   const [reason, setReason] = useState('');
   const [summary, setSummary] = useState(initialSummary ?? '');
   const [error, setError] = useState('');
@@ -203,44 +186,9 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           break;
         }
         case 'rotate': {
-          if (!file) throw new Error('Selecione o config.json e autorize a gravação antes de rotacionar.');
-          const existing = (await readConfig(file.handle)) ?? undefined;
-          const writable = await file.handle.createWritable();
-          let tokens: AgentTokens;
-          try {
-            tokens = await post<AgentTokens>(`${base}/rotate-credentials`);
-          } catch (failure) {
-            await writable.abort().catch(() => {});
-            throw failure;
-          }
-          const config = agentConfig(tokens, endpoint, existing);
-          onCredentials({ tokens, config });
-          try {
-            await commitConfig(writable, config);
-            setSummary(`Tokens rotacionados e gravados automaticamente em ${file.handle.name}. Reinicie o ConsoleAgent.`);
-          } catch {
-            setError('Os tokens foram rotacionados, mas o navegador não conseguiu concluir a gravação. Selecione Atualizar config.json existente para tentar novamente com os mesmos tokens.');
-          }
-          break;
-        }
-        case 'rotate-download': {
           const tokens = await post<AgentTokens>(`${base}/rotate-credentials`);
-          const config = agentConfig(tokens, endpoint);
-          onCredentials({ tokens, config });
-          downloadConfig(config);
-          setSummary('Tokens rotacionados e download iniciado. Use o atualizador local do ConsoleAgent para aplicar os tokens no arquivo existente.');
-          break;
-        }
-        case 'download':
-          if (!credentials) throw new Error('Rotacione os tokens para gerar o arquivo.');
-          downloadConfig(credentials.config ?? agentConfig(credentials.tokens, endpoint));
-          setSummary('Download do config.json iniciado.');
-          break;
-        case 'update': {
-          if (!credentials) throw new Error('Gere os tokens para atualizar o config.json.');
-          if (!file) throw new Error('Selecione o config.json antes de executar.');
-          await writeConfig(file.handle, agentConfig(credentials.tokens, endpoint, (await readConfig(file.handle)) ?? undefined));
-          setSummary('Tokens gravados no config.json. Reinicie o ConsoleAgent para aplicar a atualização.');
+          onCredentials(tokens);
+          setSummary('Novos tokens gerados. Os anteriores foram invalidados.');
           break;
         }
         case 'delete':
@@ -271,27 +219,31 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
       {!deleted && <form className="stack" onSubmit={(event) => { event.preventDefault(); void execute(); }}>
         <Field label="Ação"><select value={action} disabled={busy} onChange={(event) => setAction(event.target.value)}>
           <option value="">Selecione uma ação</option>
-          {ACTIONS.map(([value, label]) => <option key={value} value={value}
-            disabled={((value === 'download' || value === 'update') && !credentials) ||
-              (value === 'update' && !supportsConfigPicker())}>{label}</option>)}
+          {ACTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></Field>
         {action === 'edit' && <AgentFields value={draft} onChange={setDraft} />}
-        {action === 'rotate' && <p className="small muted">Selecione o config.json antes de executar. Depois da autorização de gravação, o sistema substitui os tokens no arquivo e invalida os anteriores.</p>}
-        {action === 'rotate-download' && <p className="small muted">Use esta opção quando o navegador bloquear a pasta. A rotação invalida os tokens anteriores. Aplique o arquivo baixado com o atualizador local antes de reiniciar o ConsoleAgent.</p>}
-        {(action === 'update' || action === 'rotate') && <ConfigTarget file={file} onFile={setFile} disabled={busy} />}
+        {action === 'rotate' && <p className="small muted">Ao executar, os tokens atuais serão invalidados. Copie os novos valores para o config.json e reinicie o ConsoleAgent.</p>}
         {action === 'delete' && <Field label="Motivo da exclusão" required>
           <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} rows={3} />
         </Field>}
         <button className={`btn ${action === 'delete' ? 'danger' : 'primary'}`} type="submit"
-          disabled={!action || busy || ((action === 'update' || action === 'rotate') && !file) || (action === 'delete' && !reason.trim())}>{busy ? 'Executando…' : 'Executar'}</button>
+          disabled={!action || busy || (action === 'delete' && !reason.trim())}>{busy ? 'Executando…' : 'Executar'}</button>
       </form>}
       {summary && <p role="status">{summary}</p>}
       {error && <p role="alert" className="field invalid"><span className="err">{error}</span></p>}
       {credentials && !deleted && <section className="stack" aria-label="Credenciais do agente">
-        {([['agent_token', 'Token agente → API'], ['api_to_agent_token', 'Token API → agente']] as const).map(([key, label]) => <div key={key} className="row">
-          <div style={{ flex: '1 1 240px', minWidth: 0 }}><Field label={label}><input readOnly value={credentials.tokens[key]} spellCheck={false} autoComplete="off" /></Field></div>
-          <button className="btn sm" type="button" aria-label={`Copiar ${label.toLowerCase()}`} onClick={async () => {
-            try { await navigator.clipboard.writeText(credentials.tokens[key]); setCopy(`${label} copiado.`); }
+        <div className="small">
+          <strong>Como aplicar os tokens</strong>
+          <ol>
+            <li>No PC do ConsoleAgent, abra o <code>config.json</code> na pasta <code>locaplay\agent</code>. Nesta instalação, o caminho é <code>E:\LocadoraOnline\locaplay\agent\config.json</code>.</li>
+            <li>Use os botões <strong>Copiar</strong> e substitua os valores de <code>agent_token</code> e <code>api_to_agent_token</code> entre aspas. Preserve as vírgulas e as demais configurações.</li>
+            <li>Salve o arquivo e reinicie o ConsoleAgent.</li>
+          </ol>
+        </div>
+        {(['agent_token', 'api_to_agent_token'] as const).map((key) => <div key={key} className="row">
+          <div style={{ flex: '1 1 240px', minWidth: 0 }}><Field label={key}><input readOnly value={credentials[key]} spellCheck={false} autoComplete="off" /></Field></div>
+          <button className="btn sm" type="button" aria-label={`Copiar ${key}`} onClick={async () => {
+            try { await navigator.clipboard.writeText(credentials[key]); setCopy(`${key} copiado.`); }
             catch { setCopy('Selecione e copie o token no campo.'); }
           }}>Copiar</button>
         </div>)}
@@ -310,14 +262,14 @@ export default function Agents() {
   const [k, setK] = useState(EMPTY_CONTROL);
   const [cId, setCId] = useState('');
   const [kId, setKId] = useState('');
-  const [credentialsByAgent, setCredentialsByAgent] = useState<Record<string, AgentCredentials>>({});
+  const [credentialsByAgent, setCredentialsByAgent] = useState<Record<string, AgentTokens>>({});
   const [selectedAgent, setSelectedAgent] = useState<{ row: AgentRow; summary?: string } | null>(null);
   const [configFile, setConfigFile] = useState<ConfigTargetFile | null>(null);
   const { run, msg, busy } = useAction();
   const deletion = useDelete();
   const agentOpts = agents.data?.filter((x) => !x.is_simulated).map((x) => <option key={String(x.id)} value={String(x.id)}>{String(x.name)}</option>);
 
-  function saveCredentials(id: string, value: AgentCredentials | null) {
+  function saveCredentials(id: string, value: AgentTokens | null) {
     setCredentialsByAgent((current) => {
       const next = { ...current };
       if (value) next[id] = value;
@@ -350,16 +302,16 @@ export default function Agents() {
             let summary = 'Agente cadastrado. Aguardando o primeiro sinal.';
             if (!a.is_simulated) {
               const config = agentConfig(result, payload.endpoint_url ?? '', existing);
-              saveCredentials(result.id, { tokens: { agent_token: result.agent_token, api_to_agent_token: result.api_to_agent_token }, config });
+              saveCredentials(result.id, { agent_token: result.agent_token, api_to_agent_token: result.api_to_agent_token });
               if (file) {
                 try {
                   await writeConfig(file.handle, config);
                   summary = 'Agente cadastrado e tokens gravados no config.json. Inicie ou reinicie o ConsoleAgent.';
                 } catch {
-                  summary = 'Agente cadastrado. Não foi possível gravar no arquivo selecionado. Use Atualizar config.json existente ou Baixar config.json.';
+                  summary = 'Agente cadastrado. A gravação falhou. Aplique os tokens seguindo as instruções abaixo.';
                 }
               } else {
-                summary = 'Agente cadastrado. Escolha Baixar config.json para transferir as credenciais ao PC do agente.';
+                summary = 'Agente cadastrado. Aplique os tokens seguindo as instruções abaixo.';
               }
             }
             agents.reload();
