@@ -131,7 +131,17 @@ export default function GamePage() {
     <div className="stack">
       {g.is_demo && <Alert kind="warn">Jogo de demonstração: console e pagamento <b>simulados</b>. Exploração comercial ainda não autorizada.</Alert>}
       <section className="game-hero">
-        <img src={g.cover_url || ''} alt={`Capa de ${g.title}`} />
+        <img
+          src={g.banner_url || g.cover_url || undefined}
+          alt={`${g.banner_url ? 'Banner' : 'Capa'} de ${g.title}`}
+          onError={(event) => {
+            const image = event.currentTarget;
+            if (g.cover_url && image.getAttribute('src') !== g.cover_url) {
+              image.src = g.cover_url;
+              image.alt = `Capa de ${g.title}`;
+            }
+          }}
+        />
         <div className="stack">
           <div className="spread"><h1 style={{ margin: 0, fontSize: 32 }}>{g.title}</h1>
             <button className="btn" onClick={toggleFav} aria-pressed={fav}><Heart size={16} fill={fav ? '#c13eff' : 'none'} />{fav ? 'Favorito' : 'Favoritar'}</button></div>

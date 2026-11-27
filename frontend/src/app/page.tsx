@@ -28,7 +28,11 @@ export default function HomePage() {
       {!data && !error && <div className="home-loading" role="status"><span className="sr-only">Carregando a página inicial</span><Skeleton h={410} /></div>}
       {data && (
         <section className="hero" aria-labelledby="hero-title">
-          <div className="hero-art" aria-hidden="true" />
+          <div
+            className="hero-art"
+            aria-hidden="true"
+            style={f?.banner_url ? { backgroundImage: `url(${JSON.stringify(f.banner_url)}), url("/assets/locaplay-studio.webp")` } : undefined}
+          />
           <div className="hero-copy">
             <h1 id="hero-title">timede<span className="hero-title-accent">fora</span></h1>
             <p className="hero-lead">Sua locadora de games na nuvem.</p>
