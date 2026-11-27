@@ -31,12 +31,16 @@ function Room() {
   // Console sendo ligado/preparado: a página tenta entrar sozinha até ele ficar pronto (sem segundo clique).
   const [preparing, setPreparing] = useState('');
   const [joining, setJoining] = useState(false);
+  const [retry, setRetry] = useState(0);
   useEffect(() => { if (!kbAllowed && device === 'keyboard_mouse') setDevice('gamepad'); }, [kbAllowed, device]);
+  // Só reagenda a cada nova resposta "preparando" (o relógio da tela re-renderiza a cada segundo e não pode
+  // reiniciar o temporizador, senão ele nunca dispara).
   useEffect(() => {
     if (!preparing) return;
     const timer = window.setTimeout(() => { void join(); }, 4000);
     return () => window.clearTimeout(timer);
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preparing, retry]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!r) return <Skeleton h={300} />;
   const startIn = (new Date(r.starts_at).getTime() - now()) / 1000;
@@ -52,7 +56,7 @@ function Room() {
       try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); } catch { /* armazenamento indisponível */ }
       router.push(`/jogar/${j.session_id}`);
     } catch (e) {
-      if (e instanceof ApiError && e.code === 'console_preparing') setPreparing(e.message);
+      if (e instanceof ApiError && e.code === 'console_preparing') { setPreparing(e.message); setRetry((n) => n + 1); }
       else { setPreparing(''); setErr(e instanceof ApiError ? e.message : 'Erro ao entrar.'); reload(); }
     } finally { setJoining(false); }
   }
@@ -75,6 +79,10 @@ function Room() {
             <div className="countdown" aria-live="polite">{duration(startIn)}</div>
             <p>{dateTime(r.starts_at)} – {time(r.ends_at)} · {r.minutes} min</p>
             {startIn <= 300 && <Alert kind="info">Sua vez está chegando! Prepare controle ou teclado/mouse e verifique sua conexão.</Alert>}
+          </> : preparing && r.status === 'confirmed' ? <>
+            <p className="muted">Ligando o console e abrindo o jogo</p>
+            <div className="countdown" aria-live="polite">{r.minutes} min</div>
+            <p className="small muted">Seu tempo ainda não começou: ele conta a partir de quando o console estiver pronto.</p>
           </> : <>
             <p className="muted">Tempo restante do período contratado</p>
             <div className="countdown">{duration((new Date(r.ends_at).getTime() - now()) / 1000)}</div>
