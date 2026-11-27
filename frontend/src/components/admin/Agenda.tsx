@@ -1,6 +1,9 @@
 'use client';
+import DateFilter from '@/components/DateFilter';
+import LimitedScroll from '@/components/LimitedScroll';
+import DateTimeField, { isLocalDateTime } from './DateTimeField';
 import { useMemo, useState } from 'react';
-import { Field, Modal, PageHeader } from '@/components/ui';
+import { Alert, Field, Modal, PageHeader } from '@/components/ui';
 import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime, minutesLabel, time } from '@/lib/format';
@@ -34,8 +37,8 @@ function checkWindow(v: { console_id?: string; game_id?: string; starts_at: stri
   const e: Record<string, string> = {};
   if (need.includes('console_id') && !v.console_id) e.console_id = 'Selecione o console.';
   if (need.includes('game_id') && !v.game_id) e.game_id = 'Selecione o jogo.';
-  if (!v.starts_at) e.starts_at = 'Informe a data e hora de início.';
-  if (!v.ends_at) e.ends_at = 'Informe a data e hora de fim.';
+  if (!isLocalDateTime(v.starts_at)) e.starts_at = 'Informe a data e hora de início.';
+  if (!isLocalDateTime(v.ends_at)) e.ends_at = 'Informe a data e hora de fim.';
   if (v.starts_at && v.ends_at && v.ends_at <= v.starts_at) e.ends_at = 'O fim deve ser depois do início.';
   return e;
 }
@@ -57,7 +60,6 @@ export default function Agenda() {
   const [dlg, setDlg] = useState<Dialog | null>(null);
   const [dlgErr, setDlgErr] = useState('');
   const [listConsole, setListConsole] = useState('');
-  const [showDays, setShowDays] = useState(3);
   const groups = useMemo(() => {
     const m = new Map<string, A[]>();
     for (const a of assigns.data || []) {
@@ -97,7 +99,7 @@ export default function Agenda() {
     setDlgErr('');
     if (dlg.reason.trim().length < 5) { setDlgErr('Informe a justificativa com pelo menos 5 caracteres (fica registrada na auditoria).'); return; }
     if (dlg.kind === 'end') {
-      if (!dlg.ends_at) { setDlgErr('Informe a nova data e hora de fim.'); return; }
+      if (!isLocalDateTime(dlg.ends_at)) { setDlgErr('Informe a nova data e hora de fim.'); return; }
       if (dlg.ends_at <= toLocalInput(dlg.a.starts_at)) { setDlgErr('O novo fim deve ser depois do início do vínculo.'); return; }
       const body = { ends_at: fromLocalInput(dlg.ends_at), reason: dlg.reason, ...(refund ? { resolution: 'cancel_and_refund' } : {}) };
       const ok = await run(async () => { await patch(`/admin/assignments/${dlg.a.id}`, body); refresh(); return true; }, refund ? 'Fim alterado; reservas afetadas reembolsadas.' : 'Fim do vínculo alterado.');
@@ -120,8 +122,8 @@ export default function Agenda() {
           <Field label="Jogo" required error={fErr.game_id} hint={selConsole ? `Somente jogos de ${selConsole.platform_code}` : undefined}>
             <select value={f.game_id} onChange={(e) => setF({ ...f, game_id: e.target.value })}><option value="">Selecione</option>{gameOptions.map((g) => <option key={g.id} value={g.id}>{g.title} ({g.platform_codes.join('/')})</option>)}</select></Field>
           <Field label="Recorrência"><select value={f.repeat} onChange={(e) => setF({ ...f, repeat: e.target.value })}><option value="none">Sem recorrência</option><option value="daily">Diária</option><option value="weekly">Semanal</option></select></Field>
-          <Field label="Início" required error={fErr.starts_at}><input type="datetime-local" value={f.starts_at} onChange={(e) => setF({ ...f, starts_at: e.target.value })} /></Field>
-          <Field label="Fim" required error={fErr.ends_at}><input type="datetime-local" value={f.ends_at} onChange={(e) => setF({ ...f, ends_at: e.target.value })} /></Field>
+          <DateTimeField label="Início" required error={fErr.starts_at} value={f.starts_at} onChange={(value) => setF({ ...f, starts_at: value })} />
+          <DateTimeField label="Fim" required error={fErr.ends_at} value={f.ends_at} onChange={(value) => setF({ ...f, ends_at: value })} />
           {f.repeat !== 'none' && <Field label="Ocorrências" hint="1 a 60"><input type="number" min={1} max={60} value={f.occurrences} onChange={(e) => setF({ ...f, occurrences: Math.min(60, Math.max(1, Number(e.target.value) || 1)) })} /></Field>}
         </div>
         <div><button className="btn primary" disabled={busy} onClick={() => createAssignment(close)}>Vincular</button></div>
@@ -129,9 +131,9 @@ export default function Agenda() {
 
       <section className="card stack">
         <div className="spread"><h2 style={{ margin: 0 }}>Calendário do dia</h2>
-          <div className="row"><button className="btn sm" onClick={() => setDay(new Date(from.getTime() - 864e5 + 3 * 3600e3).toISOString().slice(0, 10))} aria-label="Dia anterior">‹</button>
-            <input className="btn" type="date" value={day} onChange={(e) => e.target.value && setDay(e.target.value)} aria-label="Dia" />
-            <button className="btn sm" onClick={() => setDay(new Date(to.getTime() + 3 * 3600e3).toISOString().slice(0, 10))} aria-label="Próximo dia">›</button></div></div>
+          <div className="row agenda-day-picker"><button className="btn" onClick={() => setDay(new Date(from.getTime() - 864e5 + 3 * 3600e3).toISOString().slice(0, 10))} aria-label="Dia anterior">‹</button>
+            <DateFilter label="Dia" value={day} onChange={(value) => { if (value) setDay(value); }} />
+            <button className="btn" onClick={() => setDay(new Date(to.getTime() + 3 * 3600e3).toISOString().slice(0, 10))} aria-label="Próximo dia">›</button></div></div>
         <div className="cal2-legend">
           <span><i className="assignment" />Jogo vinculado (faixa de cima: qual jogo o console oferece)</span>
           <span><i className="reservation" />Reserva paga (faixas de baixo)</span>
@@ -143,7 +145,8 @@ export default function Agenda() {
         </div>
         <div className="cal2">
           <div className="cal2-row"><span /><div className="cal2-ruler">{HOURS.map((h) => <span key={h} style={{ left: `${h / 24 * 100}%` }}>{String(h).padStart(2, '0')}h</span>)}</div></div>
-          {cal.data?.consoles.map((c) => {
+          <LimitedScroll label="Consoles no calendário do dia">
+          {(cal.data?.consoles ?? []).map((c) => {
             const evs = cal.data!.events.filter((e) => e.console_id === c.id);
             const lanes = laneOf(evs.filter((e) => e.kind === 'reservation'));
             const nLanes = Math.max(1, ...Array.from(lanes.values()).map((x) => x + 1));
@@ -164,15 +167,16 @@ export default function Agenda() {
                 </div>
               </div>);
           })}
+          </LimitedScroll>
           {cal.data && !cal.data.consoles.length && <div className="empty">Nenhum console cadastrado.</div>}
         </div>
       </section>
 
       <section className="card stack"><h2>Próximos vínculos</h2>
         <div className="spread">
-          <select className="btn sm" value={listConsole} onChange={(e) => { setListConsole(e.target.value); setShowDays(3); }} aria-label="Filtrar por console">
+          <select className="btn sm" value={listConsole} onChange={(e) => { setListConsole(e.target.value); }} aria-label="Filtrar por console">
             <option value="">Todos os consoles</option>{consoles?.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}</select></div>
-        <DataTable rows={assigns.data ? groups.slice(0, showDays).flatMap(([day, rows]) => rows.map((row) => ({ ...row, day }))) : null}
+        <DataTable limit={5} rows={assigns.data ? groups.flatMap(([day, rows]) => rows.map((row) => ({ ...row, day }))) : null}
           error={assigns.error?.message} empty="Nenhum vínculo futuro." cols={[
             ['Dia', (r) => r.day], ['Console', (r) => r.console_name], ['Jogo', (r) => r.game_title],
             ['Início', (r) => dateTime(r.starts_at)], ['Fim', (r) => dateTime(r.ends_at)],
@@ -183,7 +187,6 @@ export default function Agenda() {
               <button className="btn sm danger" onClick={() => { setDlgErr(''); setDlg({ kind: 'cancel', a: r, refund: false, reason: '' }); }}>Cancelar</button>
             </div>],
           ]} />
-        {groups.length > showDays && <div><button className="btn sm" onClick={() => setShowDays(showDays + 3)}>Mostrar mais dias ({groups.length - showDays} restantes)</button></div>}
       </section>
 
       {dlg && (
@@ -191,11 +194,11 @@ export default function Agenda() {
           <div className="stack">
             <p className="small muted" style={{ margin: 0 }}><b>{dlg.a.game_title}</b> em <b>{dlg.a.console_name}</b><br />Atual: {dateTime(dlg.a.starts_at)} → {dateTime(dlg.a.ends_at)}</p>
             {dlg.kind === 'end'
-              ? <Field label="Novo fim" required><input type="datetime-local" value={dlg.ends_at} min={toLocalInput(dlg.a.starts_at)} onChange={(e) => setDlg({ ...dlg, ends_at: e.target.value })} /></Field>
+              ? <DateTimeField label="Novo fim" required value={dlg.ends_at} min={toLocalInput(dlg.a.starts_at)} onChange={(ends_at) => setDlg({ ...dlg, ends_at })} />
               : <label className="check"><input type="checkbox" checked={dlg.refund} onChange={(e) => setDlg({ ...dlg, refund: e.target.checked })} />Cancelar e reembolsar as reservas afetadas</label>}
             <Field label="Justificativa (registrada na auditoria)" required><input maxLength={500} value={dlg.reason} onChange={(e) => setDlg({ ...dlg, reason: e.target.value })} /></Field>
             {dlg.kind === 'end' && <p className="small dim" style={{ margin: 0 }}>Reservas que deixarem de caber na nova janela: “Salvar” bloqueia a alteração e lista as reservas; “Salvar e reembolsar” cancela e reembolsa essas reservas.</p>}
-            {dlgErr && <span className="err small" role="alert">{dlgErr}</span>}
+            {dlgErr && <Alert kind="error">{dlgErr}</Alert>}
             <div className="row">
               {dlg.kind === 'end' ? <>
                 <button className="btn primary" disabled={busy} onClick={() => confirmDialog(false)}>Salvar</button>
@@ -203,7 +206,6 @@ export default function Agenda() {
               </> : <button className="btn danger" disabled={busy} onClick={() => confirmDialog(false)}>Confirmar cancelamento</button>}
               <button className="btn" onClick={() => setDlg(null)}>Voltar</button>
             </div>
-            {msg}
           </div>
         </Modal>)}
     </div>

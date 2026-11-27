@@ -1,6 +1,6 @@
 import { Gamepad2 } from 'lucide-react';
 
-export default function AuthCard({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+export default function AuthCard({ title, subtitle, children }: { title: React.ReactNode; subtitle?: string; children: React.ReactNode }) {
   return (
     <div style={{ display: 'grid', placeItems: 'center', minHeight: '60vh' }}>
       <div className="card" style={{ width: 'min(460px, 100%)', padding: 28 }}>

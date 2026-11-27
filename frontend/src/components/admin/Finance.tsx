@@ -1,4 +1,6 @@
 'use client';
+import DateFilter from '@/components/DateFilter';
+import { exportExcel } from './exportReport';
 import { useState } from 'react';
 import { Alert, PageHeader, StatusPill } from '@/components/ui';
 import { get, post } from '@/lib/api';
@@ -10,6 +12,21 @@ import { DataTable, useAction, useAsk } from './common';
 type R = Record<string, unknown>;
 type Sum = { revenue_by_game: R[]; revenue_by_console: R[]; gross_cents: number; refunds_cents: number; net_cents: number; chargebacks: number; minutes_played: number; sessions: number; no_shows: number };
 
+const CSV_REPORTS = { payments: 'Pagamentos', reservations: 'Reservas', sessions: 'Sessões', refunds: 'Reembolsos' };
+
+function financialTables(report: Sum) {
+  return [
+    { title: 'Resumo financeiro', headers: ['Indicador', 'Valor'], rows: [
+      ['Receita bruta', money(report.gross_cents)], ['Reembolsos', money(report.refunds_cents)], ['Receita líquida', money(report.net_cents)],
+      ['Contestações', report.chargebacks], ['Sessões', report.sessions], ['Minutos jogados', report.minutes_played], ['Ausências', report.no_shows],
+    ] },
+    { title: 'Receita por jogo', headers: ['Jogo', 'Pagamentos', 'Receita'],
+      rows: report.revenue_by_game.map((row) => [String(row.title), Number(row.payments), money(Number(row.revenue_cents))]) },
+    { title: 'Receita por console', headers: ['Console', 'Minutos vendidos', 'Receita'],
+      rows: report.revenue_by_console.map((row) => [String(row.name), Number(row.minutes_sold), money(Number(row.revenue_cents))]) },
+  ];
+}
+
 export default function Finance() {
   const today = new Date(Date.now() - 3 * 3600e3).toISOString().slice(0, 10);
   const [from, setFrom] = useState(today.slice(0, 8) + '01');
@@ -20,30 +37,35 @@ export default function Finance() {
   const pays = useApi<R[]>('/admin/payments');
   const refunds = useApi<R[]>('/admin/refunds');
   const hooks = useApi<R[]>('/admin/webhooks');
-  const { run, msg } = useAction();
+  const { run, msg, busy } = useAction();
   const [ask, askDialog] = useAsk();
   return (
     <div className="stack">
-      <PageHeader title="Financeiro e relatórios" />
+      <PageHeader title="Financeiro e relatórios">
+          <button className="btn primary" disabled={busy || Boolean(rangeErr)} onClick={() => run(async () => {
+            const report = await get<Sum>(`/admin/reports/summary?${range}`);
+            downloadReportPdf('Relatório financeiro', `${from.split('-').reverse().join('/')} a ${to.split('-').reverse().join('/')}`,
+              financialTables(report), `timedefora-financeiro-${from}-${to}.pdf`);
+          }, 'Relatório PDF gerado.')}>Exportar PDF</button>
+          <button className="btn" disabled={busy || Boolean(rangeErr)} onClick={() => run(async () => {
+            const report = await get<Sum>(`/admin/reports/summary?${range}`);
+            exportExcel(`timedefora-financeiro-${from}-${to}`, financialTables(report), { title: 'Relatório financeiro',
+              subtitle: `${from.split('-').reverse().join('/')} a ${to.split('-').reverse().join('/')}` });
+          }, 'Planilha gerada.')}>Exportar Excel</button>
+      </PageHeader>
       {msg}
       <section className="card stack"><h2>Resumo e exportação</h2>
-        <div className="row"><input className="btn" type="date" aria-label="Data inicial" max={to || undefined} value={from} onChange={(e) => setFrom(e.target.value)} /> até <input className="btn" type="date" aria-label="Data final" min={from || undefined} value={to} onChange={(e) => setTo(e.target.value)} />
-          {!rangeErr && ['payments', 'reservations', 'sessions', 'refunds'].map((k) => <a key={k} className="btn sm" href={`/api/admin/reports/export.csv?kind=${k}&${range}`}>CSV {k}</a>)}
-          <button className="btn sm primary" disabled={Boolean(rangeErr)} onClick={() => run(async () => {
-            const report = await get<Sum>(`/admin/reports/summary?${range}`);
-            downloadReportPdf('Relatório financeiro LocaPlay', `Período: ${from.split('-').reverse().join('/')} a ${to.split('-').reverse().join('/')}`, [
-              `Receita bruta: ${money(report.gross_cents)}`, `Reembolsos: ${money(report.refunds_cents)}`,
-              `Receita líquida: ${money(report.net_cents)}`, `Contestações: ${report.chargebacks}`,
-              `Sessões: ${report.sessions} | Minutos jogados: ${report.minutes_played} | Ausências: ${report.no_shows}`, '',
-              'Receita por jogo', ...report.revenue_by_game.map((row) => `${row.title} | ${row.payments} pagamentos | ${money(Number(row.revenue_cents))}`),
-              '', 'Receita por console', ...report.revenue_by_console.map((row) => `${row.name} | ${row.minutes_sold} min | ${money(Number(row.revenue_cents))}`),
-            ], `locaplay-financeiro-${from}-${to}.pdf`);
-          }, 'Relatório PDF gerado.')}>Exportar PDF</button></div>
+        <div className="row finance-dates">
+          <DateFilter label="Data inicial" max={to || undefined} value={from} onChange={setFrom} />
+          <DateFilter label="Data final" min={from || undefined} value={to} onChange={setTo} />
+          {!rangeErr && <div className="row finance-csv">{Object.entries(CSV_REPORTS).map(([kind, label]) =>
+            <a key={kind} className="btn sm" href={`/api/admin/reports/export.csv?kind=${kind}&${range}`}>{label} (CSV)</a>)}</div>}
+        </div>
         {rangeErr && <Alert kind="error">{rangeErr}</Alert>}
         {sum.data && !rangeErr && <div className="kpis">{[['Bruto', money(sum.data.gross_cents)], ['Reembolsos', money(sum.data.refunds_cents)], ['Líquido', money(sum.data.net_cents)], ['Contestações', sum.data.chargebacks],
           ['Minutos jogados', sum.data.minutes_played], ['Sessões', sum.data.sessions], ['Ausências', sum.data.no_shows]].map(([l, v]) => <div key={String(l)} className="card kpi"><span>{l}</span><strong>{v}</strong></div>)}</div>}
-        <div className="grid2"><DataTable rows={sum.data?.revenue_by_game || null} cols={[['Jogo', (r) => String(r.title)], ['Pagamentos', (r) => String(r.payments)], ['Receita', (r) => money(Number(r.revenue_cents))]]} />
-          <DataTable rows={sum.data?.revenue_by_console || null} cols={[['Console', (r) => String(r.name)], ['Minutos vendidos', (r) => String(r.minutes_sold)], ['Receita', (r) => money(Number(r.revenue_cents))]]} /></div>
+        <div className="grid2"><DataTable limit={5} rows={sum.data?.revenue_by_game || null} cols={[['Jogo', (r) => String(r.title)], ['Pagamentos', (r) => String(r.payments)], ['Receita', (r) => money(Number(r.revenue_cents))]]} />
+          <DataTable limit={5} rows={sum.data?.revenue_by_console || null} cols={[['Console', (r) => String(r.name)], ['Minutos vendidos', (r) => String(r.minutes_sold)], ['Receita', (r) => money(Number(r.revenue_cents))]]} /></div>
       </section>
       <section className="card"><h2>Pagamentos</h2><DataTable rows={pays.data} error={pays.error?.message} cols={[['Data', (r) => dateTime(String(r.created_at))], ['Reserva', (r) => String(r.reservation_code)], ['Usuário', (r) => String(r.username)],
         ['Provedor', (r) => String(r.provider)], ['Valor', (r) => money(Number(r.amount_cents))], ['Status', (r) => <StatusPill status={String(r.status)} map={PAYMENT_STATUS} />],

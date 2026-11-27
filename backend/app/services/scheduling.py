@@ -37,9 +37,13 @@ class Slot:
     blocked_until: datetime
 
 
+MAX_RESERVATION_MINUTES = 2_147_483_647  # coluna reservations.minutes (integer)
+MAX_PRICE_CENTS = 2_147_483_647  # coluna reservations.price_cents (integer)
+
+
 def fits_window(start: datetime, minutes: int, a: datetime, b: datetime) -> bool:
     """S >= A e S + D <= B (fim B exclusivo para início)."""
-    return start >= a and start + timedelta(minutes=minutes) <= b and start < b
+    return a <= start < b and timedelta(minutes=minutes) <= b - start
 
 
 def expire_stale_holds(conn, console_ids: list | None = None) -> int:
@@ -68,7 +72,7 @@ def game_sellable(conn, game: dict) -> None:
 
 def eligible_consoles(conn, game_id, console_id=None, lock: bool = False) -> list[dict]:
     """Consoles publicados, validados e online que possuem vínculo ativo do jogo ainda não encerrado."""
-    q = """select c.id, c.code, c.name, c.platform_id from consoles c
+    q = """select c.id, c.code, c.name, c.platform_id, c.owner_user_id, c.operating_starts_at, c.operating_ends_at from consoles c
            join console_connection_configs cfg on cfg.console_id=c.id
            where c.deleted_at is null and c.is_published and c.status='online' and cfg.validated_at is not null
              and cfg.method <> 'unconfigured'
@@ -142,12 +146,17 @@ def _ceil_minute(t: datetime) -> datetime:
 
 def earliest_in_window(conn, console_id, a: datetime, b: datetime, minutes: int, setup: int, not_before: datetime,
                        exclude_reservation=None) -> datetime | None:
+    bounds = conn.execute('select operating_starts_at, operating_ends_at from consoles where id=%s', (console_id,)).fetchone()
+    if bounds and bounds['operating_starts_at']:
+        a, b = max(a, bounds['operating_starts_at']), min(b, bounds['operating_ends_at'])
     d, block = timedelta(minutes=minutes), timedelta(minutes=minutes + setup)
     t = _ceil_minute(max(a, not_before))
+    if d > b - t:
+        return None
     busy = _busy(conn, console_id, t, b + timedelta(minutes=setup), exclude_reservation)
     hours = _hours(conn, console_id)
     for _ in range(500):
-        if t + d > b:
+        if d > b - t:
             return None
         if hours and not _within_hours(hours, t, t + d):
             nxt = _next_opening(hours, t, minutes)
@@ -180,6 +189,8 @@ def find_slots(conn, game_id, minutes: int, mode: str, start_at: datetime | None
             if mode == 'scheduled':
                 s = start_at
                 if s is None or not fits_window(s, minutes, w['starts_at'], w['ends_at']):
+                    continue
+                if c['operating_starts_at'] and not fits_window(s, minutes, c['operating_starts_at'], c['operating_ends_at']):
                     continue
                 if s < n + timedelta(minutes=int(st['scheduled_lead_minutes'])):
                     continue
@@ -250,17 +261,23 @@ def explain_unavailable(conn, game_id, minutes: int, mode: str, start_at: dateti
 
 # ------------------------------------------------------------------ preços
 def resolve_package(conn, game: dict, console_id, platform_id, minutes: int, at: datetime) -> dict | None:
-    if not game['min_minutes'] <= minutes <= game['max_minutes']:
-        return None
     rate = conn.execute('''
         select c.owner_user_id, r.min_minutes, r.max_minutes, r.rate_unit, r.rate_cents, r.paused
         from consoles c left join owner_console_rates r on r.console_id=c.id where c.id=%s
     ''', (console_id,)).fetchone()
     if rate and rate['owner_user_id'] is not None:
-        if rate['paused'] or rate['min_minutes'] is None or not rate['min_minutes'] <= minutes <= rate['max_minutes']:
+        if (rate['paused'] or rate['min_minutes'] is None
+                or not rate['min_minutes'] <= minutes <= rate['max_minutes']
+                or not game['min_minutes'] <= minutes <= game['max_minutes']):
             return None
         divisor = 60 if rate['rate_unit'] == 'hour' else 1
         return {'id': None, 'price_cents': max(1, (rate['rate_cents'] * minutes + divisor // 2) // divisor)}
+    per_minute = get_settings(conn)['booking_rate_cents_per_minute']
+    if per_minute > 0:
+        price = per_minute * minutes
+        return {'id': None, 'price_cents': price} if 0 < price <= MAX_PRICE_CENTS else None
+    if not game['min_minutes'] <= minutes <= game['max_minutes']:
+        return None
     lt = timeutil.local(at).time()
     rows = conn.execute(
         """select * from price_packages where active and minutes=%s
@@ -368,7 +385,7 @@ def create_reservation(user, game_id, minutes: int, mode: str, start_at: datetim
                        (user.user_id, n)).fetchone()['n']
     if fut >= int(st['max_future_reservations_per_user']):
         raise conflict('too_many_reservations', 'Limite de reservas futuras atingido.')
-    if minutes not in {offer['minutes'] for offer in offered_minutes(conn, game)}:
+    if not st['booking_rate_cents_per_minute'] and minutes not in {offer['minutes'] for offer in offered_minutes(conn, game)}:
         raise unprocessable('invalid_package', 'Pacote de tempo indisponível para este jogo.')
     # Expira holds vencidos e trava os consoles candidatos (serializa reservas concorrentes por console).
     expire_stale_holds(conn)
@@ -448,31 +465,40 @@ def confirm_reservation(conn, reservation_id, source: str) -> str:
     return 'needs_resolution'
 
 
-def recompute_queue(conn, console_id) -> None:
-    """Atualiza queue_entries (posições, próximos, estimativas) a partir das reservas confirmadas."""
-    n = timeutil.now()
+def _queue_members(conn, console_id, n) -> list[dict]:
     rows = conn.execute(
-        """select r.id, r.user_id, r.starts_at, r.ends_at, r.status from reservations r
-           where r.console_id=%s and r.status in ('confirmed','active') and r.ends_at > %s order by r.starts_at""",
-        (console_id, n)).fetchall()
-    ids = []
+        """select r.id, r.user_id, r.starts_at, r.ends_at, r.minutes, u.username,
+                  s.status='active' and s.contract_starts_at <= %s and s.contract_ends_at > %s as playing
+           from reservations r join users u on u.id=r.user_id
+           left join game_sessions s on s.reservation_id=r.id
+           where r.console_id=%s and r.status in ('confirmed','active') and r.ends_at > %s
+           order by r.starts_at, r.id""",
+        (n, n, console_id, n)).fetchall()
     playing_seen = False
     for i, r in enumerate(rows, start=1):
-        is_playing = r['status'] == 'active' or r['starts_at'] <= n
-        status = 'playing' if is_playing else ('next' if (i == 1 or (i == 2 and playing_seen)) else 'waiting')
-        playing_seen = playing_seen or is_playing
-        ids.append(r['id'])
+        r['position'] = i
+        r['status'] = 'playing' if r['playing'] else 'next' if i == 1 or (i == 2 and playing_seen) else 'waiting'
+        playing_seen = playing_seen or bool(r['playing'])
+    return rows
+
+
+def recompute_queue(conn, console_id) -> None:
+    """Atualiza os registros persistidos com a posição real das reservas em aberto."""
+    rows = _queue_members(conn, console_id, timeutil.now())
+    for r in rows:
         conn.execute(
             """insert into queue_entries(reservation_id, console_id, user_id, position, status, estimated_start_at, estimated_end_at)
                values (%s,%s,%s,%s,%s,%s,%s)
                on conflict (reservation_id) do update set position=excluded.position, status=excluded.status,
                  estimated_start_at=excluded.estimated_start_at, estimated_end_at=excluded.estimated_end_at
                where queue_entries.position is distinct from excluded.position or queue_entries.status is distinct from excluded.status
-                 or queue_entries.estimated_start_at is distinct from excluded.estimated_start_at""",
-            (r['id'], console_id, r['user_id'], i, status, r['starts_at'], r['ends_at']))
-    conn.execute("""update queue_entries set status=case when status='playing' then 'done' else 'left' end
-                    where console_id=%s and status in ('waiting','next','playing') and not (reservation_id = any(%s))""",
-                 (console_id, ids))
+                 or queue_entries.estimated_start_at is distinct from excluded.estimated_start_at
+                 or queue_entries.estimated_end_at is distinct from excluded.estimated_end_at""",
+            (r['id'], console_id, r['user_id'], r['position'], r['status'], r['starts_at'], r['ends_at']))
+    conn.execute("""update queue_entries q set status=case when r.status='completed' then 'done' else 'left' end
+                    from reservations r where r.id=q.reservation_id and q.console_id=%s
+                      and q.status in ('waiting','next','playing') and not (q.reservation_id = any(%s))""",
+                 (console_id, [r['id'] for r in rows]))
 
 
 def compact_queue(conn, console_id) -> int:
@@ -514,15 +540,28 @@ def release_reservation(conn, r: dict, new_status: str, reason: str, by_user=Non
     compact_queue(conn, r['console_id'])
 
 
+def queue_snapshot(conn, console_id, viewer_id=None, now=None) -> dict:
+    return {r['id']: {'position': r['position'], 'status': r['status'], 'username': r['username'], 'minutes': r['minutes'],
+                      'estimated_start_at': r['starts_at'].isoformat(), 'estimated_end_at': r['ends_at'].isoformat(),
+                      'is_me': viewer_id is not None and str(r['user_id']) == str(viewer_id)}
+            for r in _queue_members(conn, console_id, now or timeutil.now())}
+
+
 def public_queue(conn, console_id, viewer_id=None) -> list[dict]:
     """Fila pública: somente nomes públicos (sem e-mail/nome civil)."""
-    rows = conn.execute(
-        """select q.position, q.status, q.estimated_start_at, q.estimated_end_at, u.username, q.user_id, r.minutes
-           from queue_entries q join users u on u.id=q.user_id join reservations r on r.id=q.reservation_id
-           where q.console_id=%s and q.status in ('playing','next','waiting') order by q.position""", (console_id,)).fetchall()
-    return [{'position': r['position'], 'status': r['status'], 'username': r['username'], 'minutes': r['minutes'],
-             'estimated_start_at': r['estimated_start_at'].isoformat(), 'estimated_end_at': r['estimated_end_at'].isoformat(),
-             'is_me': viewer_id is not None and str(r['user_id']) == str(viewer_id)} for r in rows]
+    return list(queue_snapshot(conn, console_id, viewer_id).values())
+
+
+def _longest_free(conn, console_id, window, setup: int, lead: datetime, maximum: int, minimum: int = 0) -> int:
+    start = max(window['starts_at'], _ceil_minute(lead))
+    upper = min(maximum, int((window['ends_at'] - start).total_seconds() // 60))
+    while minimum < upper:
+        duration = (minimum + upper + 1) // 2
+        if earliest_in_window(conn, console_id, start, window['ends_at'], duration, setup, lead) is not None:
+            minimum = duration
+        else:
+            upper = duration - 1
+    return minimum
 
 
 def availability_summary(conn, game: dict) -> dict:
@@ -534,12 +573,27 @@ def availability_summary(conn, game: dict) -> dict:
     offers = offered_minutes(conn, game)
     consoles_out = []
     for c in eligible_consoles(conn, game['id']):
-        cur = conn.execute("""select * from console_game_assignments where console_id=%s and game_id=%s and status='active'
-                              and starts_at <= %s and ends_at > %s""", (c['id'], game['id'], n, n)).fetchone()
-        nxt = conn.execute("""select * from console_game_assignments where console_id=%s and game_id=%s and status='active'
-                              and starts_at > %s order by starts_at limit 1""", (c['id'], game['id'], n)).fetchone()
+        horizon = n + timedelta(days=st['booking_horizon_days'])
+        windows = conn.execute('''
+            select starts_at, ends_at from console_game_assignments
+            where console_id=%s and game_id=%s and status='active' and ends_at>%s
+            order by starts_at
+        ''', (c['id'], game['id'], n)).fetchall()
+        cur = next((w for w in windows if w['starts_at'] <= n), None)
+        nxt = next((w for w in windows if w['starts_at'] > n), None)
+        platform_rate = st['booking_rate_cents_per_minute'] and c['owner_user_id'] is None
+        maximum = MAX_PRICE_CENTS // platform_rate if platform_rate else game['max_minutes']
         info = {'console_id': str(c['id']), 'console_name': c['name'], 'console_code': c['code'], 'messages': [],
                 'current_window': None, 'next_window': None, 'packages': []}
+        info['scheduled_windows'] = []
+        scheduled_lead = _ceil_minute(n + timedelta(minutes=int(st['scheduled_lead_minutes'])))
+        for window in windows:
+            if window['starts_at'] >= horizon:
+                break
+            start = max(window['starts_at'], scheduled_lead, c['operating_starts_at'] or scheduled_lead)
+            end = min(window['ends_at'], c['operating_ends_at'] or window['ends_at'])
+            if end - start >= timedelta(minutes=1):
+                info['scheduled_windows'].append({'starts_at': start.isoformat(), 'ends_at': end.isoformat()})
         q = public_queue(conn, c['id'])
         info['queue_size'] = len(q)
         info['playing_now'] = next((x['username'] for x in q if x['status'] == 'playing'), None)
@@ -549,11 +603,7 @@ def availability_summary(conn, game: dict) -> dict:
                                       'remaining_minutes': remaining}
             info['messages'].append(f"{game['title']} disponível até {timeutil.fmt(cur['ends_at'])} (horário de Fortaleza).")
             info['messages'].append(f'Restam {timeutil.fmt_minutes(remaining)} para o encerramento da janela atual.')
-            # Maior período livre restante na janela atual (a partir do início mais cedo possível).
-            longest = 0
-            for m in range(5, min(remaining, game['max_minutes']) + 1, 5):
-                if earliest_in_window(conn, c['id'], cur['starts_at'], cur['ends_at'], m, setup, lead) is not None:
-                    longest = m
+            longest = _longest_free(conn, c['id'], cur, setup, lead, maximum)
             info['last_free_minutes'] = longest
             if remaining <= 120:
                 info['messages'].append(f"Atenção: o jogo ficará disponível somente até às {timeutil.fmt_time(cur['ends_at'])}.")
@@ -564,7 +614,17 @@ def availability_summary(conn, game: dict) -> dict:
         if nxt:
             info['next_window'] = {'starts_at': nxt['starts_at'].isoformat(), 'ends_at': nxt['ends_at'].isoformat()}
             if not cur:
+                info['last_free_minutes'] = _longest_free(conn, c['id'], nxt, setup, lead, maximum)
                 info['messages'].append(f"Próxima disponibilidade: {timeutil.fmt(nxt['starts_at'])}.")
+        if platform_rate:
+            longest = 0
+            for window in windows:
+                if window['starts_at'] >= horizon:
+                    break
+                longest = _longest_free(conn, c['id'], window, setup, lead, maximum, longest)
+                if longest == maximum:
+                    break
+            info['queue_max_minutes'] = longest
         for o in offers:
             s = find_slots(conn, game['id'], o['minutes'], 'queue', console_id=c['id'])
             pkg = resolve_package(conn, game, c['id'], c['platform_id'], o['minutes'], s[0].start if s else n)

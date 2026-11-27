@@ -22,6 +22,7 @@ class RPErrorHandler:
         REGIST_FAILED = 0x80108B09
         INVALID_PSN_ID = 0x80108B02
         RP_IN_USE = 0x80108B10
+        RP_BUSY = 0x80108B13  # LocaPlay: visto em PS4 real com sessão anterior ainda aberta no console
         CRASH = 0x80108B15
         RP_VERSION_MISMATCH = 0x80108B11
         UNKNOWN = 0x80108BFF
@@ -32,6 +33,7 @@ class RPErrorHandler:
         REGIST_FAILED = "Registering Failed"
         INVALID_PSN_ID = "PSN ID does not exist on host"
         RP_IN_USE = "Another Remote Play session is connected to host"
+        RP_BUSY = "Remote Play busy on host; previous session not released"
         CRASH = "RP Crashed on Host; Host needs restart"
         RP_VERSION_MISMATCH = "Remote Play versions do not match on host and client"
         UNKNOWN = "Unknown"

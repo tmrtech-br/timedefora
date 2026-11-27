@@ -16,7 +16,7 @@ from datetime import timedelta
 from ..core import timeutil
 from ..core.db import insert, tx
 from ..gamebridge import AdapterError, get_adapter
-from . import notifications
+from . import notifications, scheduling
 from .consoles import console_ref
 from .settings_store import get_settings
 
@@ -104,6 +104,7 @@ def _fail(conn, r: dict, p: dict, message: str) -> None:
     conn.execute("""update reservations set status='needs_resolution', resolution_notes=%s where id=%s and status='confirmed'""",
                  ('O console não ficou pronto no horário por um problema técnico. Seu tempo não foi consumido: '
                   'a equipe vai remarcar ou reembolsar a reserva.', r['id']))
+    scheduling.recompute_queue(conn, r['console_id'])
     notifications.notify(conn, str(r['user_id']), 'console_not_ready',
                          {'jogo': info.get('title', ''), 'codigo': r['code'], 'console': info.get('console_name', '')},
                          dedupe=f"console_not_ready:{r['id']}", link=f"/sessoes/{r['id']}")

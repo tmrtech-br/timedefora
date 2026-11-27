@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { ArrowRight, Clock3, Gamepad2, ListOrdered, Monitor, Ticket, Play, Radio, UserRound, ChevronsRight } from 'lucide-react';
 import GameCard from '@/components/GameCard';
-import { Empty, ErrorBox, Skeleton } from '@/components/ui';
+import { Alert, Empty, ErrorBox, Skeleton } from '@/components/ui';
 import { useApi } from '@/lib/hooks';
 import { minutesLabel, moneyShort } from '@/lib/format';
 import type { GameCard as G } from '@/lib/types';
@@ -24,13 +24,13 @@ export default function HomePage() {
   return (
     <>
       <ErrorBox error={error} onRetry={reload} />
-      {data?.sales_paused && <div className="notice-bar">Vendas temporariamente pausadas pela operação.</div>}
+      {data?.sales_paused && <Alert kind="warn">Vendas temporariamente pausadas pela operação.</Alert>}
       {!data && !error && <div className="home-loading" role="status"><span className="sr-only">Carregando a página inicial</span><Skeleton h={410} /></div>}
       {data && (
         <section className="hero" aria-labelledby="hero-title">
           <div className="hero-art" aria-hidden="true" />
           <div className="hero-copy">
-            <h1 id="hero-title">LocaPlay</h1>
+            <h1 id="hero-title">timede<span className="hero-title-accent">fora</span></h1>
             <p className="hero-lead">Sua locadora de games na nuvem.</p>
             {f ? <>
               <p className="hero-feature"><strong>{f.title}</strong>{f.short_description && <span>{f.short_description}</span>}</p>

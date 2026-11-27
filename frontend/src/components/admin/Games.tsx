@@ -1,4 +1,6 @@
 'use client';
+import DateFilter from '@/components/DateFilter';
+import switchStyles from '@/app/configuracoes/settings.module.css';
 import { useState } from 'react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { patch, post } from '@/lib/api';
@@ -29,19 +31,46 @@ export function GameRegistrationFields({ f, set, owner = false }: { f: Record<st
             options={['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((p) => ({ value: p, label: p }))} /></Field>}
           <Field label="Gêneros (separados por vírgula)"><input maxLength={200} value={String(f.genres)} onChange={(e) => set('genres', e.target.value)} /></Field>
           <Field label="Classificação etária"><select value={String(f.age_rating)} onChange={(e) => set('age_rating', e.target.value)}><option value="">—</option>{['L', '10', '12', '14', '16', '18'].map((x) => <option key={x}>{x}</option>)}</select></Field>
-          <Field label="Lançamento"><input type="date" value={String(f.release_date)} onChange={(e) => set('release_date', e.target.value)} /></Field>
-          <Field label="Duração mínima (min)"><input type="number" value={String(f.min_minutes)} onChange={(e) => set('min_minutes', e.target.value)} /></Field>
-          <Field label="Duração máxima (min)"><input type="number" value={String(f.max_minutes)} onChange={(e) => set('max_minutes', e.target.value)} /></Field>
+          <DateFilter label="Lançamento" value={String(f.release_date)} onChange={(value) => set('release_date', value)} />
+          <Field label="Duração mínima (min)"><input type="number" min={1} step={1} value={String(f.min_minutes)} onChange={(e) => set('min_minutes', e.target.value.replace(/^-/, ''))} /></Field>
+          <Field label="Duração máxima (min)"><input type="number" min={1} step={1} value={String(f.max_minutes)} onChange={(e) => set('max_minutes', e.target.value.replace(/^-/, ''))} /></Field>
         </div>
         <Field label="Descrição"><textarea maxLength={5000} value={String(f.description)} onChange={(e) => set('description', e.target.value)} /></Field>
         <Field label="Requisitos"><input maxLength={500} value={String(f.requirements)} onChange={(e) => set('requirements', e.target.value)} /></Field>
         <Field label="Direitos de imagem / observações"><input maxLength={500} value={String(f.image_rights_notes)} onChange={(e) => set('image_rights_notes', e.target.value)} /></Field>
         {!owner && <div className="row">
-          <label className="check"><input type="checkbox" checked={!!f.trailer_licensed} onChange={(e) => set('trailer_licensed', e.target.checked)} />Trailer licenciado</label>
-          <label className="check"><input type="checkbox" checked={!!f.stream_rights_allowed} onChange={(e) => set('stream_rights_allowed', e.target.checked)} />Transmissão pública autorizada</label>
-          <label className="check"><input type="checkbox" checked={!!f.featured_manual} onChange={(e) => set('featured_manual', e.target.checked)} />Destaque manual na home</label>
+          <label className={switchStyles.switchRow}><input type="checkbox" role="switch" className={`switch ${switchStyles.toggle}`} checked={!!f.trailer_licensed} onChange={(e) => set('trailer_licensed', e.target.checked)} />Trailer licenciado</label>
+          <label className={switchStyles.switchRow}><input type="checkbox" role="switch" className={`switch ${switchStyles.toggle}`} checked={!!f.stream_rights_allowed} onChange={(e) => set('stream_rights_allowed', e.target.checked)} />Transmissão pública autorizada</label>
+          <label className={switchStyles.switchRow}><input type="checkbox" role="switch" className={`switch ${switchStyles.toggle}`} checked={!!f.featured_manual} onChange={(e) => set('featured_manual', e.target.checked)} />Destaque manual na home</label>
         </div>}
   </>;
+}
+
+function GameSummary({ game }: { game: Game }) {
+  const shown = (value: unknown) => value == null || value === '' ? '—' : String(value);
+  const yesNo = (value: unknown) => value ? 'Sim' : 'Não';
+  const date = shown(game.release_date);
+  const sections: { title: string; fields: [string, React.ReactNode][] }[] = [
+    { title: 'Cadastro', fields: [
+      ['Título', game.title], ['Slug', game.slug], ['Plataformas', game.platform_codes.join(', ') || '—'], ['Gêneros', game.genres.join(', ') || '—'],
+      ['Classificação etária', shown(game.age_rating)], ['Lançamento', date === '—' ? date : date.split('-').reverse().join('/')],
+      ['Frase de destaque', shown(game.short_description)], ['Descrição', shown(game.description)], ['Requisitos', shown(game.requirements)],
+    ] },
+    { title: 'Mídia e exibição', fields: [
+      ['Capa', shown(game.cover_url)], ['Banner', shown(game.banner_url)], ['Trailer', shown(game.trailer_url)],
+      ['Trailer licenciado', yesNo(game.trailer_licensed)], ['Transmissão pública autorizada', yesNo(game.stream_rights_allowed)],
+      ['Destaque manual na home', yesNo(game.featured_manual)], ['Direitos de imagem / observações', shown(game.image_rights_notes)],
+    ] },
+    { title: 'Reserva e licença comercial', fields: [
+      ['Status', <StatusPill status={game.status} />], ['Demonstração', yesNo(game.is_demo)],
+      ['Duração mínima (min)', shown(game.min_minutes)], ['Duração máxima (min)', shown(game.max_minutes)],
+      ['Licença comercial', LIC[game.commercial_license_status] ?? '—'],
+      ['Documento de autorização', shown(game.commercial_license_doc_url)], ['Observações da licença', shown(game.commercial_license_notes)],
+    ] },
+  ];
+  return <div className="stack">{sections.map(({ title, fields }) => <section className="card" key={title}>
+    <h3>{title}</h3><dl className="console-summary-grid">{fields.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+  </section>)}</div>;
 }
 
 export default function Games() {
@@ -72,6 +101,8 @@ export default function Games() {
           <button className="btn primary" disabled={busy} onClick={() => run(async () => {
             need((f.platform_codes as string[]).length, 'Marque pelo menos uma plataforma.');
             const body = gameRegistrationBody(f);
+            need(Number.isInteger(body.min_minutes) && Number.isInteger(body.max_minutes) && body.min_minutes > 0 && body.max_minutes >= body.min_minutes,
+              'Use minutos inteiros positivos. A duração máxima deve ser igual ou maior que a mínima.');
             if (editing) await patch(`/admin/games/${editing}`, body);
             else await post('/admin/games', body);
             list.reload(); setFormOpen(false);
@@ -85,10 +116,9 @@ export default function Games() {
         <button className="btn" onClick={() => run(async () => { await post(`/admin/games/${editing}/license`, { ...lic, doc_url: lic.doc_url || null }); list.reload(); }, 'Licença atualizada.')}>Registrar</button></section>}
       </Modal>}
       {viewing && <Modal title={viewing.title} onClose={() => setViewing(null)} allowEscape>
-        <dl><dt>Plataformas</dt><dd>{viewing.platform_codes.join(', ')}</dd><dt>Status</dt><dd><StatusPill status={viewing.status} /></dd>
-          <dt>Licença comercial</dt><dd>{LIC[viewing.commercial_license_status]}</dd><dt>Descrição</dt><dd>{String(viewing.description || 'Sem descrição')}</dd></dl>
+        <GameSummary game={viewing} />
       </Modal>}
-      <section className="card"><h2>Jogos cadastrados</h2><DataTable rows={list.data} error={list.error?.message} cols={[['Jogo', (g) => g.title],
+      <section className="card"><h2>Jogos cadastrados</h2><DataTable limit={5} rows={list.data} error={list.error?.message} cols={[['Jogo', (g) => g.title],
         ['Plataformas', (g) => g.platform_codes.join(', ')], ['Status', (g) => <StatusPill status={g.status} />], ['Licença', (g) => LIC[g.commercial_license_status]],
         ['Demo', (g) => (g.is_demo ? 'sim' : 'não')],
         ['Ações', (g) => <div className="row">

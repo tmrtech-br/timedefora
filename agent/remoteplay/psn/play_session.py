@@ -94,7 +94,7 @@ class Ps4Control:
                 try:
                     packet = await self.channel.recv(timeout=5)
                 except TimeoutError:
-                    await self.channel.send_ctrl(struct.pack('!IH2x', 0, 0xfe))
+                    await self._send_quiet(struct.pack('!IH2x', 0, 0xfe))      # heartbeat
                     continue
                 subtype = packet.type >> 8
                 if subtype == 0xc0:
@@ -125,11 +125,26 @@ class Ps4Control:
                 if 24 <= len(identifier) <= 79 and identifier.isalnum():
                     self.identifier = identifier
             if kind == 0xfe:
-                await self.channel.send_ctrl(struct.pack('!IH2x', 0, 0x1fe))
+                await self._send_quiet(struct.pack('!IH2x', 0, 0x1fe))
             if kind == 0x34:
                 self.switched.set()
             if kind == 0x4:
                 raise RemotePlaySessionError('O PS4 solicitou um PIN de login para o canal de controle.')
+
+    async def _send_quiet(self, payload: bytes):
+        """Heartbeat e respostas automáticas: fila RUDP cheia (console sem confirmar) não pode matar o leitor."""
+        try:
+            await self.channel.send_ctrl(payload)
+        except BufferError:
+            pass
+
+    async def standby(self, timeout=3.0) -> bool:
+        """Pede ao PS4 para entrar em repouso (mensagem STANDBY 0x50 do Remote Play, sem conteúdo)."""
+        try:
+            await asyncio.wait_for(self.channel.send_ctrl(struct.pack('!IH2x', 0, 0x50), wait_ack=True), timeout)
+            return True
+        except (TimeoutError, BufferError, OSError):
+            return False
 
     async def switch_to_media(self, timeout=6):
         await self.channel.send_ctrl(struct.pack('!IH2x', 16, 0x0d) + secrets.token_bytes(16))

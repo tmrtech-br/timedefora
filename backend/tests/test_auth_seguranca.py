@@ -4,8 +4,8 @@ from datetime import timedelta
 
 import pyotp
 
-from app.core import timeutil
-from app.core.db import get_pool, one, tx
+from app.core import security, timeutil
+from app.core.db import get_pool, insert, one, tx
 from conftest import Api, admin_api, at, last_email, login, make_user, pay, reserve
 
 GOOD = {'full_name': 'Maria Silva', 'username': 'mariasilva', 'email': 'maria@teste.com', 'password': 'Jogar2026agora',
@@ -24,6 +24,21 @@ def test_cadastro_validacoes():
     assert set(r.json()['fields']) >= {'password_confirm', 'accept_terms'}
     r = api.post('/auth/register', json={**GOOD, 'password': 'curta', 'password_confirm': 'curta'})
     assert r.status_code == 422 and 'password' in r.json()['fields']
+
+
+def test_nome_publico_recusa_ofensas_no_perfil_e_no_cadastro():
+    u = make_user('jogador_teste')
+    api = login(u)
+    for username in ('CaRaLhO_22', 'v.1.a.d.0', 'macaco_preto', 'fora.imigrantes'):
+        r = api.patch('/me', json={'username': username})
+        assert r.status_code == 422
+        assert 'conteúdo discriminatório' in r.json()['fields']['username']
+    assert api.get('/me').json()['username'] == u['username']
+    assert api.patch('/me', json={'username': 'Enviado_2026'}).status_code == 200
+    assert api.patch('/me', json={'username': 'JogadorGay'}).status_code == 200
+    r = Api().post('/auth/register', json={**GOOD, 'username': 'p0rr4'})
+    assert r.status_code == 422
+    assert 'conteúdo discriminatório' in r.json()['fields']['username']
 
 
 def test_cadastro_codigo_correto_ativa_conta_e_guarda_hash(freeze):
@@ -91,15 +106,34 @@ def test_recuperacao_de_senha_revoga_sessoes(freeze):
     login({**u, 'password': 'NovaSenha2026'})
 
 
-def test_troca_de_email_exige_confirmacao_no_novo_endereco(freeze):
+def test_perfil_nao_permite_troca_de_email(freeze):
     freeze(at(1, 10))
     u = make_user('fulano')
     api = login(u)
-    assert api.post('/me/email', json={'new_email': 'novo@teste.com', 'password': 'errada'}).status_code == 400
-    assert api.post('/me/email', json={'new_email': 'novo@teste.com', 'password': u['password']}).status_code == 200
-    assert api.get('/me').json()['email'] == u['email']          # ainda não trocou
-    api.post('/me/email/confirm', json={'code': code_from_mail('novo@teste.com')})
-    assert api.get('/me').json()['email'] == 'novo@teste.com'
+    assert api.post('/me/email', json={'new_email': 'novo@teste.com', 'password': u['password']}).status_code == 404
+    assert api.post('/me/email/confirm', json={'code': '000000'}).status_code == 404
+    assert api.post('/me/email/resend').status_code == 404
+    assert api.get('/me').json()['email'] == u['email']
+
+
+def test_alterar_senha_valida_os_campos_e_revoga_as_outras_sessoes(freeze):
+    freeze(at(1, 10))
+    user = make_user('senha_perfil')
+    api, other_session = login(user), login(user)
+    change = {'current_password': user['password'], 'new_password': 'NovaChave2026', 'new_password_confirm': 'NovaChave2026'}
+    wrong = api.post('/me/password', json={**change, 'current_password': 'incorreta'})
+    assert wrong.status_code == 400 and wrong.json()['code'] == 'wrong_password'
+    for fields, expected in (
+        ({'new_password_confirm': 'diferente'}, 'new_password_confirm'),
+        ({'new_password': 'curta', 'new_password_confirm': 'curta'}, 'new_password'),
+        ({'new_password': user['password'], 'new_password_confirm': user['password']}, 'new_password'),
+    ):
+        response = api.post('/me/password', json={**change, **fields})
+        assert response.status_code == 422 and expected in response.json()['fields']
+    assert api.post('/me/password', json=change).status_code == 200
+    assert api.get('/me').status_code == 200
+    assert other_session.get('/me').status_code == 401
+    login({**user, 'password': change['new_password']})
 
 
 def test_csrf_obrigatorio_e_origem(freeze):
@@ -180,3 +214,16 @@ def test_auditoria_registra_insert_update_delete_com_ator_e_mascara(freeze):
     with pytest.raises(psycopg.errors.RaiseException):
         with get_pool().connection() as c:
             c.execute('delete from audit_logs')
+
+
+def test_cliente_com_mfa_legado_confirma_email_sem_totp():
+    user = make_user(username='cliente_legado', verified=False)
+    with tx() as conn:
+        insert(conn, 'mfa_factors', {'user_id': user['id'], 'totp_secret_enc': security.encrypt(pyotp.random_base32()),
+                                     'confirmed_at': timeutil.now()})
+    api = Api()
+    response = api.post('/auth/login', json={'email': user['email'], 'password': user['password']})
+    assert response.status_code == 200
+    assert response.json() == {'mfa_required': False, 'email_verified': False}
+    assert api.post('/me/mfa/setup').status_code == 403
+    assert api.post('/auth/mfa/verify', json={'code': '123456'}).status_code == 403

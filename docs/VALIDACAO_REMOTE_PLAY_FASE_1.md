@@ -2,6 +2,16 @@
 
 Data da validação: 24/11/2026.
 
+> **Atualização de 26/11/2026.** Este registro descreve o estado de 24/11. Depois dele, a rota `internet_psn` do
+> `remote_play_native` passou a funcionar **para PS4** (`PsnLink` em `agent/consoleagent/links.py`, fluxo em
+> `agent/remoteplay/psn/connection.py`): o HTTP 501 `psn_transport_pending` vale agora só para PS5. Validado com
+> hardware real pelo dono do produto: conta PSN vinculada, PS4 na mesma rede do agente e PS4 movido para outra rede,
+> com o jogador abrindo a sessão e jogando. Ainda sem validação real: PS4 que nunca esteve na rede do agente, NAT
+> simétrico/CGNAT, sessões longas (mais de 1 h), duas sessões PSN simultâneas e o repouso ao fim da sessão.
+> Correções da revisão de 26/11: novas tentativas também quando a negociação PSN falha, cofre PSN único por processo,
+> falha temporária de renovação não expira mais a conta, qualidade/resolução do cadastro repassadas ao PS4, fila UDP
+> maior, repouso ao fim da sessão (rota PSN), diagnóstico PSN fora do laço do WebRTC e cadastro de PS5 pela PSN recusado.
+
 ## Resumo executivo
 
 Os 36 arquivos da atualização estão presentes. A conferência usou os 23 arquivos do overlay e as 13 transformações sobre os originais no backup. As divergências em relação ao pacote correspondem às correções e aos testes desta auditoria. O instalador permaneceu sem execução.

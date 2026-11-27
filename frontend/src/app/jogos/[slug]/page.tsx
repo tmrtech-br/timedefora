@@ -1,24 +1,27 @@
 'use client';
 import Link from 'next/link';
+import DateFilter from '@/components/DateFilter';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CalendarClock, Clock3, Gamepad2, Heart, ListOrdered, Radio } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Gamepad2, Heart, ListOrdered, Radio } from 'lucide-react';
+import PolicyConsent from '@/components/PolicyConsent';
 import PublicStream from '@/components/PublicStream';
 import QueueList from '@/components/QueueList';
 import ShareStream from '@/components/ShareStream';
 import { Alert, ErrorBox, Field, Skeleton } from '@/components/ui';
 import { ApiError, del, get, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { useApi } from '@/lib/hooks';
-import { dateTime, minutesLabel, money, time } from '@/lib/format';
+import { useApi, useServerClock } from '@/lib/hooks';
+import { dateTime, minutesLabel, moneyWithCents, time } from '@/lib/format';
 import type { GameCard as G, QueueItem, Reservation } from '@/lib/types';
 import { useFeatures } from '@/lib/features';
 
 type ConsoleAvail = { console_id: string; console_name: string; messages: string[]; queue_size: number; playing_now: string | null;
   current_window: { starts_at: string; ends_at: string; remaining_minutes: number } | null; next_window: { starts_at: string } | null;
-  last_free_minutes?: number; packages: { minutes: number; price_cents: number; fits: boolean; estimated_start_at: string | null; estimated_end_at: string | null }[];
+  scheduled_windows?: { starts_at: string; ends_at: string }[];
+  last_free_minutes?: number; queue_max_minutes?: number; packages: { minutes: number; price_cents: number; fits: boolean; estimated_start_at: string | null; estimated_end_at: string | null }[];
   queue: QueueItem[] };
-type Detail = G & { description: string; age_rating: string | null; requirements: string; min_minutes: number; max_minutes: number;
+type Detail = G & { rate_cents_per_minute: number; description: string; age_rating: string | null; requirements: string; min_minutes: number; max_minutes: number;
   packages: { minutes: number; price_cents: number; promotion: boolean }[]; availability: { server_time: string; notice: string; consoles: ConsoleAvail[] };
   public_stream: { provider: 'twitch' | 'kick' | 'external'; channel_name: string | null; external_url: string | null; status: string } | null;
   is_favorite: boolean; commercially_licensed: boolean; cancellation_policy: { title: string; body: string; version: string } | null };
@@ -29,36 +32,82 @@ export default function GamePage() {
   const router = useRouter();
   const { me } = useAuth();
   const { data: g, error, reload } = useApi<Detail>(`/catalog/games/${slug}`, 10000);
-  const [minutes, setMinutes] = useState<number | null>(null);
-  const [mode, setMode] = useState<'queue' | 'scheduled'>('queue');
-  const [startLocal, setStartLocal] = useState('');
+  const [minutes, setMinutes] = useState('');
+  const [selectedMode, setMode] = useState<'queue' | 'scheduled' | null>(null);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const startLocal = startDate && startTime ? `${startDate}T${startTime}` : '';
+  const endLocal = endDate && endTime ? `${endDate}T${endTime}` : '';
   const [coupon, setCoupon] = useState('');
   const features = useFeatures();
-  useEffect(() => {
-    if (!features) return;
-    if (mode === 'queue' && !features.queue_mode_enabled && features.scheduled_mode_enabled) setMode('scheduled');
-    if (mode === 'scheduled' && !features.scheduled_mode_enabled && features.queue_mode_enabled) setMode('queue');
-  }, [features, mode]);
-  const [accept, setAccept] = useState(false);
-  const [quote, setQuote] = useState<Quote | null>(null);
+  const queueEnabled = features?.queue_mode_enabled !== false;
+  const scheduledEnabled = features?.scheduled_mode_enabled !== false;
+  const mode = (selectedMode === 'queue' && queueEnabled) || (selectedMode === 'scheduled' && scheduledEnabled)
+    ? selectedMode : null;
+  const [showPolicy, setShowPolicy] = useState(false);
+  const [quoteResult, setQuote] = useState<{ key: string; value: Quote } | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [fav, setFav] = useState(false);
   useEffect(() => { if (g) setFav(g.is_favorite); }, [g]);
+  const now = useServerClock(g?.availability.server_time);
+  const currentMinute = Math.ceil(now() / 60000) * 60000;
+  const windows = g?.availability.consoles.flatMap((console) => (console.scheduled_windows ?? []).map((window) => ({
+    start: Math.max(currentMinute, Date.parse(window.starts_at)), end: Date.parse(window.ends_at),
+  }))).filter(({ start, end }) => end - start >= 60000) ?? [];
+  const localInput = (timestamp: number) => new Date(timestamp - 3 * 3600000).toISOString().slice(0, 16);
+  const startAt = startLocal ? Date.parse(startLocal + ':00-03:00') : NaN;
+  const assignmentEnd = windows.reduce((limit, window) => startAt >= window.start && startAt + 60000 <= window.end
+    ? Math.max(limit, window.end) : limit, 0);
+  const startParameter = startLocal + ':00-03:00';
+  const limitQuery = new URLSearchParams({ mode: 'scheduled', minutes: '1', start_at: startParameter, duration_limit: 'true' });
+  const limit = useApi<{ start_at: string; max_minutes: number }>(
+    mode === 'scheduled' && assignmentEnd ? `/catalog/games/${slug}/quote?${limitQuery}` : null, 10000);
+  const limitReady = limit.data?.start_at === startParameter;
+  const latestEnd = assignmentEnd && limitReady && limit.data!.max_minutes
+    ? Math.min(assignmentEnd, startAt + limit.data!.max_minutes * 60000) : 0;
+  const startWindows = windows.filter(({ start, end }) => localInput(start).slice(0, 10) <= startDate
+    && localInput(end - 60000).slice(0, 10) >= startDate);
+  const firstTime = startWindows.map(({ start }) => localInput(start)).sort()[0];
+  const lastTime = startWindows.map(({ end }) => localInput(end - 60000)).sort().at(-1);
+  const earliestEndInput = latestEnd ? localInput(startAt + 60000) : '';
+  const latestEndInput = latestEnd ? localInput(latestEnd) : '';
+  const scheduledValid = !!latestEnd && endLocal >= earliestEndInput && endLocal <= latestEndInput;
+  const scheduledMinutes = startLocal && endLocal
+    ? (Date.parse(endLocal + ':00-03:00') - Date.parse(startLocal + ':00-03:00')) / 60000 : 0;
+  const maximum = Math.max(0, ...(g?.availability.consoles.map((c) => c.queue_max_minutes || 0) ?? []));
+  const packageMinutes = [...new Set(g?.availability.consoles.flatMap((c) => c.packages.filter((p) => p.fits).map((p) => p.minutes)) ?? [])].sort((a, b) => a - b);
+  const byMinute = Boolean(g?.rate_cents_per_minute && maximum);
+  const enteredMinutes = Number(minutes);
+  const queueMinutesValid = Number.isSafeInteger(enteredMinutes) && enteredMinutes > 0
+    && (byMinute ? enteredMinutes <= maximum : packageMinutes.includes(enteredMinutes));
+  const selectedMinutes = mode === 'queue' ? (queueMinutesValid ? enteredMinutes : 0) : mode === 'scheduled' && scheduledValid ? scheduledMinutes : 0;
+  const quoteKey = mode && Number.isSafeInteger(selectedMinutes) && selectedMinutes > 0
+    ? new URLSearchParams({ minutes: String(selectedMinutes), mode, ...(mode === 'scheduled' ? { start_at: startLocal + ':00-03:00' } : {}) }).toString() : '';
   useEffect(() => {
-    if (!minutes || !g) { setQuote(null); return; }
-    if (mode === 'scheduled' && !startLocal) { setQuote(null); return; }
-    const p = new URLSearchParams({ minutes: String(minutes), mode });
-    if (mode === 'scheduled') p.set('start_at', new Date(startLocal + ':00-03:00').toISOString());
-    get<Quote>(`/catalog/games/${slug}/quote?${p}`).then(setQuote).catch(() => setQuote(null));
-  }, [minutes, mode, startLocal, slug, g]);
+    if (!quoteKey) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      get<Quote>(`/catalog/games/${slug}/quote?${quoteKey}`).then((value) => {
+        if (active) setQuote({ key: quoteKey, value });
+      }).catch(() => {
+        if (active) setQuote({ key: quoteKey, value: { available: false, message: 'Não foi possível calcular a cotação.' } });
+      });
+    }, 180);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [quoteKey, slug]);
+  const quote = quoteResult?.key === quoteKey ? quoteResult?.value : undefined;
+
 
   async function reserve() {
+    if (!mode || !quote?.available) return;
     if (!me) return router.push(`/entrar?proximo=/jogos/${slug}`);
     if (!me.email_verified) return router.push('/verificar-email');
     setBusy(true); setErr('');
     try {
-      const body: Record<string, unknown> = { game_id: g!.id, minutes, mode, accept_policy: accept, coupon_code: coupon || null };
+      const body: Record<string, unknown> = { game_id: g!.id, minutes: selectedMinutes, mode, accept_policy: true, coupon_code: coupon || null };
       if (mode === 'scheduled') body.start_at = new Date(startLocal + ':00-03:00').toISOString();
       const r = await post<Reservation>('/reservations', body);
       router.push(`/checkout/${r.id}`);
@@ -72,7 +121,12 @@ export default function GamePage() {
   }
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!g) return <Skeleton h={420} />;
-  const fitsAny = (m: number) => g.availability.consoles.some((c) => c.packages.find((p) => p.minutes === m)?.fits);
+  const total = quote?.available ? quote.price_cents : byMinute && selectedMinutes > 0
+    ? g.rate_cents_per_minute * selectedMinutes : undefined;
+  const previousStart = quote?.starts_at ?? (mode === 'queue' && quoteResult?.key.includes('mode=queue') ? quoteResult.value.starts_at : undefined);
+  const previewEnd = previousStart && selectedMinutes > 0
+    ? new Date(Date.parse(previousStart) + selectedMinutes * 60000).toISOString() : undefined;
+  const rate = total !== undefined && selectedMinutes > 0 ? total / selectedMinutes : undefined;
   return (
     <div className="stack">
       {g.is_demo && <Alert kind="warn">Jogo de demonstração: console e pagamento <b>simulados</b>. Exploração comercial ainda não autorizada.</Alert>}
@@ -97,40 +151,73 @@ export default function GamePage() {
         <section className="card" id="reservar" aria-labelledby="t-reservar">
           <h2 id="t-reservar">Escolha seu tempo</h2>
           {g.availability.consoles.length === 0 && <Alert kind="warn">Nenhum console disponível para este jogo no momento.</Alert>}
-          <div className="pkg-grid" role="radiogroup" aria-label="Pacotes de tempo">
-            {g.packages.map((p) => (
-              <button key={p.minutes} role="radio" aria-checked={minutes === p.minutes} className={`pkg ${minutes === p.minutes ? 'on' : ''}`}
-                onClick={() => setMinutes(p.minutes)} disabled={mode === 'queue' && !fitsAny(p.minutes)}>
-                <span className="row"><Clock3 size={16} aria-hidden /><b>{minutesLabel(p.minutes)}</b></span>
-                <span className="price">{money(p.price_cents)}</span>
-                {mode === 'queue' && !fitsAny(p.minutes) && <span className="small dim">Não cabe na janela livre</span>}
-                {p.promotion && <span className="pill amber">Promoção</span>}
-              </button>
-            ))}
+          {!queueEnabled && !scheduledEnabled && <Alert kind="warn">Compras temporariamente indisponíveis.</Alert>}
+          <div className="booking-options" role="radiogroup" aria-label="Tipo de reserva">
+            {queueEnabled && <div className="booking-option">
+              <label className="check"><input type="radio" name="booking-mode" checked={mode === 'queue'} onChange={() => setMode('queue')} /><span><b>Informar minutos</b><small>Início estimado pela fila</small></span></label>
+              <fieldset className="stack booking-fields" disabled={mode !== 'queue'} aria-label="Informar minutos">
+                <Field label="Quantidade de minutos"
+                  hint={byMinute ? `De 1 a ${maximum.toLocaleString('pt-BR')} minutos.` : packageMinutes.length ? `Durações disponíveis: ${packageMinutes.join(', ')} min.` : undefined}
+                  error={mode === 'queue' && minutes && !queueMinutesValid ? 'Informe uma quantidade inteira de minutos disponível.' : undefined}>
+                  <input disabled={!byMinute && !packageMinutes.length} type="number" inputMode="numeric" min={byMinute ? 1 : packageMinutes[0]}
+                    max={byMinute ? maximum : packageMinutes.at(-1)} step={1} value={minutes}
+                    onChange={(e) => setMinutes(e.target.value)} />
+                </Field>
+                {mode === 'queue' && !byMinute && !packageMinutes.length && <p className="small muted">Nenhuma duração disponível para entrar na fila.</p>}
+              </fieldset>
+            </div>}
+            {scheduledEnabled && <div className="booking-option">
+              <label className="check"><input type="radio" name="booking-mode" checked={mode === 'scheduled'} onChange={() => setMode('scheduled')} /><span><b>Digitar início e fim</b><small>Horário de Brasília</small></span></label>
+              <fieldset key={mode === 'scheduled' ? 'scheduled-active' : 'scheduled-inactive'} className="stack booking-fields" disabled={mode !== 'scheduled'} aria-label="Digitar início e fim">
+                <div className="booking-dates">
+                  <DateFilter label="Data inicial" min={localInput(currentMinute).slice(0, 10)}
+                    isDateDisabled={(day) => !windows.some(({ start, end }) => localInput(start).slice(0, 10) <= day
+                      && localInput(end - 60000).slice(0, 10) >= day)}
+                    value={startDate} onChange={(date) => { setStartDate(date); setEndDate(''); setEndTime(''); }} />
+                  <label className="field">Hora inicial<input type="time" step={60} disabled={!startDate} min={firstTime?.startsWith(startDate) ? firstTime.slice(11) : undefined}
+                    max={lastTime?.startsWith(startDate) ? lastTime.slice(11) : undefined} value={startTime}
+                    onChange={(e) => { setStartTime(e.target.value); setEndDate(''); setEndTime(''); }} /></label>
+                  <DateFilter label="Data final" min={earliestEndInput.slice(0, 10)} max={latestEndInput.slice(0, 10)}
+                    disabled={!latestEnd} value={endDate} onChange={setEndDate} />
+                  <label className="field">Hora final<input type="time" step={60} disabled={!latestEnd || !endDate}
+                    min={endDate && earliestEndInput.startsWith(endDate) ? earliestEndInput.slice(11) : undefined}
+                    max={endDate && latestEndInput.startsWith(endDate) ? latestEndInput.slice(11) : undefined} value={endTime} onChange={(e) => setEndTime(e.target.value)} /></label>
+                </div>
+                {mode === 'scheduled' && startLocal && (!assignmentEnd || (limitReady && !latestEnd)) && <p className="small muted">Escolha um início dentro da disponibilidade do console.</p>}
+                {mode === 'scheduled' && assignmentEnd > 0 && !limitReady && <p className="small muted" role="status">
+                  {limit.error ? 'Não foi possível consultar a disponibilidade.' : 'Consultando o horário disponível…'}
+                </p>}
+                {mode === 'scheduled' && latestEnd > 0 && endLocal && !scheduledValid && <p className="small muted">Escolha um fim após o início e até {dateTime(new Date(latestEnd).toISOString())}.</p>}
+              </fieldset>
+            </div>}
           </div>
-          <div className="row" style={{ margin: '14px 0' }} role="radiogroup" aria-label="Tipo de reserva">
-            {features?.queue_mode_enabled !== false && <label className="check"><input type="radio" checked={mode === 'queue'} onChange={() => setMode('queue')} /><span><b>Entrar na fila</b> — início estimado, pode antecipar</span></label>}
-            {features?.scheduled_mode_enabled !== false && <label className="check"><input type="radio" checked={mode === 'scheduled'} onChange={() => setMode('scheduled')} /><span><b>Horário fixo</b></span></label>}
-            {features && !features.queue_mode_enabled && !features.scheduled_mode_enabled && <Alert kind="warn">Compras temporariamente indisponíveis.</Alert>}
-          </div>
-          {mode === 'scheduled' && <Field label="Data e hora de início (horário de Fortaleza)"><input type="datetime-local" step={60} value={startLocal} onChange={(e) => setStartLocal(e.target.value)} /></Field>}
-          {quote && (quote.available ? (
-            <Alert kind="info"><span>{mode === 'queue' ? 'Início estimado' : 'Horário'}: <b>{dateTime(quote.starts_at)}</b> até <b>{time(quote.ends_at)}</b> no {quote.console_name} · {money(quote.price_cents)}.<br />
-              <span className="small">{quote.estimate_notice} Seu tempo conta a partir do início reservado.</span></span></Alert>
-          ) : <Alert kind="warn">{quote.message}</Alert>)}
+          {selectedMinutes > 0 && <div className="card checkout-total" aria-live="polite">
+            <div className="spread"><b>{selectedMinutes.toLocaleString('pt-BR')} {selectedMinutes === 1 ? 'minuto' : 'minutos'}</b><strong>{total !== undefined ? moneyWithCents(total) : '—'}</strong></div>
+            {rate !== undefined && <span className="small muted">{moneyWithCents(rate)} por minuto</span>}
+            {previousStart && previewEnd && (quote?.available || !quote) && <dl className="kv small">
+              <dt>{!quote ? 'Início previsto na prévia' : mode === 'queue' ? 'Início estimado' : 'Início'}</dt>
+              <dd>{dateTime(previousStart)}</dd>
+              <dt>Término</dt><dd>{dateTime(quote?.ends_at ?? previewEnd)}</dd>
+              {quote?.console_name && <><dt>Console</dt><dd>{quote.console_name}</dd></>}
+            </dl>}
+            {quote?.available && <p className="small muted">{quote.estimate_notice}</p>}
+          </div>}
+          {quote && !quote.available && <p role="status" className="small muted">{quote.message}</p>}
           <div className="stack" style={{ marginTop: 12 }}>
             {features?.coupons_enabled !== false && <Field label="Cupom (opcional)"><input value={coupon} onChange={(e) => setCoupon(e.target.value.toUpperCase())} maxLength={30} /></Field>}
-            {g.cancellation_policy && (
-              <details className="small"><summary>{g.cancellation_policy.title} (v{g.cancellation_policy.version})</summary>
-                <p style={{ whiteSpace: 'pre-line' }} className="muted">{g.cancellation_policy.body}</p></details>
-            )}
-            <label className="check"><input type="checkbox" checked={accept} onChange={(e) => setAccept(e.target.checked)} />
-              <span>Li e aceito a política de agendamento, ausência, atraso, cancelamento e reembolso.</span></label>
             {err && <Alert kind="error">{err}</Alert>}
-            <button className="btn primary block" disabled={!minutes || !accept || busy || (quote !== null && !quote.available)} onClick={reserve}>
+            <button className="btn primary block" disabled={busy || !quote?.available} onClick={() => {
+              if (!me) return router.push(`/entrar?proximo=/jogos/${slug}%23reservar`);
+              if (!me.email_verified) return router.push('/verificar-email');
+              if (g.cancellation_policy) setShowPolicy(true);
+              else setErr('A política de agendamento está indisponível.');
+            }}>
               {busy ? 'Reservando…' : me ? 'Reservar e ir para o pagamento' : 'Entrar para reservar'}
             </button>
             <p className="small dim">A reserva fica provisória por alguns minutos até o pagamento ser confirmado pelo servidor.</p>
+            {showPolicy && g.cancellation_policy && <PolicyConsent key={g.cancellation_policy.version}
+              policy={g.cancellation_policy} action="Reservar e ir para o pagamento" onClose={() => setShowPolicy(false)}
+              onConfirm={() => { setShowPolicy(false); void reserve(); }} />}
           </div>
         </section>
 
@@ -151,7 +238,7 @@ export default function GamePage() {
               <span className="pill"><ListOrdered size={13} />{c.queue_size} na fila</span></div>
             <ul className="small" style={{ paddingLeft: 18 }}>
               {c.messages.map((m) => <li key={m}>{m.startsWith('Atenção') ? <b><AlertTriangle size={12} /> {m}</b> : m}</li>)}
-              {c.packages.map((p) => <li key={p.minutes}>{minutesLabel(p.minutes)}: {p.fits ? `início estimado ${dateTime(p.estimated_start_at)}, término máximo ${time(p.estimated_end_at)}` : 'indisponível nas janelas atuais'}</li>)}
+              {!byMinute && c.packages.map((p) => <li key={p.minutes}>{minutesLabel(p.minutes)}: {p.fits ? `início estimado ${dateTime(p.estimated_start_at)}, término máximo ${time(p.estimated_end_at)}` : 'indisponível nas janelas atuais'}</li>)}
             </ul>
             <QueueList items={c.queue} />
           </div>

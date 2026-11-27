@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import LimitedScroll from '@/components/LimitedScroll';
 import GameCard from '@/components/GameCard';
 import RequireAuth from '@/components/RequireAuth';
 import { Empty, PageHeader, Skeleton } from '@/components/ui';
@@ -16,7 +17,13 @@ function Favoritos() {
     <>
       <PageHeader title="Favoritos" subtitle="Jogos marcados para acesso rápido." />
       {!list.length ? <Empty>Nenhum favorito. Toque no coração de um jogo no <Link className="link-purple" href="/jogos">catálogo</Link>.</Empty> : (
-        <div className="games-grid" style={{ marginLeft: 0 }}>{list.map((g) => <GameCard key={g.id} g={g} favorite onFavorite={async (id) => { await del(`/me/favorites/${id}`); favs.reload(); }} />)}</div>
+        <LimitedScroll label="Jogos favoritos" limit={2}>
+          {Array.from({ length: Math.ceil(list.length / 6) }, (_, row) => (
+            <div className="favorites-row" key={row}>
+              {list.slice(row * 6, row * 6 + 6).map((g) => <GameCard key={g.id} g={g} favorite onFavorite={async (id) => { await del(`/me/favorites/${id}`); favs.reload(); }} />)}
+            </div>
+          ))}
+        </LimitedScroll>
       )}
     </>
   );

@@ -1,4 +1,4 @@
-/* LocaPlay */
+/* timedefora */
 :root {
   --bg: #101015;
   --bg2: #15151c;
@@ -25,7 +25,6 @@ html { scroll-padding-top: calc(var(--header-h) + 16px); }
 .logo { gap: 6px; }
 .logo-icon { color: var(--purple); filter: none; }
 .logo-text { font-size: 25px; font-weight: 700; font-style: normal; letter-spacing: -.06em; }
-.logo-text b { color: var(--text); background: none; font-weight: inherit; }
 .top-nav { gap: 4px; padding-left: 0; }
 .top-nav a, .side-links a { color: var(--muted); font-size: 13px; min-height: 42px; }
 .top-nav a svg, .side-links a svg { color: currentColor; width: 17px; height: 17px; }
@@ -48,7 +47,7 @@ html { scroll-padding-top: calc(var(--header-h) + 16px); }
 .btn.primary:hover:not(:disabled), .btn-primary:hover:not(:disabled), .btn-signup:hover { background: #8151d4; }
 .content { padding: 0 0 36px; }
 .content.pad { padding: 32px var(--page-gutter); }
-.content > .notice-bar, .content > .alert, .home-loading, .home-empty { margin: 16px var(--page-gutter); }
+.home-loading, .home-empty { margin: 16px var(--page-gutter); }
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(230px, 28%);
@@ -80,13 +79,14 @@ html { scroll-padding-top: calc(var(--header-h) + 16px); }
 .hero h1 {
   color: white;
   margin: 0;
-  font-size: clamp(54px, 7.8vw, 120px);
+  font-size: clamp(46px, 7vw, 105px);
   line-height: 1;
   letter-spacing: -.085em;
   font-weight: 700;
   font-style: normal;
   text-transform: none;
 }
+.hero-title-accent { color: var(--purple); }
 .hero p { display: block; color: #eeebf6; line-height: 1.45; }
 .hero .hero-lead { margin: 12px 0 24px; font-size: clamp(17px, 2vw, 24px); }
 .hero-feature { font-size: 14px; }
@@ -160,7 +160,9 @@ html { scroll-padding-top: calc(var(--header-h) + 16px); }
   .sidebar { visibility: hidden; transition: transform .2s ease, visibility .2s; }
   .sidebar.open { visibility: visible; box-shadow: 12px 0 36px #0008; }
   .topbar { justify-content: flex-start; gap: 8px; }
-  .account { margin-left: auto; }
+  .account { margin-left: auto; min-width: 0; flex-shrink: 1; }
+  .account > .icon-btn { flex-shrink: 0; }
+  .account .user-chip { min-width: 0; }
   .admin-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
@@ -177,6 +179,8 @@ html { scroll-padding-top: calc(var(--header-h) + 16px); }
 @media (max-width: 370px) {
   .logo-icon { width: 28px; }
   .topbar { padding-inline: 12px; }
+  .account { gap: 6px; }
+  .account .user-chip { padding: 3px; gap: 4px; }
   .account .btn-outline-dark { padding-inline: 8px; }
   .account .btn-outline-dark svg { display: none; }
 }

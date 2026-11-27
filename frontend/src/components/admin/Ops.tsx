@@ -1,6 +1,7 @@
 'use client';
+import LimitedScroll from '@/components/LimitedScroll';
 import { useState } from 'react';
-import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
+import { Empty, ErrorBox, Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { CANCEL_REQUEST_STATUS, dateTime, minutesLabel, money, QUEUE_STATUS, RESERVATION_STATUS, time } from '@/lib/format';
@@ -18,13 +19,54 @@ const COMPENSATION: Record<string, { label: string; hint: string }> = {
 const PROVIDER_LABEL: Record<string, string> = { twitch: 'Twitch', kick: 'Kick', external: 'Link externo' };
 
 export function Queues() {
-  const { data } = useApi<(R & { queue: R[] })[]>('/admin/queues', 5000);
+  const { data, error, reload } = useApi<{ id: string; name: string; status: string; queue: R[] }[]>('/admin/queues', 5000);
+  const [draft, setDraft] = useState({ console: '', player: '', status: '' });
+  const [filters, setFilters] = useState(draft);
+  const [expanded, setExpanded] = useState<string>();
+  const player = filters.player.trim().toLocaleLowerCase('pt-BR');
+  const matchesEntries = Boolean(player || filters.status);
+  const consoles = data?.filter((c) => !filters.console || c.id === filters.console).map((c) => ({
+    ...c,
+    entries: c.queue.filter((r) => (!player || [r.username, r.code].some((v) => String(v ?? '').toLocaleLowerCase('pt-BR').includes(player)))
+      && (!filters.status || r.status === filters.status)),
+  })).filter((c) => !matchesEntries || c.entries.length > 0);
   return (
     <div className="stack">
       <PageHeader title="Filas" subtitle="Atualização automática a cada 5 segundos." />
-      {data?.map((c) => <section key={String(c.id)} className="card"><h2>{String(c.name)}</h2><StatusPill status={String(c.status)} />
-        <DataTable rows={c.queue} empty="Fila vazia." cols={[['#', (r) => String(r.position)], ['Jogador', (r) => String(r.username)], ['Situação', (r) => QUEUE_STATUS[String(r.status)]],
-          ['Previsão', (r) => `${time(String(r.estimated_start_at))}–${time(String(r.estimated_end_at))}`], ['Reserva', (r) => `${r.code} (${r.mode === 'queue' ? 'fila' : 'fixo'})`]]} /></section>)}
+      <form className="card stack audit-filters" onSubmit={(e) => { e.preventDefault(); setFilters(draft); setExpanded(undefined); }}>
+        <div className="audit-filter-grid">
+          <Field label="Console"><select value={draft.console} onChange={(e) => setDraft({ ...draft, console: e.target.value })}>
+            <option value="">Todos</option>{data?.map((c) => <option key={String(c.id)} value={String(c.id)}>{String(c.name)}</option>)}
+          </select></Field>
+          <Field label="Jogador ou reserva"><input type="search" value={draft.player} onChange={(e) => setDraft({ ...draft, player: e.target.value })} /></Field>
+          <Field label="Situação"><select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+            <option value="">Todas</option>{Object.entries(QUEUE_STATUS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select></Field>
+        </div>
+        <div className="row"><button className="btn primary">Filtrar</button><button type="button" className="btn" onClick={() => {
+          const empty = { console: '', player: '', status: '' };
+          setDraft(empty); setFilters(empty); setExpanded(undefined);
+        }}>Limpar filtros</button></div>
+      </form>
+      <ErrorBox error={error} onRetry={reload} />
+      {consoles && !consoles.length && <Empty>Nenhuma fila encontrada.</Empty>}
+      <LimitedScroll label="Filas por console">
+        {(consoles ?? []).map((c) => {
+          const id = String(c.id);
+          const open = expanded === id;
+          return <section key={id} className="card queue-admin-card">
+            <button type="button" className="queue-admin-toggle" aria-expanded={open} onClick={() => setExpanded(open ? undefined : id)}>
+              <strong>{String(c.name)}</strong><span className="row"><StatusPill status={String(c.status)} />
+                <span>{c.entries.length} na fila</span><span aria-hidden>{open ? '▾' : '▸'}</span></span>
+            </button>
+            {open && <DataTable limit={5} rows={c.entries} empty="Fila vazia." cols={[
+              ['#', (r) => String(r.position)], ['Jogador', (r) => String(r.username)], ['Situação', (r) => QUEUE_STATUS[String(r.status)] ?? '—'],
+              ['Previsão', (r) => `${time(String(r.estimated_start_at))}–${time(String(r.estimated_end_at))}`],
+              ['Reserva', (r) => `${r.code} (${r.mode === 'queue' ? 'fila' : 'fixo'})`],
+            ]} />}
+          </section>;
+        })}
+      </LimitedScroll>
     </div>
   );
 }
@@ -53,7 +95,7 @@ export function Reservations() {
           }}>Cancelar</button>
           {['confirmed', 'needs_resolution'].includes(String(r.status)) && <button className="btn sm" onClick={() => setResched({ id: String(r.id), start: '', reason: '' })}>Remarcar</button>}</div> : null]]} /></section>
       {resched && <Modal title="Remarcar reserva" onClose={() => setResched(null)}>
-        <div className="stack">{msg}
+        <div className="stack">
           <Field label="Novo horário"><input type="datetime-local" value={resched.start} onChange={(e) => setResched({ ...resched, start: e.target.value })} /></Field>
           <Field label="Justificativa"><input value={resched.reason} onChange={(e) => setResched({ ...resched, reason: e.target.value })} /></Field>
           <div><button className="btn primary" onClick={() => run(async () => {
@@ -92,7 +134,7 @@ export function Sessions() {
     <div className="stack">
       <PageHeader title="Sessões ativas e incidentes" />
       {msg}
-      <section className="card"><h2>Sess?es ativas</h2><DataTable rows={s.data} error={s.error?.message} empty="Nenhuma sessão ativa." cols={[['Jogador', (r) => String(r.username)], ['Jogo / console', (r) => `${r.title} · ${r.console_name}`],
+      <section className="card"><h2>Sessões ativas</h2><DataTable rows={s.data} error={s.error?.message} empty="Nenhuma sessão ativa." cols={[['Jogador', (r) => String(r.username)], ['Jogo / console', (r) => `${r.title} · ${r.console_name}`],
         ['Término', (r) => time(String(r.contract_ends_at))], ['Entrada', (r) => INPUT_LABEL[String(r.input_device)] || '—'], ['Método', (r) => String(r.adapter_method)],
         ['', (r) => <div className="row">
           <button className="btn sm danger" onClick={async () => {
@@ -117,11 +159,11 @@ export function Sessions() {
             await post('/admin/incidents', { description: i.description, kind: i.kind, reservation_id: i.reservationId || null });
             inc.reload();
           }, 'Incidente registrado.')}>Registrar</button></div>
-        <DataTable rows={inc.data} error={inc.error?.message} empty="Nenhum incidente aberto." cols={[['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')], ['Descrição', (r) => String(r.description)],
+        <DataTable limit={5} rows={inc.data} error={inc.error?.message} empty="Nenhum incidente aberto." cols={[['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')], ['Descrição', (r) => String(r.description)],
           ['Desde', (r) => dateTime(String(r.started_at))], ['', (r) => <button className="btn sm" onClick={() => setRes({ id: String(r.id), label: String(r.description), compensation: 'none', notes: '', ownerRental: Boolean(r.owner_rental), fault: '', ownerCents: '' })}>Resolver</button>]]} />
       </section>
       <section className="card stack"><h2>Histórico de incidentes resolvidos</h2>
-        <DataTable rows={resolved} empty="Nenhum incidente resolvido ainda." cols={[
+        <DataTable limit={5} rows={resolved} empty="Nenhum incidente resolvido ainda." cols={[
           ['Tipo', (r) => INCIDENT_LABEL[String(r.kind)] || String(r.kind)], ['Console', (r) => String(r.console_name || '—')],
           ['Descrição', (r) => <span className="small" style={{ display: 'block', maxWidth: 360 }}>{String(r.description)}</span>],
           ['Aberto em', (r) => dateTime(String(r.started_at))], ['Resolvido em', (r) => dateTime(String(r.resolved_at))],
@@ -165,7 +207,6 @@ export function Sessions() {
               }}>Resolver incidente</button>
               <button className="btn" onClick={() => setRes(null)}>Voltar</button>
             </div>
-            {msg}
           </div>
         </Modal>)}
     </div>
@@ -192,7 +233,7 @@ export function Channels() {
         <Field label="Jogo"><select value={f.game_id} onChange={(e) => setF({ ...f, game_id: e.target.value })}><option value="">—</option>{games?.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</select></Field>
         <label className="check"><input type="checkbox" checked={f.privacy_mask_enabled} onChange={(e) => setF({ ...f, privacy_mask_enabled: e.target.checked })} />Máscara/corte de telas sensíveis ativo</label></div>
         <button className="btn primary" onClick={() => run(async () => { await post('/admin/channels', { ...f, console_id: f.console_id || null, game_id: f.game_id || null, channel_name: f.channel_name || null, external_url: f.external_url || null }); ch.reload(); close(); }, 'Canal cadastrado.')}>Cadastrar</button></>}</NewRecord>
-      <section className="card"><h2>Transmiss?es</h2><DataTable rows={ch.data} error={ch.error?.message} cols={[['Plataforma', (r) => PROVIDER_LABEL[String(r.provider)] || String(r.provider)], ['Canal', (r) => String(r.channel_name || r.external_url)], ['Console / jogo', (r) => [r.console_name, r.game_title].filter(Boolean).join(' · ')],
+      <section className="card"><h2>Transmissões</h2><DataTable limit={5} rows={ch.data} error={ch.error?.message} cols={[['Plataforma', (r) => PROVIDER_LABEL[String(r.provider)] || String(r.provider)], ['Canal', (r) => String(r.channel_name || r.external_url)], ['Console / jogo', (r) => [r.console_name, r.game_title].filter(Boolean).join(' · ')],
         ['Aparece no site?', (r) => { const issues = (r.issues as string[]) || []; const shown = (r.shown_on as string[]) || [];
           return issues.length ? <div className="stack" style={{ gap: 4 }}>{shown.length > 0 && <span className="pill amber">parcial: {shown.join(', ')}</span>}
             {!shown.length && <span className="pill red">não aparece</span>}<ul className="small" style={{ margin: 0, paddingLeft: 16 }}>{issues.map((x) => <li key={x}>{x}</li>)}</ul></div>

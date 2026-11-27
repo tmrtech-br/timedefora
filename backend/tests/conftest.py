@@ -96,7 +96,10 @@ class Api:
     def post(self, url, json=None, headers=None, **kw): return self.c.post(url, json=json, headers=self._h(headers), **kw)
     def put(self, url, json=None, headers=None, **kw): return self.c.put(url, json=json, headers=self._h(headers), **kw)
     def patch(self, url, json=None, headers=None, **kw): return self.c.patch(url, json=json, headers=self._h(headers), **kw)
-    def delete(self, url, headers=None, **kw): return self.c.delete(url, headers=self._h(headers), **kw)
+    def delete(self, url, headers=None, json=None, **kw):
+        # Exclusões administrativas exigem motivo (DeleteIn); os testes usam um motivo padrão.
+        body = {'reason': 'Remoção em teste automatizado'} if json is None else json
+        return self.c.request('DELETE', url, headers=self._h(headers), json=body, **kw)
 
 
 def make_user(username='jogador1', email=None, password='SenhaForte123', roles=('client',), verified=True) -> dict:

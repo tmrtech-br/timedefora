@@ -3,15 +3,16 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
-  Bell, CirclePlay, CreditCard, Crown, Gamepad2, Headphones, Heart, Home, Info, ListOrdered, LogOut, Menu, Monitor, Receipt,
-  Settings, ShieldCheck, ShieldHalf, Smartphone, Tablet, UserRound, UserRoundPlus, X, Zap,
+  Bell, CirclePlay, CreditCard, Gamepad2, Headphones, Heart, Home, Info, Keyboard, ListOrdered, LogOut, Menu, Monitor, Receipt,
+  PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, ShieldHalf, Smartphone, Tablet, UserRound, UserRoundPlus, X, Zap,
 } from 'lucide-react';
 import { useAuth, isStaff } from '@/lib/auth';
 import { get } from '@/lib/api';
+import { useFeatures } from '@/lib/features';
 import Toaster from '@/components/Toaster';
 
 function LogoIcon() {
-  // Ícone próprio (cartucho de videogame) — identidade LocaPlay
+  // Ícone próprio (cartucho de videogame) — identidade timedefora
   return (
     <svg className="logo-icon" viewBox="0 0 48 36" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" strokeLinecap="round" aria-hidden>
       <path d="M14 2h20a3 3 0 0 1 3 3v22h-3v5H14v-5h-3V5a3 3 0 0 1 3-3Z" />
@@ -27,7 +28,6 @@ const TOP = [
   { href: '/', label: 'Início', icon: Home },
   { href: '/jogos', label: 'Jogos', icon: Gamepad2 },
   { href: '/como-funciona', label: 'Como Funciona', icon: Info },
-  { href: '/planos', label: 'Planos', icon: Crown },
   { href: '/suporte', label: 'Suporte', icon: Headphones },
 ];
 const SIDE_MAIN = [
@@ -53,8 +53,8 @@ export function Header({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
       <button className="icon-btn mobile-toggle" onClick={onMenu} aria-label={menuOpen ? 'Fechar menu' : 'Abrir menu'} aria-expanded={menuOpen} aria-controls="player-sidebar">
         {menuOpen ? <X size={20} /> : <Menu size={20} />}
       </button>
-      <Link href="/" className="logo" aria-label="LocaPlay — página inicial">
-        <LogoIcon /><span className="logo-text">Loca<b>Play</b></span>
+      <Link href="/" className="logo" aria-label="timedefora — página inicial">
+        <LogoIcon /><span className="logo-text">timedefora</span>
       </Link>
       <nav className="top-nav" aria-label="Navegação principal">
         {TOP.map((i) => (
@@ -66,6 +66,7 @@ export function Header({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
       <div className="account">
         {me ? (
           <>
+            <Link href="/favoritos" className="icon-btn" aria-label="Favoritos"><Heart size={18} /></Link>
             <Link href="/notificacoes" className="icon-btn" aria-label={`Notificações (${me.unread_notifications} não lidas)`}>
               <Bell size={18} />{me.unread_notifications > 0 && <span className="badge-dot">{me.unread_notifications}</span>}
             </Link>
@@ -85,32 +86,43 @@ export function Header({ onMenu, menuOpen }: { onMenu: () => void; menuOpen: boo
   );
 }
 
-export function Sidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {
+export function Sidebar({ open, collapsed, onToggle, onNavigate }: {
+  open: boolean; collapsed: boolean; onToggle: () => void; onNavigate: () => void;
+}) {
   const path = usePathname();
   const router = useRouter();
   const { me, logout } = useAuth();
+  const features = useFeatures();
   const link = (i: { href: string; label: string; icon: typeof Home; also?: string[] }) => (
-    <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''} aria-current={isActive(path, i.href) ? 'page' : undefined}>
-      <i.icon aria-hidden />{i.label}
+    <Link key={i.href + i.label} href={i.href} onClick={onNavigate} className={isActive(path, i.href, i.also) ? 'active' : ''}
+      aria-current={isActive(path, i.href, i.also) ? 'page' : undefined} aria-label={i.label} title={collapsed ? i.label : undefined}>
+      <i.icon aria-hidden /><span className="sidebar-label">{i.label}</span>
     </Link>
   );
   return (
     <aside id="player-sidebar" className={`sidebar ${open ? 'open' : ''}`} aria-label="Menu do jogador">
-      <nav className="side-links">
+      <button className="btn sm sidebar-toggle" type="button" aria-controls="player-sections" aria-expanded={!collapsed}
+        aria-label={collapsed ? 'Expandir menu principal' : 'Recolher menu principal'}
+        title={collapsed ? 'Expandir menu principal' : 'Recolher menu principal'} onClick={onToggle}>
+        {collapsed ? <PanelLeftOpen size={18} aria-hidden /> : <PanelLeftClose size={18} aria-hidden />}
+      </button>
+      <nav id="player-sections" className="side-links">
         <div className="mobile-only">{TOP.filter((t) => t.href !== '/jogos').map(link)}{!me && link({ href: '/cadastrar', label: 'Cadastrar', icon: UserRoundPlus })}<div className="side-divider" /></div>
         {SIDE_MAIN.map(link)}
         <div className="side-divider" />
         {SIDE_ACCOUNT.map(link)}
+        {features?.controls_menu_enabled && link({ href: '/controles', label: 'Teclado e mouse', icon: Keyboard })}
         {me && (
           <div className="side-extra">
             <div className="side-divider" />
             {link({ href: '/jogos?disponibilidade=available', label: 'Disponíveis', icon: Zap })}
             {link({ href: '/pagamentos', label: 'Pagamentos', icon: Receipt })}
-            {link({ href: '/favoritos', label: 'Favoritos', icon: Heart })}
-            {link({ href: '/notificacoes', label: 'Notificações', icon: Bell })}
             {isStaff(me) && link({ href: '/admin', label: 'Painel administrativo', icon: ShieldHalf })}
             {me.roles.includes('owner') && link({ href: '/proprietario', label: 'Portal do proprietário', icon: Monitor })}
-            <a href="#sair" onClick={async (e) => { e.preventDefault(); await logout(); onNavigate(); router.push('/'); }}><LogOut aria-hidden />Sair</a>
+            <a href="#sair" aria-label="Sair" title={collapsed ? 'Sair' : undefined}
+              onClick={async (e) => { e.preventDefault(); await logout(); onNavigate(); router.push('/'); }}>
+              <LogOut aria-hidden /><span className="sidebar-label">Sair</span>
+            </a>
           </div>
         )}
       </nav>
@@ -149,6 +161,7 @@ export function Footer() {
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
   const path = usePathname();
   useEffect(() => setOpen(false), [path]);
   useEffect(() => {
@@ -163,17 +176,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('keydown', onEscape);
   }, [open]);
   return (
-    <>
+    <Toaster>
       <a href="#conteudo" className="skip-link">Pular para o conteúdo</a>
       <Header onMenu={() => setOpen(!open)} menuOpen={open} />
-      <div className="shell">
-        <Sidebar open={open} onNavigate={() => setOpen(false)} />
+      <div className={`shell${collapsed ? ' shell-sidebar-collapsed' : ''}`}>
+        <Sidebar open={open} collapsed={collapsed} onToggle={() => setCollapsed((value) => !value)} onNavigate={() => setOpen(false)} />
         <div className="main">
           <main id="conteudo" tabIndex={-1} className={path === '/' ? 'content' : 'content pad'}>{children}</main>
-          <Toaster />
           <Footer />
         </div>
       </div>
-    </>
+    </Toaster>
   );
 }

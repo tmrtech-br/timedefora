@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Protocol
 
+from .oauth import OAuthCredentialsRejected
 from .secrets import WindowsDpapi
 
 MAGIC = b'LOCAPLAY-PSN-DPAPI-V1\n'
@@ -29,16 +30,51 @@ class AccountError(ValueError):
     pass
 
 
+class RefreshLock:
+    """Trava por conta que funciona entre threads e laços asyncio diferentes.
+
+    As rotas do agente rodam no laço do FastAPI e cada console PSN roda no seu próprio laço;
+    um asyncio.Lock comum não pode ser compartilhado entre eles.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+
+    async def __aenter__(self):
+        while not self._lock.acquire(blocking=False):
+            await asyncio.sleep(0.02)
+        return self
+
+    async def __aexit__(self, *_):
+        self._lock.release()
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+
 class PsnAccountStore:
     def __init__(self, path: str | Path, protector: Protector | None = None):
         self.path = Path(path)
         self.protector = protector if protector is not None else WindowsDpapi()
         self._io_lock = threading.RLock()
-        self._refresh_locks: dict[str, asyncio.Lock] = {}
+        self._refresh_locks: dict[str, RefreshLock] = {}
+        self._mtime: int | None = None
         self._items: dict[str, dict] = self._read()
 
+    def _stat(self) -> int | None:
+        try:
+            return self.path.stat().st_mtime_ns
+        except FileNotFoundError:
+            return None
+
+    def _sync(self) -> None:
+        """Recarrega o cofre se outro processo (ex.: CLI do agente) gravou o arquivo depois da última leitura."""
+        if self._stat() != self._mtime:
+            self._items = self._read()
+
     def _read(self) -> dict[str, dict]:
-        if not self.path.exists():
+        self._mtime = self._stat()
+        if self._mtime is None:
             return {}
         raw = self.path.read_bytes()
         if not raw.startswith(MAGIC):
@@ -56,7 +92,7 @@ class PsnAccountStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         raw = json.dumps(self._items, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
         encoded = MAGIC + base64.b64encode(self.protector.encrypt(raw))
-        temp = self.path.with_name(self.path.name + '.tmp')
+        temp = self.path.with_name(f'{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp')
         try:
             with temp.open('wb') as f:
                 f.write(encoded)
@@ -65,6 +101,7 @@ class PsnAccountStore:
             os.replace(temp, self.path)
         finally:
             temp.unlink(missing_ok=True)
+        self._mtime = self._stat()
 
     @staticmethod
     def public(record: dict) -> dict:
@@ -73,6 +110,7 @@ class PsnAccountStore:
 
     def get(self, account_id: str) -> dict | None:
         with self._io_lock:
+            self._sync()
             value = self._items.get(account_id)
             return dict(value) if value else None
 
@@ -88,6 +126,7 @@ class PsnAccountStore:
         if set(updates) - allowed:
             raise AccountError('Campo não permitido no cofre PSN.')
         with self._io_lock:
+            self._sync()
             record = dict(self._items.get(record_id, {'id': record_id, 'status': 'pending'}))
             record.update({'id': record_id, 'label': label, **updates})
             self._items[record_id] = record
@@ -102,6 +141,7 @@ class PsnAccountStore:
 
     def delete(self, account_id: str) -> bool:
         with self._io_lock:
+            self._sync()
             if account_id not in self._items:
                 return False
             del self._items[account_id]
@@ -109,9 +149,9 @@ class PsnAccountStore:
             self._refresh_locks.pop(account_id, None)
             return True
 
-    def refresh_lock(self, account_id: str) -> asyncio.Lock:
+    def refresh_lock(self, account_id: str) -> RefreshLock:
         with self._io_lock:
-            return self._refresh_locks.setdefault(account_id, asyncio.Lock())
+            return self._refresh_locks.setdefault(account_id, RefreshLock())
 
     async def access_token(self, record_id: str, renew, skew_seconds: int = 120) -> str:
         """Return a valid token, calling `await renew(refresh_token)` just once per account.
@@ -135,17 +175,41 @@ class PsnAccountStore:
                 new = await renew(str(refresh))
                 if not new.get('access_token'):
                     raise ValueError('Token de acesso ausente')
-                self.update(record_id, **new, status='linked', last_error='', last_check_at=time.time())
-                return str(new['access_token'])
+            except OAuthCredentialsRejected as e:
+                # Só a recusa explícita da Sony (invalid_grant/401) invalida o vínculo.
+                self.update(record_id, status='expired', last_error='A Sony recusou a renovação; faça login novamente.')
+                raise AccountError('A Sony recusou a renovação do login PSN; vincule a conta novamente.') from e
             except Exception as e:
-                self.update(record_id, status='expired', last_error='Renovação PSN falhou; faça login novamente.')
-                raise AccountError('Renovação PSN falhou; faça login novamente.') from e
+                # Rede fora, timeout ou erro temporário da Sony: a conta continua vinculada.
+                self.update(record_id, last_error='Renovação PSN falhou temporariamente; tente de novo.',
+                            last_check_at=time.time())
+                raise AccountError('Não foi possível renovar o login PSN agora (falha temporária). Tente de novo.') from e
+            self.update(record_id, **new, status='linked', last_error='', last_check_at=time.time())
+            return str(new['access_token'])
 
     def expire_if_needed(self, account_id: str) -> dict:
         with self._io_lock:
+            self._sync()
             record = self._items.get(account_id)
             if record is None:
                 raise AccountError('Conta PSN não encontrada.')
             if record.get('expires_at') and float(record['expires_at']) <= time.time() and not record.get('refresh_token'):
                 return self.update(account_id, status='expired', last_error='Token expirado. Vincule a conta novamente.')
             return self.public(record)
+
+
+_shared: dict[Path, PsnAccountStore] = {}
+_shared_lock = threading.Lock()
+
+
+def shared_store(path: str | Path) -> PsnAccountStore:
+    """Uma instância por arquivo no processo: rotas e conexões PSN veem os mesmos tokens e travas."""
+    key = Path(path).resolve()
+    with _shared_lock:
+        store = _shared.get(key)
+        if store is None:
+            store = _shared[key] = PsnAccountStore(key)
+        return store
+
+
+DEFAULT_PATH = Path(__file__).resolve().parents[2] / 'data' / 'psn_accounts.json.dpapi'

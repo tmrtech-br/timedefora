@@ -12,7 +12,7 @@ import ChunkRecovery from '@/components/ChunkRecovery';
 import { AuthProvider } from '@/lib/auth';
 
 export const metadata: Metadata = {
-  title: { default: 'LocaPlay | Locadora de games na nuvem', template: '%s | LocaPlay' },
+  title: { default: 'timedefora | Locadora de games na nuvem', template: '%s | timedefora' },
   description: 'Alugue tempo em consoles e jogue direto no navegador.',
 };
 export const viewport: Viewport = { themeColor: '#101015', width: 'device-width', initialScale: 1 };

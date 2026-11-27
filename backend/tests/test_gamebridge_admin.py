@@ -23,6 +23,32 @@ def test_todos_adaptadores_implementam_o_contrato(method):
     assert a.operational is False   # nenhum adaptador é declarado operacional sem hardware validado
 
 
+def test_console_rejeita_nome_vazio_no_cadastro_e_na_edicao(world):
+    api, _ = admin_api()
+    assert api.post('/admin/consoles', json={'code': 'PS4-99', 'name': '   ', 'platform_code': 'PS4'}).status_code == 422
+    response = api.patch(f"/admin/consoles/{world['console']['id']}", json={'name': '   '})
+    assert response.status_code == 422
+    saved = api.patch(f"/admin/consoles/{world['console']['id']}", json={'name': '  Sala 01  '})
+    assert saved.status_code == 200 and saved.json()['name'] == 'Sala 01'
+
+
+def test_jogo_rejeita_duracoes_negativas_e_invertidas(world):
+    api, _ = admin_api()
+    assert api.post('/admin/games', json={'slug': 'teste', 'title': 'Teste', 'min_minutes': -5}).status_code == 422
+    path = f"/admin/games/{world['game']['id']}"
+    assert api.patch(path, json={'min_minutes': -1}).status_code == 422
+    assert api.patch(path, json={'max_minutes': 1}).status_code == 422
+
+
+def test_filtros_de_usuarios_combinam_papel_status_e_busca():
+    api, _ = admin_api()
+    make_user('jogador_ativo')
+    make_user('jogador_pendente', verified=False)
+    result = api.get('/admin/users', params={'q': 'jogador', 'role': 'client', 'status': 'pending_verification'})
+    assert result.status_code == 200, result.text
+    assert [row['username'] for row in result.json()] == ['jogador_pendente']
+
+
 def test_console_ref_usa_id_do_console(world):
     from app.services.consoles import console_ref
     with tx() as conn:
@@ -192,6 +218,10 @@ def test_relatorio_csv_neutraliza_formulas_e_kpis(world, freeze):
     pay(u, r['id'])
     k = api.get('/admin/overview').json()['kpis']
     assert k['revenue_today'] == 5000 and k['queue_waiting'] + k['sessions_active'] >= 0
+    previous = api.get('/admin/overview', params={'month': '2026-11'}).json()
+    assert previous['period'] == '2026-11'
+    assert previous['kpis']['revenue_month'] == previous['kpis']['minutes_sold_month'] == 0
+    assert previous['utilization_month'] == previous['top_games_month'] == previous['alerts'] == []
     csv = api.get('/admin/reports/export.csv', params={'kind': 'payments', 'date_from': at(1, 0, month=1).isoformat(), 'date_to': at(31, 0).isoformat()})
     assert csv.status_code == 200 and 'amount_cents' in csv.text
 

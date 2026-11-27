@@ -1,5 +1,6 @@
 """Leitura de global_settings com valores padrão documentados."""
 DEFAULTS = {
+    'booking_rate_cents_per_minute': 0,       # 0 mantém os pacotes cadastrados
     'owner_share_bps': 3000,                  # percentual do proprietário em pontos-base
     'hold_minutes': 5,                        # expiração da reserva provisória
     'setup_minutes': 2,                       # preparação/limpeza entre jogadores
@@ -27,6 +28,7 @@ DEFAULTS = {
     'scheduled_mode_enabled': True,           # compra em horário fixo
     'coupons_enabled': True,                  # aplicação de cupons no checkout
     'keyboard_mouse_enabled': True,           # jogar com teclado e mouse (controle sempre permitido)
+    'controls_menu_enabled': True,            # personalizar o mapeamento pelo menu do jogador
     'public_streams_enabled': True,           # botão/links "Assistir ao vivo"
     'support_tickets_enabled': True,          # abertura de novos chamados (mensagens em chamados abertos continuam)
     'share_button_enabled': False,            # botão Share do controle (compartilhar/transmitir pela conta do console)
@@ -34,7 +36,7 @@ DEFAULTS = {
 
 # Parâmetros expostos ao público (para a interface esconder o que estiver desligado).
 PUBLIC_FLAGS = ('sales_paused', 'sales_paused_reason', 'signup_enabled', 'google_login_enabled', 'queue_mode_enabled',
-                'scheduled_mode_enabled', 'coupons_enabled', 'keyboard_mouse_enabled', 'public_streams_enabled',
+                'scheduled_mode_enabled', 'coupons_enabled', 'keyboard_mouse_enabled', 'controls_menu_enabled', 'public_streams_enabled',
                 'support_tickets_enabled', 'share_button_enabled', 'disabled_platforms')
 
 

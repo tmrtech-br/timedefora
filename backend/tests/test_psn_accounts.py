@@ -93,6 +93,7 @@ def test_native_internet_ps4_uses_linked_account_without_device_uid(monkeypatch)
     assert result.status_code == 200, result.text
     assert result.json()['connection']['psn_device_uid'] is None
     assert result.json()['connection']['psn_account_id'] == str(account['id'])
+    assert admin.get('/admin/psn-accounts').json()[0]['platforms'] == ['PS4']
     result = admin.put(ps4_url, json={**config, 'psn_device_uid': 'main_ps4'})
     assert result.status_code == 200, result.text
     assert result.json()['connection']['psn_device_uid'] is None
@@ -101,11 +102,10 @@ def test_native_internet_ps4_uses_linked_account_without_device_uid(monkeypatch)
     assert duplicate.status_code == 422
     assert 'psn_account_id' in duplicate.json()['fields']
     ps5_url = connection_url('PS5-01', 'PS5')
-    missing = admin.put(ps5_url, json=config)
-    assert missing.status_code == 422
-    assert 'psn_device_uid' in missing.json()['fields']
-    result = admin.put(ps5_url, json={**config, 'psn_device_uid': 'ab' * 32})
-    assert result.status_code == 200, result.text
+    # O agente só negocia PS4 pela PSN: o cadastro recusa PS5 nessa rota (com ou sem DUID).
+    refused = admin.put(ps5_url, json={**config, 'psn_device_uid': 'ab' * 32})
+    assert refused.status_code == 422
+    assert 'network_route' in refused.json()['fields']
     blocked = admin.delete(f"/admin/psn-accounts/{account['id']}")
     assert blocked.status_code == 409
     assert 'PS4-01' in blocked.json()['detail']

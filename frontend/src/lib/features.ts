@@ -5,6 +5,7 @@ import { useApi } from './hooks';
 export type Features = {
   sales_paused: boolean; sales_paused_reason: string; signup_enabled: boolean; google_login_enabled: boolean;
   queue_mode_enabled: boolean; scheduled_mode_enabled: boolean; coupons_enabled: boolean; keyboard_mouse_enabled: boolean;
+  controls_menu_enabled: boolean;
   public_streams_enabled: boolean; support_tickets_enabled: boolean; share_button_enabled: boolean; disabled_platforms: string[];
 };
 

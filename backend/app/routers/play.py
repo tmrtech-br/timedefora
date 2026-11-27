@@ -11,10 +11,10 @@ from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx
 from ..core.deps import Principal, client_ip, current_user as authenticated_user, verified_user as verified_account
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found
-from ..services import notifications, payments, scheduling, sessions
+from ..services import notifications, payments, scheduling, sessions, support
 from ..services.payment_providers import verify_mp_signature
 from ..services.settings_store import get_settings, require_enabled
-from .common import jsonable
+from .common import SupportMessageIn, jsonable
 
 router = APIRouter(tags=['jogador'])
 
@@ -31,7 +31,7 @@ def verified_user(p: Principal = Depends(current_user)) -> Principal:
 
 class ReservationIn(BaseModel):
     game_id: uuid.UUID
-    minutes: int = Field(ge=1, le=480)
+    minutes: int = Field(ge=1, le=scheduling.MAX_RESERVATION_MINUTES)
     mode: str = 'queue'
     start_at: datetime | None = None
     coupon_code: str | None = Field(default=None, max_length=30)
@@ -74,13 +74,25 @@ def my_reservations(p: Principal = Depends(current_user), scope: str = 'all'):
 
 @router.get('/me/queues')
 def my_queues(p: Principal = Depends(current_user)):
+    n = timeutil.now()
     with tx() as conn:
-        rows = all_(conn, """select r.*, q.position from reservations r join queue_entries q on q.reservation_id=r.id
-                             where r.user_id=%s and q.status in ('playing','next','waiting') order by r.starts_at""", (p.user_id,))
+        rows = all_(conn, """select * from reservations
+                             where user_id=%s and status in ('confirmed','active') and ends_at > %s
+                             order by starts_at, id""", (p.user_id, n))
         out = []
+        snapshots = {}
         for r in rows:
+            console_id = r['console_id']
+            if console_id not in snapshots:
+                snapshots[console_id] = scheduling.queue_snapshot(conn, console_id, p.user_id, now=n)
+            snapshot = snapshots[console_id]
+            entry = snapshot.get(r['id'])
+            if not entry:
+                continue
             v = _reservation_view(conn, r)
-            v['public_queue'] = scheduling.public_queue(conn, r['console_id'], p.user_id)
+            v['console_id'] = str(console_id)
+            v['queue'] = {'position': entry['position'], 'status': entry['status']}
+            v['public_queue'] = list(snapshot.values())
             out.append(v)
         return out
 
@@ -93,7 +105,14 @@ def get_reservation(rid: uuid.UUID, p: Principal = Depends(current_user)):
             raise not_found('Reserva não encontrada.')
         v = _reservation_view(conn, r)
         v['public_queue'] = scheduling.public_queue(conn, r['console_id'], p.user_id)
-        cp = one(conn, "select title, body from policy_documents where kind='cancellation' and is_current")
+        cp = one(conn, '''
+            select d.title, d.body, d.version from policy_documents d
+            join policy_acceptances a on a.policy_id=d.id
+            where a.reservation_id=%s and a.user_id=%s and d.kind='cancellation'
+            order by a.accepted_at desc limit 1
+        ''', (rid, r['user_id']))
+        if not cp:
+            cp = one(conn, "select title, body, version from policy_documents where kind='cancellation' and is_current")
         v['cancellation_policy'] = jsonable(cp)
         return v
 
@@ -282,14 +301,23 @@ class TicketIn(BaseModel):
     reservation_id: uuid.UUID | None = None
 
 
-class MessageIn(BaseModel):
-    body: str = Field(min_length=1, max_length=5000)
-
-
 @router.get('/support/tickets')
 def my_tickets(p: Principal = Depends(current_user)):
     with tx() as conn:
-        return jsonable(all_(conn, 'select id, subject, category, status, priority, reservation_id, created_at, updated_at from support_tickets where user_id=%s order by updated_at desc', (p.user_id,)))
+        return jsonable(all_(conn, '''select id, subject, category, status, priority, reservation_id, created_at, updated_at
+                                      from support_tickets where user_id=%s and hidden_by_user_at is null
+                                      order by updated_at desc, id''', (p.user_id,)))
+
+
+@router.delete('/support/tickets/{tid}', status_code=204)
+def hide_ticket(tid: uuid.UUID, p: Principal = Depends(current_user)):
+    with tx() as conn:
+        t = one(conn, 'select hidden_by_user_at from support_tickets where id=%s and user_id=%s for update', (tid, p.user_id))
+        if not t:
+            raise not_found('Chamado não encontrado.')
+        if t['hidden_by_user_at'] is None:
+            conn.execute('update support_tickets set hidden_by_user_at=%s where id=%s', (timeutil.now(), tid))
+            audit_event(conn, 'support.ticket_hidden_by_user', 'support_tickets', tid)
 
 
 @router.post('/support/tickets', status_code=201)
@@ -313,29 +341,19 @@ def open_ticket(body: TicketIn, p: Principal = Depends(current_user)):
 def ticket(tid: uuid.UUID, p: Principal = Depends(current_user)):
     with tx() as conn:
         t = one(conn, 'select * from support_tickets where id=%s', (tid,))
-        if not t or (str(t['user_id']) != p.user_id and not p.is_staff):
+        if not t or t['hidden_by_user_at'] is not None or (str(t['user_id']) != p.user_id and not p.is_staff):
             raise not_found('Chamado não encontrado.')
-        msgs = all_(conn, '''select m.id, m.body, m.is_staff, m.created_at, u.username author from support_messages m
-                             join users u on u.id=m.author_user_id where m.ticket_id=%s order by m.created_at''', (tid,))
+        msgs = support.ticket_messages(conn, tid)
     return {**jsonable(t), 'messages': jsonable(msgs)}
 
 
 @router.post('/support/tickets/{tid}/messages', status_code=201)
-def reply(tid: uuid.UUID, body: MessageIn, p: Principal = Depends(current_user)):
+def reply(tid: uuid.UUID, body: SupportMessageIn, p: Principal = Depends(current_user)):
     with tx() as conn:
         t = one(conn, 'select * from support_tickets where id=%s for update', (tid,))
-        if not t or (str(t['user_id']) != p.user_id and not p.is_staff):
+        if not t or t['hidden_by_user_at'] is not None or (str(t['user_id']) != p.user_id and not p.is_staff):
             raise not_found('Chamado não encontrado.')
-        if t['status'] == 'closed':
-            raise conflict('ticket_closed', 'Chamado encerrado. Abra um novo chamado.')
-        m = insert(conn, 'support_messages', {'ticket_id': tid, 'author_user_id': p.user_id, 'body': body.body,
-                                              'is_staff': p.is_staff and str(t['user_id']) != p.user_id})
-        conn.execute("update support_tickets set status=%s where id=%s",
-                     ('in_progress' if m['is_staff'] else ('open' if t['status'] == 'resolved' else t['status']), tid))
-        if m['is_staff']:
-            notifications.notify(conn, str(t['user_id']), 'support_reply', {'assunto': t['subject']},
-                                 dedupe=f"support:{m['id']}", link=f'/suporte/{tid}')
-    return jsonable(m)
+        return jsonable(support.reply(conn, t, p.user_id, body.body, is_staff=p.is_staff and str(t['user_id']) != p.user_id))
 
 
 # ----------------------------------------------------------------- ConsoleAgent

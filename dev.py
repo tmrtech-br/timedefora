@@ -60,11 +60,30 @@ if WIN:
             pass
 
 _print_lock = threading.Lock()
+LOG_DIR = ROOT / 'logs'
+_log_file = None
+
+
+def _log_to_file(line: str) -> None:
+    """Cópia de tudo o que aparece no terminal em logs/dev-AAAAMMDD.log (para diagnóstico depois)."""
+    global _log_file
+    try:
+        name = LOG_DIR / time.strftime('dev-%Y%m%d.log')
+        if _log_file is None or _log_file.name != str(name):
+            LOG_DIR.mkdir(exist_ok=True)
+            if _log_file is not None:
+                _log_file.close()
+            _log_file = open(name, 'a', encoding='utf-8')
+        _log_file.write(f"{time.strftime('%H:%M:%S')} {line}\n")
+        _log_file.flush()
+    except OSError:
+        pass                                   # o log em arquivo nunca derruba o ambiente
 
 
 def log(msg: str, tag: str = 'dev') -> None:
     with _print_lock:
         print(f"{COLORS.get(tag, '')}[{tag}]{RESET} {msg}", flush=True)
+        _log_to_file(f'[{tag}] {msg}')
 
 
 def die(msg: str) -> None:

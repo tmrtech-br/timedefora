@@ -146,6 +146,7 @@ def game_detail(slug: str, p: Principal | None = Depends(optional_user)):
                     'commercially_licensed': g['commercial_license_status'] == 'authorized'})
         out['packages'] = [{'minutes': x['minutes'], 'price_cents': x['price_cents'], 'promotion': x['promo']}
                            for x in scheduling.offered_minutes(conn, g)]
+        out['rate_cents_per_minute'] = get_settings(conn)['booking_rate_cents_per_minute']
         out['availability'] = scheduling.availability_summary(conn, g)
         for c in out['availability']['consoles']:
             c['queue'] = scheduling.public_queue(conn, c['console_id'], p.user_id if p else None)
@@ -163,22 +164,43 @@ def game_detail(slug: str, p: Principal | None = Depends(optional_user)):
 
 
 @router.get('/catalog/games/{slug}/quote')
-def quote(slug: str, minutes: int, mode: str = 'queue', start_at: str | None = None):
+def quote(slug: str, minutes: int = Query(ge=1, le=scheduling.MAX_RESERVATION_MINUTES), mode: str = 'queue', start_at: str | None = None, duration_limit: bool = False):
     """Cotação servidor: início estimado/confirmável e preço para o pacote escolhido."""
     from datetime import datetime
     with tx() as conn:
         g = one(conn, "select * from games where slug=%s and deleted_at is null and status='published'", (slug,))
         if not g:
             raise not_found('Jogo não encontrado.')
-        s = datetime.fromisoformat(start_at) if start_at else None
+        try:
+            s = datetime.fromisoformat(start_at) if start_at else None
+        except ValueError:
+            return {'available': False, 'message': 'Informe data e hora válidas.'}
+        if mode not in ('queue', 'scheduled') or (mode == 'scheduled' and (not s or not s.tzinfo or s.second or s.microsecond)):
+            return {'available': False, 'message': 'Selecione um modo e um horário de início válidos.'}
+        flags = get_settings(conn)
+        if flags['sales_paused'] or not flags[f'{mode}_mode_enabled']:
+            return {'available': False, 'message': 'Reservas neste modo estão temporariamente indisponíveis.'}
         slots = scheduling.find_slots(conn, g['id'], minutes, mode, s)
+        if duration_limit and mode == 'scheduled':
+            # A duração é contínua até a primeira reserva, bloqueio ou fechamento.
+            low = 0
+            high = max((int((slot.window_end - s).total_seconds() // 60) for slot in slots), default=0)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if scheduling.find_slots(conn, g['id'], middle, mode, s):
+                    low = middle
+                else:
+                    high = middle - 1
+            return {'start_at': start_at, 'max_minutes': low}
         if not slots:
             return {'available': False, 'message': scheduling.explain_unavailable(conn, g['id'], minutes, mode, s)}
-        sl = slots[0]
-        plat = one(conn, 'select platform_id from consoles where id=%s', (sl.console_id,))['platform_id']
-        pkg = scheduling.resolve_package(conn, g, sl.console_id, plat, minutes, sl.start)
-        if not pkg:
-            return {'available': False, 'message': 'Pacote indisponível para este horário.'}
+        for sl in slots:
+            plat = one(conn, 'select platform_id from consoles where id=%s', (sl.console_id,))['platform_id']
+            pkg = scheduling.resolve_package(conn, g, sl.console_id, plat, minutes, sl.start)
+            if pkg:
+                break
+        else:
+            return {'available': False, 'message': 'Duração indisponível para este horário.'}
         return {'available': True, 'console_name': sl.console_name, 'starts_at': sl.start.isoformat(), 'ends_at': sl.end.isoformat(),
                 'window_ends_at': sl.window_end.isoformat(), 'price_cents': pkg['price_cents'], 'mode': mode,
                 'estimate_notice': 'Início estimado: pode ser antecipado se a fila andar; nunca é atrasado após a confirmação.'

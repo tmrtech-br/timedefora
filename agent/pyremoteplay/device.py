@@ -272,7 +272,9 @@ class RPDevice:
     def disconnect(self):
         """Disconnect and stop session. This also sets session to None."""
         if self.session:
-            if self.connected:
+            # LocaPlay: antes só parava sessões RUNNING; uma sessão que falhou na abertura do vídeo
+            # ficava com TCP/UDP abertos e o console continuava ocupado.
+            if not self.session.is_stopped:
                 self.session.stop()
         self._session = None
 

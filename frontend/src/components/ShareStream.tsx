@@ -29,7 +29,7 @@ export default function ShareStream({ title, live }: { title: string; live: bool
   }, []);
   if (!url) return null;
 
-  const text = live ? `Estou assistindo ${title} ao vivo na LocaPlay!` : `Assista ${title} ao vivo na LocaPlay`;
+  const text = live ? `Estou assistindo ${title} ao vivo na timedefora!` : `Assista ${title} ao vivo na timedefora`;
   const u = encodeURIComponent(url), t = encodeURIComponent(text);
   const links = [
     { name: 'WhatsApp', cls: 'wa', icon: Icon.whatsapp, href: `https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}` },
@@ -48,7 +48,7 @@ export default function ShareStream({ title, live }: { title: string; live: bool
       <span className="share-label">Compartilhar</span>
       {canNative && (
         <button type="button" className="share-ico native" title="Enviar…" aria-label="Compartilhar pelo celular"
-          onClick={() => navigator.share({ title: `${title} ao vivo — LocaPlay`, text, url }).catch(() => {})}><Share2 aria-hidden /></button>)}
+          onClick={() => navigator.share({ title: `${title} ao vivo — timedefora`, text, url }).catch(() => {})}><Share2 aria-hidden /></button>)}
       {links.map((l) => (
         <a key={l.name} className={`share-ico ${l.cls}`} href={l.href} target="_blank" rel="noopener noreferrer" title={l.name} aria-label={`Compartilhar no ${l.name}`}>{l.icon}</a>))}
       <button type="button" className={`share-ico link ${copied ? 'done' : ''}`} title={copied ? 'Copiado!' : 'Copiar link'} aria-label="Copiar link da transmissão" onClick={copy}>

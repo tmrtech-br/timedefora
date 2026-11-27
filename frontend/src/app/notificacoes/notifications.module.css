@@ -1,0 +1,3 @@
+.notification { overflow-wrap: anywhere; }
+.notification[data-unread='true'] { border-color: #c7b2ff80; }
+.notification p { margin: 6px 0; white-space: pre-wrap; }

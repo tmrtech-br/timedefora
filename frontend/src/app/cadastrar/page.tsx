@@ -38,7 +38,7 @@ export default function Cadastro() {
     <AuthCard title="Criar conta" subtitle="Seu nome de usuário é o único dado exibido nas filas públicas.">
       {features?.signup_enabled === false && <Alert kind="warn">Novos cadastros estão desativados no momento. Tente novamente mais tarde.</Alert>}
       {error && <Alert kind="error">{error}</Alert>}
-      <form className="stack" onSubmit={submit} noValidate>
+      <form className="stack" style={{ gap: 8 }} onSubmit={submit} noValidate>
         <Field label="Nome completo" required error={errors.full_name}><input autoComplete="name" value={f.full_name} onChange={(e) => set('full_name', e.target.value)} required /></Field>
         <Field label="Nome de usuário público" required error={errors.username} hint="3 a 24 caracteres: letras, números, _ ou ."><input maxLength={24} autoComplete="username" value={f.username} onChange={(e) => set('username', e.target.value)} required /></Field>
         <Field label="E-mail" required error={errors.email}><input maxLength={254} type="email" autoComplete="email" value={f.email} onChange={(e) => set('email', e.target.value)} required /></Field>

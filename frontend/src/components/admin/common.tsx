@@ -2,7 +2,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Field, Modal } from '@/components/ui';
 import { del, type ApiError } from '@/lib/api';
-import { toast } from '@/components/Toaster';
 
 /** Nomes dos campos da API em português (para mensagens de validação). */
 export const FIELD_LABELS: Record<string, string> = {
@@ -14,6 +13,7 @@ export const FIELD_LABELS: Record<string, string> = {
   agent_id: 'Agente', manufacturer: 'Fabricante', device_identifier: 'Device ID', input_port: 'Entrada', identifier: 'Identificador', adapter_type: 'Tipo',
   max_redemptions: 'Limite total', per_user_limit: 'Limite por usuário', compensation: 'Compensação', compensation_notes: 'Observações',
   platform_codes: 'Plataformas', min_minutes: 'Duração mínima', max_minutes: 'Duração máxima', description: 'Descrição', kind: 'Tipo',
+  internal_host: 'IP ou nome de rede do console', console_identifier: 'Identificação do console',
   date_from: 'Data inicial', date_to: 'Data final', amount_cents: 'Valor',
 };
 
@@ -28,30 +28,34 @@ export const nowLocalInput = () => new Date(Date.now() - 3 * 3600 * 1000).toISOS
 export function useAction() {
   const [msg, setMsg] = useState<{ k: 'ok' | 'error'; t: string; extra?: unknown } | null>(null);
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!msg) return;
+    const timer = window.setTimeout(() => setMsg(null), msg.k === 'error' ? 12000 : 6500);
+    return () => window.clearTimeout(timer);
+  }, [msg]);
   async function run<T>(fn: () => Promise<T>, ok?: string): Promise<T | undefined> {
     setBusy(true); setMsg(null);
-    try { const r = await fn(); if (ok) { setMsg({ k: 'ok', t: ok }); toast('ok', ok); } return r; }
+    try { const r = await fn(); if (ok) setMsg({ k: 'ok', t: ok }); return r; }
     catch (e) {
       const a = e as ApiError;
       const fields = a.fields && Object.keys(a.fields).length
         ? ' Corrija: ' + Object.entries(a.fields).map(([k, v]) => `${FIELD_LABELS[k] || k} (${String(v).replace(/^Valor inválido\.?$/, 'valor inválido ou não preenchido').replace(/^Campo obrigatório\.?$/, 'obrigatório')})`).join(' · ') + '.' : '';
       setMsg({ k: 'error', t: a.message + fields, extra: a.data });
-      toast('error', a.message + fields);
     } finally { setBusy(false); }
   }
-  const view = msg ? <Alert kind={msg.k}><span>{msg.t}{Array.isArray((msg.extra as { reservations?: unknown[] })?.reservations) &&
-    <ul>{((msg.extra as { reservations: { code: string; starts_at: string }[] }).reservations).map((r) => <li key={r.code}>{r.code} — {new Date(r.starts_at).toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' })}</li>)}</ul>}</span></Alert> : null;
+  const view = msg ? <Alert key={msg.t} kind={msg.k}><div>{msg.t}{Array.isArray((msg.extra as { reservations?: unknown[] })?.reservations) &&
+    <ul>{((msg.extra as { reservations: { code: string; starts_at: string }[] }).reservations).map((r) => <li key={r.code}>{r.code} — {new Date(r.starts_at).toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' })}</li>)}</ul>}</div></Alert> : null;
   return { run, msg: view, busy };
 }
 
-export function ScrollableDataGrid<T extends Record<string, unknown>>({ rows, cols, empty = 'Nenhum registro encontrado.', error }: {
-  rows: T[] | null; cols: [string, (r: T) => React.ReactNode][]; empty?: string; error?: string }) {
+export function ScrollableDataGrid<T extends Record<string, unknown>>({ rows, cols, empty = 'Nenhum registro encontrado.', error, limit = 10 }: {
+  rows: T[] | null; cols: [string, (r: T) => React.ReactNode][]; empty?: string; error?: string; limit?: number }) {
   const viewport = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const container = viewport.current;
     const header = container?.querySelector('thead');
-    const last = container?.querySelector('tbody tr:nth-child(10)');
-    if (!container || !header || !last || !rows || rows.length <= 10) {
+    const last = container?.querySelector(`tbody tr:nth-child(${limit})`);
+    if (!container || !header || !last || !rows || rows.length <= limit) {
       container?.style.removeProperty('max-height');
       return;
     }
@@ -60,16 +64,16 @@ export function ScrollableDataGrid<T extends Record<string, unknown>>({ rows, co
     };
     const observer = new ResizeObserver(measure);
     observer.observe(container.querySelector('table')!);
-    Array.from(container.querySelectorAll('tbody tr')).slice(0, 10).forEach((row) => observer.observe(row));
+    Array.from(container.querySelectorAll('tbody tr')).slice(0, limit).forEach((row) => observer.observe(row));
     observer.observe(header);
     measure();
     return () => observer.disconnect();
-  }, [rows]);
+  }, [rows, limit]);
   if (error) return <Alert kind="error">{error}</Alert>;
   if (!rows) return <div className="skeleton" role="status" aria-label="Carregando registros" style={{ height: 120 }} />;
   if (!rows.length) return <div className="empty">{empty}</div>;
   return (
-    <div className="table-wrap scrollable-grid" ref={viewport} tabIndex={rows.length > 10 ? 0 : undefined} aria-label={rows.length > 10 ? 'Tabela com rolagem' : undefined}><table className="table"><thead><tr>{cols.map(([h]) => <th key={h}>{h}</th>)}</tr></thead>
+    <div className="table-wrap scrollable-grid" ref={viewport} tabIndex={rows.length > limit ? 0 : undefined} aria-label={rows.length > limit ? 'Tabela com rolagem' : undefined}><table className="table"><thead><tr>{cols.map(([h]) => <th key={h}>{h}</th>)}</tr></thead>
       <tbody>{rows.map((r, i) => <tr key={String(r.id ?? i)}>{cols.map(([h, f]) => <td key={h}>{f(r)}</td>)}</tr>)}</tbody></table></div>
   );
 }
@@ -172,12 +176,12 @@ export function useDelete() {
   return { remove, dialog };
 }
 
-export function NewRecord({ title, children }: { title: string; children: (close: () => void) => React.ReactNode }) {
+export function NewRecord({ title, children, editingTitle, onClose }: { title: string; editingTitle?: string; onClose?: () => void; children: (close: () => void) => React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const close = () => setOpen(false);
+  const close = () => { setOpen(false); onClose?.(); };
   return <>
     <div><button type="button" className="btn" onClick={() => setOpen(true)}>Novo cadastro</button></div>
-    {open && <Modal title={title} onClose={close}><div className="stack">{children(close)}</div></Modal>}
+    {(open || editingTitle) && <Modal title={editingTitle ?? title} onClose={close} compact><div className="stack">{children(close)}</div></Modal>}
   </>;
 }
 

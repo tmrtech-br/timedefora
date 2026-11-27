@@ -17,12 +17,14 @@ const TOGGLES: { key: string; title: string; desc: string; invert?: boolean }[] 
   { key: 'signup_enabled', title: 'Novos cadastros', desc: 'Desligado: cadastro por e-mail e criação de conta pelo Google ficam bloqueados. Quem já tem conta continua entrando.' },
   { key: 'google_login_enabled', title: 'Entrar com Google', desc: 'Mostra/oculta e habilita o login com Google.' },
   { key: 'keyboard_mouse_enabled', title: 'Jogar com teclado e mouse', desc: 'Desligado: só é possível jogar com controle.' },
+  { key: 'controls_menu_enabled', title: 'Menu Teclado e mouse', desc: 'Exibe o menu do jogador e permite personalizar o mapeamento de teclas e mouse.' },
   { key: 'public_streams_enabled', title: 'Transmissões ao vivo (Assistir ao vivo)', desc: 'Mostra/oculta os links para Twitch/Kick nas páginas dos jogos e na home.' },
   { key: 'support_tickets_enabled', title: 'Abertura de chamados no suporte', desc: 'Desligado: novos chamados bloqueados; respostas em chamados abertos continuam.' },
   { key: 'share_button_enabled', title: 'Botão Share do controle', desc: 'Desligado (recomendado): o cliente não abre o menu de compartilhar/transmitir nem publica capturas pela conta do console.' },
 ];
 
 const NUMBERS: { key: string; title: string; unit: string; min: number; max: number }[] = [
+  { key: 'booking_rate_cents_per_minute', title: 'Preço por minuto dos consoles da plataforma (0 mantém os pacotes)', unit: 'centavos', min: 0, max: 49000 },
   { key: 'hold_minutes', title: 'Tempo para pagar a reserva', unit: 'min', min: 1, max: 60 },
   { key: 'setup_minutes', title: 'Intervalo de preparação entre jogadores', unit: 'min', min: 0, max: 30 },
   { key: 'scheduled_lead_minutes', title: 'Antecedência mínima do horário marcado', unit: 'min', min: 0, max: 1440 },
@@ -77,7 +79,7 @@ export default function Params() {
       <PageHeader title="Parâmetros do sistema" subtitle="Ligue e desligue funções. Cada alteração vale na hora, é aplicada no servidor e fica registrada na auditoria." />
       {msg}
 
-      <div className="grid2" style={{ alignItems: 'start' }}>
+      <div className="parameter-cards">
       <section className="card stack"><h2>Plataformas e consoles</h2>
         <p className="small muted" style={{ margin: 0 }}>Desligar uma plataforma tira da venda todos os consoles dela e esconde do catálogo os jogos que só existem nela. Reservas já pagas continuam valendo.</p>
         <div className="params">
@@ -122,7 +124,7 @@ export default function Params() {
         </div>
       </section>
 
-      <section className="card stack"><h2>Regras de agenda e limites</h2>
+      <section className="card stack parameter-rules"><h2>Regras de agenda e limites</h2>
         <div className="params">
           {NUMBERS.filter((n) => n.key in v).map((n) => {
             const cur = String(v[n.key]);
@@ -159,7 +161,6 @@ export default function Params() {
             <Alert kind="warn">{pending.label}</Alert>
             <Field label="Motivo (registrado na auditoria)" hint="Opcional, mas recomendado."><input maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
             <div className="row"><button className="btn primary" disabled={busy} onClick={confirm}>Confirmar</button><button className="btn" onClick={() => setPending(null)}>Cancelar</button></div>
-            {msg}
           </div>
         </Modal>)}
     </div>

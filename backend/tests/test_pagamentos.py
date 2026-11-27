@@ -52,6 +52,28 @@ def test_checkout_simulado_confirma_e_notifica(world, freeze):
     assert any('Pagamento aprovado' in t for t in titles)
 
 
+def test_historico_filtra_por_reserva_jogo_meio_status_e_data_local(world, freeze):
+    freeze(at(2, 8))
+    api = login(make_user())
+    reservation = reserve(api, world, 30).json()
+    payment_id = api.post(f"/reservations/{reservation['id']}/checkout", json={'method': 'pix'}).json()['payment_id']
+    assert api.post(f'/payments/simulated/{payment_id}/notify', json={'outcome': 'approved'}).status_code == 200
+    with tx() as conn:
+        conn.execute('update payments set created_at=%s where id=%s', (at(2, 23, 30), payment_id))
+
+    url = '/me/payments'
+    filters = {'q': reservation['code'].lower(), 'method': 'pix', 'status': 'approved',
+               'date_from': '2026-12-02', 'date_to': '2026-12-02'}
+    response = api.get(url, params=filters)
+    assert response.status_code == 200, response.text
+    assert [row['id'] for row in response.json()] == [payment_id]
+    assert [row['id'] for row in api.get(url, params={'q': 'gta vi'}).json()] == [payment_id]
+    for override in ({'method': 'card'}, {'status': 'refunded'}, {'date_from': '2026-12-03', 'date_to': '2026-12-03'}):
+        assert api.get(url, params={**filters, **override}).json() == []
+    assert api.get(url, params={**filters, 'date_from': '2026-12-03'}).status_code == 422
+    assert login(make_user('outro_pagante')).get(url, params=filters).json() == []
+
+
 def test_webhook_assinatura_invalida_recusado(world, freeze, mp):
     freeze(at(2, 8))
     api = login(make_user())

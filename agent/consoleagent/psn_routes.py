@@ -17,7 +17,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from remoteplay.psn.accounts import PsnAccountStore, AccountError
+from remoteplay.psn.accounts import DEFAULT_PATH, PsnAccountStore, AccountError, shared_store
 from remoteplay.psn.oauth import OAuthCredentialsRejected, OAuthError, account_info, login_url, parse_redirect, request_token
 from remoteplay.psn.devices import DeviceDiscoveryUnavailable, list_psn_devices
 from remoteplay.psn.connection import open_ps4_connection, reserve_ps4_account
@@ -48,7 +48,7 @@ def create_psn_router(token: str, data_path: str | Path | None = None, protector
     to cleartext or any shared server-side key.
     """
     router = APIRouter(prefix='/v1/psn/accounts', tags=['psn'])
-    path = Path(data_path) if data_path else Path(__file__).resolve().parent.parent / 'data' / 'psn_accounts.json.dpapi'
+    path = Path(data_path) if data_path else DEFAULT_PATH
     expected = f'Bearer {token}'.encode('utf-8')
     pending: dict[str, float] = {}
     remote_diagnostics: set[str] = set()
@@ -60,7 +60,8 @@ def create_psn_router(token: str, data_path: str | Path | None = None, protector
     def vault() -> PsnAccountStore:
         nonlocal store
         if store is None:
-            store = PsnAccountStore(path, protector=protector)
+            # Sem protetor de teste: a mesma instância usada pelas conexões PSN (tokens e travas em comum).
+            store = shared_store(path) if protector is None else PsnAccountStore(path, protector=protector)
         return store
 
     def authorize(req: Request):
@@ -221,7 +222,7 @@ def create_psn_router(token: str, data_path: str | Path | None = None, protector
             duid = identifier or duid
             messages.append(message)
 
-        try:
+        async def run():
             with reserve_ps4_account(account_id):
                 async with asyncio.timeout(58), httpx.AsyncClient(follow_redirects=False) as client:
                     token = await vault().access_token(
@@ -229,6 +230,10 @@ def create_psn_router(token: str, data_path: str | Path | None = None, protector
                     )
                     async with open_ps4_connection(client, token, _make_receiver(AVReceiver), progress):
                         messages.append('Áudio e controles ainda não foram verificados.')
+
+        try:
+            # Laço próprio numa thread: a decodificação do vídeo não pode travar o WebRTC dos outros consoles.
+            await run_in_threadpool(asyncio.run, run())
         except (NegotiationError, OSError) as exc:
             if stage is None:
                 code = getattr(exc, 'stage', 'transport_unavailable')
@@ -271,7 +276,8 @@ def create_psn_router(token: str, data_path: str | Path | None = None, protector
                         token = credentials['access_token']
                     devices = await list_psn_devices(client, token)
             return {'ok': True, 'devices': devices, 'ps4_note':
-                    'A Sony não expõe o PS4 principal nesta listagem PS5. O PS4 requer a negociação PSN específica, ainda pendente.',
+                    'A Sony não expõe o PS4 principal nesta listagem PS5. O PS4 principal da conta é alcançado pela negociação PSN '
+                    '(use "Diagnosticar PS4 pela PSN" ou o teste de conexão do console).',
                     'message': f'{len(devices)} PS5 consultado(s) na Sony. A consulta não testa o streaming.'}
         except (AccountError, OAuthError, DeviceDiscoveryUnavailable, RuntimeError) as e:
             return error(422, 'psn_devices_failed', str(e))

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { RotateCcw, Save } from 'lucide-react';
 import { toast } from '@/components/Toaster';
 import { ApiError } from '@/lib/api';
+import { useFeatures } from '@/lib/features';
 import { ACTIONS, type Action, type Bindings, DEFAULT_KEYS, RESERVED, codeLabel, useBindings } from '@/lib/keymap';
 
 /** Legenda das teclas do jogador (sala de espera e painel "Ver comandos" do jogo). */
@@ -24,7 +25,7 @@ export function KeyLegend({ bindings, compact = false }: { bindings: Bindings; c
   );
 }
 
-/** Editor do mapeamento (Configurações): clique na ação e pressione a tecla ou o botão do mouse. */
+/** Editor do mapeamento: clique na ação e pressione a tecla ou o botão do mouse. */
 export default function KeyBindingsEditor() {
   const { bindings, loaded, save, reset } = useBindings();
   const [keys, setKeys] = useState<Record<Action, string>>(DEFAULT_KEYS);
@@ -75,7 +76,7 @@ export default function KeyBindingsEditor() {
   const groups = Array.from(new Set(ACTIONS.map((a) => a.group)));
   return (
     <section className="card stack" id="controles">
-      <div className="spread"><h2 style={{ margin: 0 }}>Controles do teclado e mouse</h2>
+      <div className="spread"><h2 style={{ margin: 0 }}>Mapeamento dos controles</h2>
         {bindings.custom ? <span className="pill purple">personalizado</span> : <span className="pill">padrão do site</span>}</div>
       <p className="small muted" style={{ margin: 0 }}>Clique numa ação e pressione a tecla (ou o botão do mouse) que quer usar. Se a tecla já estiver em outra ação, as duas trocam de lugar.
         Vale para todas as suas sessões. Quem joga com controle USB/Bluetooth não precisa mudar nada aqui.</p>
@@ -85,7 +86,7 @@ export default function KeyBindingsEditor() {
             <div key={g} className="kb-group"><h3>{g}</h3>
               {ACTIONS.filter((a) => a.group === g).map((a) => (
                 <div key={a.id} className="kb-row">
-                  <span><b className="kb-sym">{a.sym}</b> {a.label}</span>
+                  <span><b className="kb-sym" data-action={a.id} aria-hidden>{a.sym}</b> {a.label}</span>
                   <button type="button" className={`btn sm kb-key${listening === a.id ? ' listening' : ''}${keys[a.id] !== DEFAULT_KEYS[a.id] ? ' changed' : ''}`}
                     onClick={() => setListening(listening === a.id ? null : a.id)} aria-label={`${a.label}: ${codeLabel(keys[a.id])}. Clique para trocar.`}>
                     {listening === a.id ? 'Pressione…' : codeLabel(keys[a.id])}</button>
@@ -108,5 +109,6 @@ export default function KeyBindingsEditor() {
 }
 
 export function CustomizeLink() {
-  return <Link className="link-purple small" href="/configuracoes#controles">Personalizar teclas</Link>;
+  const features = useFeatures();
+  return features?.controls_menu_enabled ? <Link className="link-purple small" href="/controles">Personalizar teclas</Link> : null;
 }

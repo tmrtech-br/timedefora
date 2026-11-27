@@ -1,0 +1,78 @@
+﻿.compact:global(.stack), .form { gap: 8px; }
+.compact > h2 { margin-bottom: 0; }
+.form { display: grid; }
+.form button { justify-self: start; }
+.compact :global(.field) { gap: 4px; }
+.compact :global(.field-foot):has(> span:only-child:empty) { display: none; }
+@media (max-width: 900px) {
+  .profileForms:global(.grid2) { grid-template-columns: minmax(0, 1fr); }
+}
+@media (min-width: 901px) {
+  .profileForms:global(.grid2) { row-gap: 8px; }
+  .profileForms > .compact:global(.stack) {
+    display: grid;
+    grid-row: span 5;
+    grid-template-rows: subgrid;
+    min-width: 0;
+  }
+  .personal {
+    grid-template-columns: 120px minmax(0, 1fr);
+    column-gap: 14px;
+  }
+  .personal > h2, .personal > .save { grid-column: 1 / -1; }
+  .personal > .avatarButton { grid-column: 1; grid-row: 2 / 4; align-self: start; }
+  .personal > :global(.field) { grid-column: 2; grid-row: 2; }
+  .personal > :global(.field) + :global(.field) { grid-row: 3; }
+  .personal > a { grid-column: 2; grid-row: 4; align-self: start; }
+  .personal > .save { grid-row: 5; }
+  .profileForms .form { grid-row: 2 / 6; grid-template-rows: subgrid; }
+  .profileForms .form > button { grid-row: 4; justify-self: stretch; }
+  .profileForms :global(.field) { align-self: start; min-width: 0; }
+}
+.avatarButton {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: flex-start;
+  width: 120px;
+  aspect-ratio: 1;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line2);
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--purple2), #473478);
+  color: white;
+  font-family: inherit;
+  font-size: 42px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+.avatarButton img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.avatarButton:focus-visible { outline: 2px solid var(--purple); outline-offset: 3px; }
+.avatarOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  background: rgb(15 12 25 / 78%);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity .16s ease;
+}
+.avatarButton:hover .avatarOverlay, .avatarButton:focus-visible .avatarOverlay { opacity: 1; }
+@media (hover: none) {
+  .avatarOverlay {
+    justify-content: flex-end;
+    padding-bottom: 12px;
+    background: linear-gradient(transparent 45%, rgb(15 12 25 / 95%) 100%);
+    opacity: 1;
+  }
+  .avatarOverlay svg { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatarOverlay { transition: none; }
+}

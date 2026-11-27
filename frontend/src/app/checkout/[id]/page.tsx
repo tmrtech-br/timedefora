@@ -2,11 +2,12 @@
 import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { CreditCard, QrCode } from 'lucide-react';
+import PolicyConsent from '@/components/PolicyConsent';
 import RequireAuth from '@/components/RequireAuth';
 import { Alert, ErrorBox, PageHeader, Skeleton } from '@/components/ui';
 import { ApiError, post } from '@/lib/api';
 import { useApi, useServerClock } from '@/lib/hooks';
-import { dateTime, duration, money, RESERVATION_STATUS, time } from '@/lib/format';
+import { dateTime, duration, moneyWithCents, RESERVATION_STATUS } from '@/lib/format';
 import type { Reservation } from '@/lib/types';
 
 function Checkout() {
@@ -16,6 +17,7 @@ function Checkout() {
   const now = useServerClock(r?.server_time);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [method, setMethod] = useState<'pix' | 'card' | null>(null);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!r) return <Skeleton h={300} />;
   const left = r.hold_expires_at ? (new Date(r.hold_expires_at).getTime() - now()) / 1000 : 0;
@@ -28,6 +30,10 @@ function Checkout() {
       else if (res.checkout_url) window.location.href = res.checkout_url;   // Mercado Pago (Checkout Pro)
     } catch (e) { setErr(e instanceof ApiError ? e.message : 'Erro ao iniciar pagamento.'); }
     finally { setBusy(false); }
+  }
+  function choosePayment(selected: 'pix' | 'card') {
+    if (r?.cancellation_policy) setMethod(selected);
+    else setErr('A política de agendamento está indisponível.');
   }
   async function cancel() {
     await post(`/reservations/${id}/cancel`, { reason: 'Desistiu no checkout' });
@@ -46,23 +52,25 @@ function Checkout() {
           <dt>Console</dt><dd>{r.console_name}</dd>
           <dt>Tempo</dt><dd>{r.minutes} minutos</dd>
           <dt>{r.mode === 'queue' ? 'Início estimado' : 'Início reservado'}</dt><dd>{dateTime(r.starts_at)}</dd>
-          <dt>Término</dt><dd>{time(r.ends_at)} (horário de Fortaleza)</dd>
-          <dt>Preço</dt><dd>{money(r.price_cents)}</dd>
-          {r.discount_cents > 0 && <><dt>Desconto</dt><dd>− {money(r.discount_cents)}</dd></>}
-          <dt>Total</dt><dd><b style={{ fontSize: 18 }}>{money(r.total_cents)}</b></dd>
+          <dt>Término</dt><dd>{dateTime(r.ends_at)} (horário de Fortaleza)</dd>
+          <dt>Preço</dt><dd>{moneyWithCents(r.price_cents)}</dd>
+          {r.discount_cents > 0 && <><dt>Desconto</dt><dd>− {moneyWithCents(r.discount_cents)}</dd></>}
         </dl>
         {r.mode === 'queue' && <p className="small muted">O início é estimado: pode ser antecipado se a fila andar, nunca atrasado após a confirmação. O tempo conta a partir do início reservado.</p>}
-        {r.cancellation_policy && <details className="small"><summary>{r.cancellation_policy.title}</summary><p className="muted" style={{ whiteSpace: 'pre-line' }}>{r.cancellation_policy.body}</p></details>}
+        <div className="spread checkout-total"><span>Total a pagar</span><strong style={{ fontSize: 24 }}>{moneyWithCents(r.total_cents)}</strong></div>
       </section>
+      {method && r.cancellation_policy && r.status === 'pending_payment' && left > 0 && <PolicyConsent
+        policy={r.cancellation_policy} action={method === 'pix' ? 'Pagar com Pix' : 'Pagar com cartão'}
+        onClose={() => setMethod(null)} onConfirm={() => { setMethod(null); void pay(method); }} />}
       {err && <Alert kind="error">{err}</Alert>}
       {r.status === 'pending_payment' && left > 0 && (
         <div className="grid2">
-          <button className="btn primary" style={{ height: 56 }} disabled={busy} onClick={() => pay('pix')}><QrCode aria-hidden />Pagar com Pix</button>
-          <button className="btn" style={{ height: 56 }} disabled={busy} onClick={() => pay('card')}><CreditCard aria-hidden />Pagar com cartão</button>
+          <button className="btn primary" style={{ height: 56 }} disabled={busy} onClick={() => choosePayment('pix')}><QrCode aria-hidden />Pagar com Pix</button>
+          <button className="btn" style={{ height: 56 }} disabled={busy} onClick={() => choosePayment('card')}><CreditCard aria-hidden />Pagar com cartão</button>
         </div>
       )}
       {r.status === 'pending_payment' && <button className="btn danger" onClick={cancel}>Cancelar reserva provisória</button>}
-      <p className="small dim">Pagamentos processados pelo Mercado Pago (Checkout Pro). A LocaPlay não armazena dados de cartão. A confirmação chega ao servidor pelo provedor — fechar esta página não cancela um pagamento em andamento.</p>
+      <p className="small dim">Pagamentos processados pelo Mercado Pago (Checkout Pro). A timedefora não armazena dados de cartão. A confirmação chega ao servidor pelo provedor — fechar esta página não cancela um pagamento em andamento.</p>
     </div>
   );
 }

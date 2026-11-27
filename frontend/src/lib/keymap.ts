@@ -9,14 +9,14 @@ export type Action =
   | 'ls_up' | 'ls_down' | 'ls_left' | 'ls_right' | 'rs_up' | 'rs_down' | 'rs_left' | 'rs_right';
 
 export const ACTIONS: { id: Action; label: string; sym: string; group: string }[] = [
-  { id: 'cross', label: 'Xis (geralmente pular/confirmar)', sym: '✕', group: 'Botões' },
-  { id: 'circle', label: 'Círculo (geralmente voltar)', sym: '○', group: 'Botões' },
+  { id: 'cross', label: 'Xis', sym: '✕', group: 'Botões' },
+  { id: 'circle', label: 'Círculo', sym: '○', group: 'Botões' },
   { id: 'square', label: 'Quadrado', sym: '□', group: 'Botões' },
   { id: 'triangle', label: 'Triângulo', sym: '△', group: 'Botões' },
   { id: 'l1', label: 'L1', sym: 'L1', group: 'Gatilhos' }, { id: 'r1', label: 'R1', sym: 'R1', group: 'Gatilhos' },
   { id: 'l2', label: 'L2', sym: 'L2', group: 'Gatilhos' }, { id: 'r2', label: 'R2', sym: 'R2', group: 'Gatilhos' },
-  { id: 'l3', label: 'L3 (clique analógico esq.)', sym: 'L3', group: 'Gatilhos' }, { id: 'r3', label: 'R3 (clique analógico dir.)', sym: 'R3', group: 'Gatilhos' },
-  { id: 'options', label: 'Options (menu/pausa)', sym: '≡', group: 'Botões' }, { id: 'share', label: 'Share', sym: '⧉', group: 'Botões' },
+  { id: 'l3', label: 'L3', sym: 'L3', group: 'Gatilhos' }, { id: 'r3', label: 'R3', sym: 'R3', group: 'Gatilhos' },
+  { id: 'options', label: 'Options', sym: '≡', group: 'Botões' }, { id: 'share', label: 'Share', sym: '⧉', group: 'Botões' },
   { id: 'dpad_up', label: 'Direcional cima', sym: '↑', group: 'Direcional' }, { id: 'dpad_down', label: 'Direcional baixo', sym: '↓', group: 'Direcional' },
   { id: 'dpad_left', label: 'Direcional esquerda', sym: '←', group: 'Direcional' }, { id: 'dpad_right', label: 'Direcional direita', sym: '→', group: 'Direcional' },
   { id: 'ls_up', label: 'Analógico esq. — frente', sym: 'LS↑', group: 'Analógico esquerdo (andar)' },

@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import uvicorn
 
@@ -32,8 +33,12 @@ def test_api_fala_com_agente_real_e_heartbeat_marca_online(freeze):
     cfg = AgentConfig(api_url='http://testserver', agent_token=tokens['agent_token'], api_to_agent_token=tokens['api_to_agent_token'],
                       listen_port=port, discovery_timeout_seconds=0.3, chiaki_path='Z:/inexistente/chiaki.exe')
 
-    # Descoberta sem console na rede de teste: o agente procura de verdade e responde "nenhum console"
-    server = uvicorn.Server(uvicorn.Config(create_app(cfg, discover_fn=lambda h, p, t: []), host='127.0.0.1', port=port, log_level='error'))
+    def discover(host, platform, timeout):
+        if host is None and platform == 'PS4':
+            return [SimpleNamespace(address='192.168.0.20', host_name='PS4 da sala')]
+        return []
+
+    server = uvicorn.Server(uvicorn.Config(create_app(cfg, discover_fn=discover), host='127.0.0.1', port=port, log_level='error'))
     th = threading.Thread(target=server.run, daemon=True)
     th.start()
     for _ in range(100):
@@ -42,6 +47,9 @@ def test_api_fala_com_agente_real_e_heartbeat_marca_online(freeze):
         time.sleep(0.05)
     try:
         c = api.post('/admin/consoles', json={'code': 'PS4-56', 'name': 'PS4 nº 56', 'platform_code': 'PS4'}).json()
+        found = api.post(f"/admin/consoles/{c['id']}/discover-lan", json={'agent_id': tokens['id']})
+        assert found.status_code == 200, found.text
+        assert found.json() == [{'address': '192.168.0.20', 'name': 'PS4 da sala'}]
         r = api.put(f"/admin/consoles/{c['id']}/connection", json={'method': 'remote_play_chiaki', 'agent_id': tokens['id'],
                                                                   'internal_host': '192.168.0.20'})
         assert r.status_code == 200, r.text

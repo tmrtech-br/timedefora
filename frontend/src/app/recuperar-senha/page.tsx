@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useState } from 'react';
 import AuthCard from '@/components/AuthCard';
 import { Alert, Field } from '@/components/ui';
@@ -19,6 +20,7 @@ export default function Recuperar() {
         <Field label="E-mail da conta"><input maxLength={254} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></Field>
         <button className="btn primary block" disabled={!email}>Enviar instruções</button>
       </form>
+      <Link className="btn block" href="/entrar">Voltar para entrar</Link>
     </AuthCard>
   );
 }

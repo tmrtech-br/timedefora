@@ -1,0 +1,24 @@
+.cards > section { min-width: 0; }
+.cards h2 { margin-bottom: 0; }
+.switchRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+.toggle:global(.switch) {
+  appearance: none;
+  margin: 0;
+  background: var(--line2);
+  cursor: pointer;
+}
+.toggle:global(.switch):checked { background: var(--purple2); border-color: transparent; }
+.toggle:global(.switch):checked::after { transform: translateX(20px); background: white; }
+.toggle:global(.switch):focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+.toggle:global(.switch):disabled { opacity: .75; cursor: default; }
+.notifications { container: notification-card / inline-size; }
+.reminders { display: grid; grid-template-columns: repeat(2, max-content); gap: 8px 12px; border: 0; padding: 0; margin: 0; }
+.reminders legend { margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.reminders .switchRow { display: grid; grid-template-columns: 42px 46px; gap: 6px; white-space: nowrap; }
+@container notification-card (min-width: 412px) {
+  .reminders { grid-template-columns: repeat(4, max-content); }
+}
+.details { flex: 1; min-width: min(100%, 220px); }
+.request { overflow-wrap: anywhere; }
+.session > span { min-width: 0; overflow-wrap: anywhere; }
+.session > button { flex-shrink: 0; }

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import secrets
 import socket
 import struct
@@ -81,15 +82,26 @@ def parse_binding_response(packet: bytes, txid: bytes) -> tuple[str, int]:
     raise ValueError('Resposta STUN sem endereço mapeado.')
 
 
+# O mesmo socket recebe a mídia do PS4 depois do furo. Fila curta e descarte do pacote MAIS ANTIGO: se a
+# decodificação atrasar, o vídeo perde um pedaço e volta ao tempo real, em vez de acumular segundos de atraso
+# (com fila grande a imagem do agente congelava enquanto o console seguia respondendo).
+PEER_QUEUE_SIZE = 128
+
+
 class _Dispatcher(asyncio.DatagramProtocol):
     def __init__(self):
         self.pending: dict[bytes, asyncio.Future] = {}
-        self.peer_packets = asyncio.Queue(maxsize=64)
+        self.peer_packets = asyncio.Queue(maxsize=PEER_QUEUE_SIZE)
+        self.dropped = 0
 
     def datagram_received(self, data: bytes, addr):
         if len(data) < 20 or data[4:8] != struct.pack('!I', COOKIE):
-            if not self.peer_packets.full():
-                self.peer_packets.put_nowait((data, addr))
+            if self.peer_packets.full():
+                self.peer_packets.get_nowait()          # descarta o mais antigo
+                self.dropped += 1
+                if self.dropped in (1, 100) or self.dropped % 1000 == 0:
+                    logging.getLogger(__name__).warning('Fila UDP do console cheia: %d pacote(s) antigo(s) descartado(s).', self.dropped)
+            self.peer_packets.put_nowait((data, addr))
             return
         txid = data[8:20]
         future = self.pending.get(txid)
@@ -139,6 +151,10 @@ class StunClient:
 
     async def receive_peer_packet(self):
         return await self._protocol.peer_packets.get()
+
+    @property
+    def dropped(self) -> int:
+        return self._protocol.dropped if self._protocol else 0
 
     async def probe(self, server: str, port: int = 3478, timeout: float = 1.5) -> Mapping:
         if not self.transport:

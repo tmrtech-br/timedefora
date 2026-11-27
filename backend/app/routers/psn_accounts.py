@@ -55,12 +55,21 @@ def _agent(conn, agent_id):
     return a
 
 
-def _call_agent(conn, row, suffix: str, payload: dict | None = None, method='POST') -> dict:
+def _agent_target(conn, row) -> tuple[str, str]:
+    """Endereço e credencial do agente da conta (lidos dentro da transação; a chamada HTTP fica fora dela)."""
     if row['agent_id'] is None:
         raise conflict('agent_required', 'Associe um console com agente autorizado antes de vincular o login Sony.')
     a = _agent(conn, row['agent_id'])
-    token = security.decrypt(a['outbound_token_enc'])
-    url = f"{a['endpoint_url'].rstrip('/')}/v1/psn/accounts/{row['id']}{suffix}"
+    return f"{a['endpoint_url'].rstrip('/')}/v1/psn/accounts/{row['id']}", security.decrypt(a['outbound_token_enc'])
+
+
+def _call_agent(conn, row, suffix: str, payload: dict | None = None, method='POST') -> dict:
+    return _send_agent(_agent_target(conn, row), suffix, payload, method)
+
+
+def _send_agent(target: tuple[str, str], suffix: str, payload: dict | None = None, method='POST') -> dict:
+    base, token = target
+    url = base + suffix
     try:
         with httpx.Client(timeout=65, follow_redirects=False) as c:
             response = c.request(method, url, headers={'Authorization': f'Bearer {token}'},
@@ -84,7 +93,12 @@ def _call_agent(conn, row, suffix: str, payload: dict | None = None, method='POS
 def list_accounts(p: Principal = Depends(OPERATOR)):
     with tx() as conn:
         rows = all_(conn, '''select p.id, p.agent_id, p.owner_user_id, a.name agent_name, p.label, p.online_id, p.account_id, p.status,
-                                    p.last_check_at, p.last_error, p.created_at, p.updated_at
+                                    p.last_check_at, p.last_error, p.created_at, p.updated_at,
+                                    array(select distinct pl.code from console_connection_configs cfg
+                                          join consoles c on c.id=cfg.console_id and c.deleted_at is null
+                                          join platforms pl on pl.id=c.platform_id
+                                          where cfg.psn_account_id=p.id and pl.code in ('PS4', 'PS5')
+                                          order by pl.code) platforms
                              from psn_accounts p left join console_agents a on a.id=p.agent_id
                              order by a.name, p.label''')
         return jsonable(rows)
@@ -159,14 +173,30 @@ def start_login(account_id: uuid.UUID, p: Principal = Depends(ADMIN)):
     return start_account_login(account_id)
 
 
-def start_account_login(account_id: uuid.UUID, owner_user_id: str | None = None):
+def _ready_account(account_id, owner_user_id, disabled_message):
+    """Valida a conta e devolve (linha, agente) sem manter a transação aberta durante a chamada ao agente."""
     with tx() as conn:
-        row = _account(conn, account_id, lock=True, owner_user_id=owner_user_id)
+        row = _account(conn, account_id, owner_user_id=owner_user_id)
         if row['status'] == 'disabled':
-            raise conflict('account_disabled', 'Ative a conta antes de iniciar o login.')
-        response = _call_agent(conn, row, '/login/start', {'label': row['label']})
+            raise conflict('account_disabled', disabled_message)
+        return row, _agent_target(conn, row)
+
+
+def _locked_account(conn, account_id, owner_user_id, disabled_message):
+    """Relê com trava antes de gravar: a conta pode ter sido desativada/excluída durante a chamada ao agente."""
+    row = _account(conn, account_id, lock=True, owner_user_id=owner_user_id)
+    if row['status'] == 'disabled':
+        raise conflict('account_disabled', disabled_message)
+    return row
+
+
+def start_account_login(account_id: uuid.UUID, owner_user_id: str | None = None):
+    row, target = _ready_account(account_id, owner_user_id, 'Ative a conta antes de iniciar o login.')
+    response = _send_agent(target, '/login/start', {'label': row['label']})
+    with tx() as conn:
+        _account(conn, account_id, owner_user_id=owner_user_id)
         audit_event(conn, 'psn.login_started', 'psn_accounts', account_id)
-        return {'login_url': response['login_url'], 'message': response.get('message', '')}
+    return {'login_url': response['login_url'], 'message': response.get('message', '')}
 
 
 @router.post('/{account_id}/login/finish')
@@ -175,11 +205,11 @@ def finish_login(account_id: uuid.UUID, body: FinishLogin, p: Principal = Depend
 
 
 def finish_account_login(account_id: uuid.UUID, body: FinishLogin, owner_user_id: str | None = None):
+    message = 'Ative a conta antes de concluir o login.'
+    row, target = _ready_account(account_id, owner_user_id, message)
+    response = _send_agent(target, '/login/finish', {'label': row['label'], 'redirect_url': body.redirect_url})
     with tx() as conn:
-        row = _account(conn, account_id, lock=True, owner_user_id=owner_user_id)
-        if row['status'] == 'disabled':
-            raise conflict('account_disabled', 'Ative a conta antes de concluir o login.')
-        response = _call_agent(conn, row, '/login/finish', {'label': row['label'], 'redirect_url': body.redirect_url})
+        _locked_account(conn, account_id, owner_user_id, message)
         profile = response['account']
         updated = update(conn, 'psn_accounts', account_id, {'online_id': profile.get('online_id'),
                          'account_id': profile.get('account_id'), 'status': 'linked',
@@ -194,18 +224,20 @@ def test_account(account_id: uuid.UUID, p: Principal = Depends(ADMIN)):
 
 
 def test_account_login(account_id: uuid.UUID, owner_user_id: str | None = None):
-    with tx() as conn:
-        row = _account(conn, account_id, lock=True, owner_user_id=owner_user_id)
-        if row['status'] == 'disabled':
-            raise conflict('account_disabled', 'Esta conta está desativada.')
-        try:
-            response = _call_agent(conn, row, '/test')
-        except AppError as e:
-            if e.code == 'psn_token_expired':
-                update(conn, 'psn_accounts', account_id, {'status': 'expired', 'last_error': e.message})
-                audit_event(conn, 'psn.token_expired', 'psn_accounts', account_id)
-                return {'ok': False, 'message': e.message}
+    message = 'Esta conta está desativada.'
+    _, target = _ready_account(account_id, owner_user_id, message)
+    try:
+        response = _send_agent(target, '/test')
+    except AppError as e:
+        if e.code != 'psn_token_expired':
             raise
+        with tx() as conn:
+            _locked_account(conn, account_id, owner_user_id, message)
+            update(conn, 'psn_accounts', account_id, {'status': 'expired', 'last_error': e.message})
+            audit_event(conn, 'psn.token_expired', 'psn_accounts', account_id)
+        return {'ok': False, 'message': e.message}
+    with tx() as conn:
+        _locked_account(conn, account_id, owner_user_id, message)
         profile = response['account']
         update(conn, 'psn_accounts', account_id, {'online_id': profile.get('online_id'),
                'account_id': profile.get('account_id'), 'status': 'linked', 'last_error': '',

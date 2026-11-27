@@ -409,15 +409,28 @@ class RPStream:
         self.send_data(data, chunk_flag, channel)
 
     def stop(self):
-        """Stop Stream."""
-        if not self.stop_event.is_set():
-            _LOGGER.debug("Stopping Stream")
-            self._stop_event.set()
-            if self._protocol:
+        """Stop Stream.
+
+        LocaPlay: a sessão compartilha o mesmo stop_event e o marca antes de chamar este método. O original
+        verificava o evento e saía sem mandar DISCONNECT nem fechar o socket: o console ficava com a sessão
+        aberta ("Another Remote Play session is connected to host") até ser reiniciado.
+        """
+        if getattr(self, "_stopped", False):
+            return
+        self._stopped = True
+        _LOGGER.debug("Stopping Stream")
+        self._stop_event.set()
+        if self._protocol:
+            try:
                 self._disconnect()
+            except Exception as error:  # pylint: disable=broad-except
+                _LOGGER.debug("Stream disconnect not sent: %s", error)
+            try:
                 self._protocol.close()
-            if self._cb_stop is not None:
-                self._cb_stop()
+            except Exception as error:  # pylint: disable=broad-except
+                _LOGGER.debug("Stream socket close failed: %s", error)
+        if self._cb_stop is not None:
+            self._cb_stop()
 
     def recv_stream_info(self, info: dict):
         """Receive stream info."""

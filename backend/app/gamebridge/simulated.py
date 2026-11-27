@@ -49,7 +49,7 @@ class SimulatedAdapter(ConsoleStreamingAdapter):
             self._revoked.discard(session_id)
         return self._r('Stream simulado iniciado (sem vídeo real).', StreamState.STREAMING, stream_url=None)
 
-    def stop_stream(self, ref, session_id):
+    def stop_stream(self, ref, session_id, standby=False):
         with self._lock:
             self._streams.pop(session_id, None)
         return self._r('Stream simulado encerrado.', StreamState.STOPPED)

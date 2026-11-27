@@ -1,28 +1,60 @@
 'use client';
+import { useState } from 'react';
+import DateFilter from '@/components/DateFilter';
+import styles from '../pagamentos/payments.module.css';
 import Link from 'next/link';
 import RequireAuth from '@/components/RequireAuth';
 import { Empty, ErrorBox, PageHeader, Skeleton, StatusPill } from '@/components/ui';
 import { useApi } from '@/lib/hooks';
 import { ApiError, post } from '@/lib/api';
 import { toast } from '@/components/Toaster';
-import { RESERVATION_STATUS, SESSION_STATUS, dateTime, duration, money, time } from '@/lib/format';
+import { RESERVATION_STATUS, dateTime, money, time } from '@/lib/format';
 import type { Reservation } from '@/lib/types';
 
-type Hist = { id: string; status: string; title: string; code: string; minutes: number; contract_starts_at: string; contract_ends_at: string;
-  first_connected_at: string | null; ended_at: string | null; end_reason: string | null; seconds_used: number; reservation_id: string };
-const END: Record<string, string> = { time_up: 'tempo encerrado', user_ended: 'encerrada por você', admin: 'encerrada pela operação', failure: 'falha', no_show: 'ausência' };
+const initialFilters = { search: '', status: '', mode: '', from: '', to: '' };
+const localDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Fortaleza' });
 
 function Sessoes() {
   const res = useApi<Reservation[]>('/me/reservations', 10000);
-  const hist = useApi<Hist[]>('/me/sessions-history');
+  const [draft, setDraft] = useState(initialFilters);
+  const [filters, setFilters] = useState(initialFilters);
+  const rows = res.data?.filter((r) => {
+    const date = localDate.format(new Date(r.starts_at));
+    return (!filters.search || [r.code, r.game.title, r.console_name].some((value) => value?.toLowerCase().includes(filters.search)))
+      && (!filters.status || r.status === filters.status) && (!filters.mode || r.mode === filters.mode)
+      && (!filters.from || date >= filters.from) && (!filters.to || date <= filters.to);
+  });
   return (
     <>
-      <PageHeader title="Minhas sessões" subtitle="Reservas, sessões em andamento e histórico." />
+      <PageHeader title="Minhas sessões" subtitle="Acompanhe suas reservas e sessões em andamento.">
+        <Link className="btn" href="/sessoes/historico">Histórico de sessões</Link>
+      </PageHeader>
       <ErrorBox error={res.error} onRetry={res.reload} />
       <h2>Reservas</h2>
-      {!res.data ? <Skeleton h={160} /> : !res.data.length ? <Empty>Nenhuma reserva ainda. <Link className="link-purple" href="/jogos">Ver catálogo</Link></Empty> : (
+      <form className={styles.filters} onSubmit={(e) => { e.preventDefault(); setFilters({ ...draft, search: draft.search.trim().toLowerCase() }); }}>
+        <label className="field">Buscar
+          <input type="search" maxLength={50} placeholder="Código, jogo ou console" value={draft.search} onChange={(e) => setDraft({ ...draft, search: e.target.value })} />
+        </label>
+        <label className="field">Status
+          <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })}>
+          <option value="">Todos</option>{Object.entries(RESERVATION_STATUS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label className="field">Tipo de reserva
+          <select value={draft.mode} onChange={(e) => setDraft({ ...draft, mode: e.target.value })}>
+          <option value="">Todos</option><option value="queue">Fila</option><option value="scheduled">Horário fixo</option>
+          </select>
+        </label>
+        <DateFilter label="Data inicial" max={draft.to} value={draft.from} onChange={(from) => setDraft({ ...draft, from })} />
+        <DateFilter label="Data final" min={draft.from} value={draft.to} onChange={(to) => setDraft({ ...draft, to })} />
+        <div className="row">
+          <button className="btn primary">Filtrar</button>
+          <button type="button" className="btn" onClick={() => { setDraft(initialFilters); setFilters(initialFilters); }}>Limpar filtros</button>
+        </div>
+      </form>
+      {!rows ? <Skeleton h={160} /> : !rows.length ? <Empty>Nenhuma reserva encontrada. <Link className="link-purple" href="/jogos">Ver catálogo</Link></Empty> : (
         <div className="table-wrap card max10"><table className="table"><thead><tr><th>Reserva</th><th>Jogo</th><th>Período</th><th>Valor</th><th>Status</th><th /></tr></thead>
-          <tbody>{res.data.map((r) => (
+          <tbody>{rows.map((r) => (
             <tr key={r.id}><td>{r.code}</td><td>{r.game.title}<div className="small dim">{r.console_name}</div></td>
               <td>{dateTime(r.starts_at)} – {time(r.ends_at)}<div className="small dim">{r.mode === 'queue' ? 'início estimado' : 'horário fixo'}</div></td>
               <td>{money(r.total_cents)}</td><td><StatusPill status={r.status} map={RESERVATION_STATUS} /></td>
@@ -34,14 +66,6 @@ function Sessoes() {
                   }}>Desistir</button></div>
                 : ['confirmed', 'active'].includes(r.status) ? <Link className="btn sm primary" href={`/sessoes/${r.id}`}>Sala de espera</Link>
                 : <Link className="btn sm" href={`/sessoes/${r.id}`}>Detalhes</Link>}</td></tr>
-          ))}</tbody></table></div>
-      )}
-      <h2 style={{ marginTop: 24 }}>Histórico de sessões</h2>
-      {!hist.data ? <Skeleton h={100} /> : !hist.data.length ? <Empty>Nenhuma sessão jogada.</Empty> : (
-        <div className="table-wrap card max10"><table className="table"><thead><tr><th>Jogo</th><th>Contratado</th><th>Primeira conexão</th><th>Tempo usado</th><th>Encerramento</th></tr></thead>
-          <tbody>{hist.data.map((h) => (
-            <tr key={h.id}><td>{h.title}<div className="small dim">{h.code}</div></td><td>{dateTime(h.contract_starts_at)} – {time(h.contract_ends_at)}</td>
-              <td>{dateTime(h.first_connected_at)}</td><td>{duration(h.seconds_used)}</td><td>{h.end_reason ? END[h.end_reason] || h.end_reason : SESSION_STATUS[h.status] || h.status}</td></tr>
           ))}</tbody></table></div>
       )}
     </>

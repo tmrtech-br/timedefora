@@ -82,6 +82,10 @@ class ConsoleStreamingAdapter(ABC):
 
     @abstractmethod
     def discover_console(self, ref: ConsoleRef) -> AdapterResult: ...
+
+    def discover_lan(self, ref: ConsoleRef) -> AdapterResult:
+        raise AdapterError('not_implemented', 'Pesquisa na rede local indisponível para este método de conexão.')
+
     @abstractmethod
     def pair_console(self, ref: ConsoleRef, code: str | None) -> AdapterResult: ...
     @abstractmethod
@@ -89,7 +93,7 @@ class ConsoleStreamingAdapter(ABC):
     @abstractmethod
     def start_stream(self, ref: ConsoleRef, session_id: str) -> AdapterResult: ...
     @abstractmethod
-    def stop_stream(self, ref: ConsoleRef, session_id: str) -> AdapterResult: ...
+    def stop_stream(self, ref: ConsoleRef, session_id: str, standby: bool = False) -> AdapterResult: ...
     @abstractmethod
     def get_stream_status(self, ref: ConsoleRef, session_id: str) -> AdapterResult: ...
     @abstractmethod

@@ -1,7 +1,8 @@
 'use client';
 import { cloneElement, isValidElement, useEffect, useId, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import type { ApiError } from '@/lib/api';
+import { SystemAlert, updateNoticeDialog, type NoticeKind } from './Toaster';
 
 export function PageHeader({ title, subtitle, children }: { title: string; subtitle?: string; children?: React.ReactNode }) {
   return (
@@ -12,15 +13,14 @@ export function PageHeader({ title, subtitle, children }: { title: string; subti
   );
 }
 
-export function Alert({ kind = 'info', children }: { kind?: 'info' | 'error' | 'ok' | 'warn'; children: React.ReactNode }) {
-  const Icon = kind === 'error' ? XCircle : kind === 'ok' ? CheckCircle2 : kind === 'warn' ? AlertTriangle : Info;
-  return <div className={`alert ${kind}`} role={kind === 'error' ? 'alert' : 'status'}><Icon aria-hidden />{children}</div>;
+export function Alert({ kind = 'info', children, dismissible = true }: { kind?: NoticeKind; children: React.ReactNode; dismissible?: boolean }) {
+  return <SystemAlert key={typeof children === 'string' ? `${kind}:${children}` : kind} kind={kind} dismissible={dismissible}>{children}</SystemAlert>;
 }
 
 export function ErrorBox({ error, onRetry }: { error: ApiError | Error | null; onRetry?: () => void }) {
   if (!error) return null;
   return (
-    <Alert kind="error">
+    <Alert key={error.message} kind="error" dismissible={!onRetry}>
       <span>{error.message} {onRetry && <button className="btn sm" onClick={onRetry} style={{ marginLeft: 8 }}>Tentar novamente</button>}</span>
     </Alert>
   );
@@ -50,7 +50,7 @@ type ControlProps = { type?: string; value?: unknown; maxLength?: number; onBlur
  * - Inputs de texto recebem `maxLength` padrão de 50 (textarea: 2000) e exibem o contador "n/máx".
  * - `required`: ao sair do campo vazio, mostra "Preencha este campo." (o servidor também valida).
  */
-export function Field({ label, error, children, hint, required }: { label: string; error?: string; children: React.ReactNode; hint?: string; required?: boolean }) {
+export function Field({ label, error, children, hint, help, required }: { label: string; error?: string; children: React.ReactNode; hint?: string; help?: string; required?: boolean }) {
   const id = useId();
   const [touched, setTouched] = useState(false);
   const el = isValidElement<ControlProps>(children) ? children : null;
@@ -72,7 +72,10 @@ export function Field({ label, error, children, hint, required }: { label: strin
   const near = max && value !== null && value.length >= max * 0.9;
   return (
     <div className={`field ${shownError ? 'invalid' : ''}`}>
-      <label htmlFor={id}>{label}{required && <span className="req" aria-hidden> *</span>}</label>
+      <div className="field-label">
+        <label htmlFor={id}>{label}{required && <span className="req" aria-hidden> *</span>}</label>
+        {help && <FieldHelp text={help} />}
+      </div>
       {control}
       <div className="field-foot">
         <span>
@@ -83,6 +86,31 @@ export function Field({ label, error, children, hint, required }: { label: strin
       </div>
     </div>
   );
+}
+
+export function FieldHelp({ text }: { text: string }) {
+  const id = useId();
+  const tooltip = useRef<HTMLSpanElement>(null);
+  function show(anchor: HTMLButtonElement) {
+    const help = tooltip.current;
+    if (!help) return;
+    if (!help.matches(':popover-open')) help.showPopover();
+    const rect = anchor.getBoundingClientRect();
+    const left = Math.max(8, Math.min(rect.left, document.documentElement.clientWidth - help.offsetWidth - 8));
+    const top = rect.top >= help.offsetHeight + 14 ? rect.top - help.offsetHeight - 6 : rect.bottom + 6;
+    help.style.left = `${left}px`;
+    help.style.top = `${top}px`;
+  }
+  function hide() {
+    if (tooltip.current?.matches(':popover-open')) tooltip.current.hidePopover();
+  }
+  return <span className="field-help">
+    <button type="button" aria-label="Ajuda sobre o campo" aria-describedby={id}
+      onMouseEnter={(e) => show(e.currentTarget)} onMouseLeave={hide}
+      onFocus={(e) => show(e.currentTarget)} onBlur={hide}
+      onKeyDown={(e) => { if (e.key === 'Escape' && tooltip.current?.matches(':popover-open')) { e.preventDefault(); hide(); } }}>?</button>
+    <span id={id} ref={tooltip} popover="manual" role="tooltip">{text}</span>
+  </span>;
 }
 
 const LABELS: Record<string, string> = {
@@ -98,24 +126,28 @@ export function StatusPill({ status, map, tone }: { status: string; map?: Record
   return <span className={`pill ${t}`}>{map?.[status] || LABELS[status] || status}</span>;
 }
 
-export function ModalShell({ title, onClose, children, allowEscape = false, closeLabel = 'Fechar' }: {
-  title: string; onClose: () => void; children: React.ReactNode; allowEscape?: boolean; closeLabel?: string;
+export function ModalShell({ title, onClose, children, allowEscape = false, closeLabel = 'Fechar', closeButtonClassName = 'sm', showCloseButton = true, compact = false }: {
+  title: string; onClose: () => void; children: React.ReactNode; allowEscape?: boolean; closeLabel?: string; closeButtonClassName?: string; showCloseButton?: boolean; compact?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const node = dialog.current;
     node?.showModal();
-    return () => node?.close();
+    updateNoticeDialog();
+    return () => {
+      node?.close();
+      updateNoticeDialog();
+    };
   }, []);
   return (
-    <dialog ref={dialog} className="card modal modal-shell" aria-modal="true" aria-label={title} onCancel={(event) => {
+    <dialog ref={dialog} className={`card modal modal-shell${compact ? ' modal-compact' : ''}`} aria-modal="true" aria-label={title} onCancel={(event) => {
       // O backdrop nunca fecha o diálogo. Esc é opt-in para telas que não guardam alterações.
       event.preventDefault();
       if (allowEscape) onClose();
     }}>
         <div className="spread" style={{ marginBottom: 12 }}>
           <h2 style={{ margin: 0 }}>{title}</h2>
-          <button type="button" className="btn sm" onClick={onClose} autoFocus>{closeLabel}</button>
+          {showCloseButton && <button type="button" className={`btn ${closeButtonClassName}`} onClick={onClose} autoFocus>{closeLabel}</button>}
         </div>
         {children}
     </dialog>

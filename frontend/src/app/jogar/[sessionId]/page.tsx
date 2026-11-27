@@ -60,7 +60,8 @@ function Player() {
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [ending, setEnding] = useState(false);
   const [locked, setLocked] = useState(false);
-  const shareOn = useFeatures()?.share_button_enabled === true;   // Share bloqueado por padrão (Parâmetros)
+  const features = useFeatures();
+  const shareOn = features?.share_button_enabled === true;   // Share bloqueado por padrão (Parâmetros)
   const { bindings } = useBindings();
   const codeToAction = useMemo(() => byCode(bindings.keys), [bindings.keys]);
   const lastBlock = useRef<Record<string, number>>({});
@@ -234,7 +235,7 @@ function Player() {
                 <div className="support-body">
                   <KeyLegend bindings={bindings} compact />
                   <p className="small dim" style={{ margin: 0 }}>Controle USB/Bluetooth: os botões funcionam como no console. PS, Touchpad{!shareOn && ' e Share'} ficam bloqueados por segurança.</p>
-                  <p className="small" style={{ margin: 0 }}>Quer outras teclas? <a className="link-purple" href="/configuracoes#controles" target="_blank" rel="noopener noreferrer">Personalizar em nova aba</a> e depois recarregue esta página.</p>
+                  {features?.controls_menu_enabled && <p className="small" style={{ margin: 0 }}>Quer outras teclas? <a className="link-purple" href="/controles" target="_blank" rel="noopener noreferrer">Personalizar em nova aba</a> e depois recarregue esta página.</p>}
                 </div>
               </aside>)}
           </div>
