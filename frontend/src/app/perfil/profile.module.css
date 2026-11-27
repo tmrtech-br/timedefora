@@ -11,9 +11,9 @@
 .linkForm > input { flex: 1 1 180px; min-width: 0; }
 .linked :global(.spread) > span { min-width: 0; overflow-wrap: anywhere; }
 .linked :global(.spread) > button { flex-shrink: 0; }
-.googleAccount { display: inline-flex; align-items: center; gap: 9px; }
-.googleAccount > span:last-child { min-width: 0; }
-.googleMark {
+.linkedAccount { display: inline-flex; align-items: center; gap: 9px; }
+.linkedAccount > :last-child { min-width: 0; }
+.providerMark {
   display: grid;
   place-items: center;
   width: 30px;
@@ -22,6 +22,7 @@
   border-radius: 8px;
   background: white;
 }
+.providerMark[data-provider='kick'] { background: #53fc18; }
 
 @media (min-width: 901px) {
   .profileCards {

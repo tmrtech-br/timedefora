@@ -15,6 +15,8 @@ import styles from './profile.module.css';
 type Stats = { minutes_played: number; sessions: number; total_spent_cents: number; favorites: number; top_games: { title: string; minutes: number }[] };
 type Link_ = { id: string; provider: string; link_type: string; provider_email: string | null; public_url: string | null; display_name: string | null };
 
+const providerNames: Record<string, string> = { google: 'Google', twitch: 'Twitch', kick: 'Kick', discord: 'Discord' };
+
 function Perfil() {
   const { me, refresh } = useAuth();
   const sp = useSearchParams();
@@ -76,19 +78,24 @@ function Perfil() {
         </section>
         <section className={`card stack ${styles.compact} ${styles.linked}`}>
           <h2>Contas vinculadas</h2>
-          {links.data?.map((l) => (
-            <div key={l.id} className="spread">
-              {l.provider === 'google' ? (
-                <span className={styles.googleAccount}>
-                  <span className={styles.googleMark}><img src="/google.svg" alt="Google" width={18} height={18} /></span>
-                  <span>{l.provider_email || l.display_name || 'Conta vinculada'}</span>
+          {links.data?.map((l) => {
+            const provider = Object.hasOwn(providerNames, l.provider) ? providerNames[l.provider] : undefined;
+            return (
+              <div key={l.id} className="spread">
+                <span className={styles.linkedAccount}>
+                  {provider ? (
+                    <span className={styles.providerMark} data-provider={l.provider}>
+                      <img src={`/${l.provider}.svg`} alt={provider} width={18} height={18} />
+                    </span>
+                  ) : <b>{l.provider}</b>}
+                  {l.public_url ? (
+                    <a className="link-purple" href={l.public_url} target="_blank" rel="noopener noreferrer">{l.display_name || 'Abrir perfil'}</a>
+                  ) : <span>{l.provider_email || l.display_name || 'Conta vinculada'}</span>}
                 </span>
-              ) : (
-                <span><b>{l.provider[0].toUpperCase() + l.provider.slice(1)}</b> · perfil público: <a className="link-purple" href={l.public_url || '#'} target="_blank" rel="noopener noreferrer">{l.display_name}</a></span>
-              )}
-              <button className="btn sm danger" onClick={() => run(async () => { await del(`/me/linked-accounts/${l.id}`); links.reload(); }, 'Desvinculado.')}>Remover</button>
-            </div>
-          ))}
+                <button className="btn sm danger" onClick={() => run(async () => { await del(`/me/linked-accounts/${l.id}`); links.reload(); }, 'Desvinculado.')}>Remover</button>
+              </div>
+            );
+          })}
           {!links.data?.some((l) => l.provider === 'google') && <GoogleButton intent="link" label="Vincular conta Google" />}
           <div className={`row ${styles.linkForm}`}>
             <select className="btn" value={profile.provider} onChange={(e) => setProfile({ ...profile, provider: e.target.value })} aria-label="Serviço">
