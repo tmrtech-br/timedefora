@@ -1,0 +1,24 @@
+.code {
+  position: relative;
+}
+
+.code input {
+  padding-inline: 48px;
+  text-align: center;
+  font-size: 22px;
+  letter-spacing: 0.3em;
+}
+
+.paste:global(.icon-btn) {
+  position: absolute;
+  inset-inline-end: 4px;
+  bottom: 4px;
+  width: 34px;
+  height: 34px;
+  color: var(--muted);
+}
+
+.paste:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}

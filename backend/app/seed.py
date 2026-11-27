@@ -14,6 +14,7 @@ from psycopg.types.json import Jsonb
 from .config import settings
 from .core import security, timeutil
 from .core.db import get_pool, insert, one, tx
+from .migrate import MIGRATIONS_DIR
 
 ROLES = [('client', 'Cliente', 'Catálogo, filas, compras, sessões e perfil próprios.'),
          ('operator', 'Operador', 'Operação, monitoramento, manutenção e suporte.'),
@@ -93,6 +94,8 @@ def base(conn) -> None:
         if email:
             conn.execute('''insert into notification_templates(code, channel, subject, body_text, body_html) values (%s,'email',%s,%s,%s)
                             on conflict (code, channel) do nothing''', (code, subj, text, _html(text)))
+    # Em instalações novas, o seed insere os modelos depois da execução das migrations.
+    conn.execute((MIGRATIONS_DIR / '030_visual_emails_transacionais.sql').read_text(encoding='utf-8'))
 
 
 def admin(conn) -> None:
