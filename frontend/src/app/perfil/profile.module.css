@@ -11,6 +11,17 @@
 .linkForm > input { flex: 1 1 180px; min-width: 0; }
 .linked :global(.spread) > span { min-width: 0; overflow-wrap: anywhere; }
 .linked :global(.spread) > button { flex-shrink: 0; }
+.googleAccount { display: inline-flex; align-items: center; gap: 9px; }
+.googleAccount > span:last-child { min-width: 0; }
+.googleMark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 8px;
+  background: white;
+}
 
 @media (min-width: 901px) {
   .profileCards {

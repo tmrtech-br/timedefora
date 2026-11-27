@@ -77,8 +77,17 @@ function Perfil() {
         <section className={`card stack ${styles.compact} ${styles.linked}`}>
           <h2>Contas vinculadas</h2>
           {links.data?.map((l) => (
-            <div key={l.id} className="spread"><span><b>{l.provider === 'google' ? 'Google' : l.provider[0].toUpperCase() + l.provider.slice(1)}</b> · {l.link_type === 'oauth' ? `OAuth (${l.provider_email})` : <>perfil público: <a className="link-purple" href={l.public_url || '#'} target="_blank" rel="noopener noreferrer">{l.display_name}</a></>}</span>
-              <button className="btn sm danger" onClick={() => run(async () => { await del(`/me/linked-accounts/${l.id}`); links.reload(); }, 'Desvinculado.')}>Remover</button></div>
+            <div key={l.id} className="spread">
+              {l.provider === 'google' ? (
+                <span className={styles.googleAccount}>
+                  <span className={styles.googleMark}><img src="/google.svg" alt="Google" width={18} height={18} /></span>
+                  <span>{l.provider_email || l.display_name || 'Conta vinculada'}</span>
+                </span>
+              ) : (
+                <span><b>{l.provider[0].toUpperCase() + l.provider.slice(1)}</b> · perfil público: <a className="link-purple" href={l.public_url || '#'} target="_blank" rel="noopener noreferrer">{l.display_name}</a></span>
+              )}
+              <button className="btn sm danger" onClick={() => run(async () => { await del(`/me/linked-accounts/${l.id}`); links.reload(); }, 'Desvinculado.')}>Remover</button>
+            </div>
           ))}
           {!links.data?.some((l) => l.provider === 'google') && <GoogleButton intent="link" label="Vincular conta Google" />}
           <div className={`row ${styles.linkForm}`}>
