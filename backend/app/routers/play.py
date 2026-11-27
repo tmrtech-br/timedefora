@@ -371,11 +371,12 @@ def agent_heartbeat(body: HeartbeatIn, authorization: str = Header(default='')):
         raise AppError(401, 'auth_required', 'Token do agente ausente.')
     n = timeutil.now()
     with tx() as conn:
-        ag = one(conn, 'select * from console_agents where credential_hash=%s', (security.sha256(token),))
+        ag = one(conn, """update console_agents
+                             set last_heartbeat_at=%s, status='online', agent_version=coalesce(%s, agent_version)
+                           where credential_hash=%s returning id""",
+                 (n, body.agent_version, security.sha256(token)))
         if not ag:
             raise AppError(401, 'invalid_agent', 'Agente não autorizado.')
-        conn.execute("update console_agents set last_heartbeat_at=%s, status='online', agent_version=coalesce(%s, agent_version) where id=%s",
-                     (n, body.agent_version, ag['id']))
         fields = ('fps', 'bitrate_kbps', 'rtt_ms', 'jitter_ms', 'packet_loss_pct', 'frames_dropped', 'input_latency_ms', 'temperature_c')
         for c in body.consoles[:32]:
             owned = one(conn, 'select console_id from console_connection_configs where console_id=%s and agent_id=%s',

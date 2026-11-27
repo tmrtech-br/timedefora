@@ -372,8 +372,12 @@ def delete_agent(aid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
 def rotate_agent(aid: uuid.UUID, p: Principal = Depends(ADMIN)):
     inbound, outbound = security.new_token(), security.new_token()
     with tx() as conn:
-        _patch(conn, 'console_agents', aid, {'credential_hash': security.sha256(inbound), 'outbound_token_enc': security.encrypt(outbound)},
-               {'credential_hash', 'outbound_token_enc'})
+        _patch(conn, 'console_agents', aid, {
+            'credential_hash': security.sha256(inbound),
+            'outbound_token_enc': security.encrypt(outbound),
+            'status': 'unknown',
+            'last_heartbeat_at': None,
+        }, {'credential_hash', 'outbound_token_enc', 'status', 'last_heartbeat_at'})
         audit_event(conn, 'agent.credentials_rotated', 'console_agents', aid)
     return {'agent_token': inbound, 'api_to_agent_token': outbound}
 

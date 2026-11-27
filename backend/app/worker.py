@@ -136,7 +136,9 @@ def _console_health(conn, n) -> None:
             ok = bool(c['last_heartbeat_at'] and n - c['last_heartbeat_at'] <= timeout)
             err = None if ok else 'Sem heartbeat do ConsoleAgent'
             if not ok and c['agent_id']:
-                conn.execute("update console_agents set status='offline' where id=%s and status<>'offline'", (c['agent_id'],))
+                conn.execute("""update console_agents set status='offline'
+                                 where id=%s and status<>'offline' and last_heartbeat_at < %s""",
+                             (c['agent_id'], n - timeout))
         conn.execute("""insert into console_health_samples(console_id, agent_id, status, simulated, error) values (%s,%s,%s,%s,%s)""",
                      (c['id'], c['agent_id'], 'online' if ok else 'offline', simulated, err))
         new_status = 'online' if ok else 'offline'

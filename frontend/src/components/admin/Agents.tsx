@@ -179,9 +179,9 @@ function AgentStartup() {
       <pre tabIndex={0} aria-label="Comando PowerShell"><code>{START_AGENT_COMMAND}</code></pre>
       {feedback && <p className="small" role="status">{feedback}</p>}
       <ol className="small">
-        <li>Salve os tokens no <code>config.json</code>. Se o agente estiver rodando, encerre-o com <kbd>Ctrl+C</kbd>.</li>
+        <li>Se o agente estiver rodando, encerre-o com <kbd>Ctrl+C</kbd>.</li>
         <li>No PC do agente, abra o PowerShell, cole o comando e pressione <kbd>Enter</kbd>. Mantenha a janela aberta enquanto o agente estiver em uso.</li>
-        <li>Atualize a lista de agentes e aguarde o status <strong>Online</strong>. Depois, abra <a className="link-purple" href="/admin/contas-psn">Contas PSN</a> para vincular a conta.</li>
+        <li>Aguarde o status <strong>Online</strong>. Depois, abra <a className="link-purple" href="/admin/contas-psn">Contas PSN</a> para vincular a conta.</li>
       </ol>
     </section>
   );
@@ -189,7 +189,7 @@ function AgentStartup() {
 
 function AgentActions({ agent, credentials, onCredentials, onChange, onClose, initialSummary }: {
   agent: AgentRow; credentials?: AgentTokens; onCredentials: (value: AgentTokens | null) => void;
-  onChange: () => void; onClose: () => void; initialSummary?: string;
+  onChange: (rotated?: boolean) => void; onClose: () => void; initialSummary?: string;
 }) {
   const [action, setAction] = useState('');
   const [record, setRecord] = useState(agent);
@@ -201,6 +201,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
   const [busy, setBusy] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const endpoint = String(record.endpoint_url ?? '');
+  const showCredentials = credentials && !deleted && (action === 'rotate' || (!action && Boolean(initialSummary)));
 
   async function execute() {
     if (!action || busy || deleted) return;
@@ -232,8 +233,8 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           setSummary('Agente excluído.');
           break;
       }
-      setAction('');
-      onChange();
+      if (action !== 'rotate') setAction('');
+      onChange(action === 'rotate');
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Não foi possível executar a ação.');
     } finally { setBusy(false); }
@@ -247,13 +248,16 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           <dt>Host</dt><dd>{String(record.host_name)}</dd>
           <dt>Endpoint</dt><dd>{endpoint || '—'}</dd>
           <dt>Localização</dt><dd>{String(record.location || '—')}</dd>
-          <dt>Status</dt><dd><StatusPill status={String(record.status)} map={AGENT_STATUS} /></dd>
-          <dt>Último heartbeat</dt><dd>{dateTime(record.last_heartbeat_at as string)}</dd>
+          <dt>Status</dt><dd><StatusPill status={String(agent.status)} map={AGENT_STATUS} /></dd>
+          <dt>Último heartbeat</dt><dd>{dateTime(agent.last_heartbeat_at as string)}</dd>
         </dl>
-        {!deleted && <AgentStartup />}
-      </div>
-      {!deleted && <form className="stack" onSubmit={(event) => { event.preventDefault(); void execute(); }}>
-        <Field label="Ação"><select value={action} disabled={busy} onChange={(event) => setAction(event.target.value)}>
+        {!deleted && <form className="stack" onSubmit={(event) => { event.preventDefault(); void execute(); }}>
+        <Field label="Ação"><select value={action} disabled={busy} onChange={(event) => {
+          setAction(event.target.value);
+          setSummary('');
+          setError('');
+          setCopy('');
+        }}>
           <option value="">Selecione uma ação</option>
           {ACTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></Field>
@@ -264,16 +268,16 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         </Field>}
         <button className={`btn ${action === 'delete' ? 'danger' : 'primary'}`} type="submit"
           disabled={!action || busy || (action === 'delete' && !reason.trim())}>{busy ? 'Executando…' : 'Executar'}</button>
-      </form>}
+        </form>}
+      </div>
       {summary && <p role="status">{summary}</p>}
       {error && <p role="alert" className="field invalid"><span className="err">{error}</span></p>}
-      {credentials && !deleted && <section className="stack" aria-label="Credenciais do agente">
+      {showCredentials && <section className="stack" aria-label="Credenciais do agente">
         <div className="small">
           <strong>Como aplicar os tokens</strong>
           <ol>
             <li>No computador que executa o ConsoleAgent, abra o <code>config.json</code> usado na inicialização. Por padrão, ele fica na pasta <code>agent</code> do projeto.</li>
             <li>Ao rotacionar, os tokens anteriores perdem a validade. Use os botões <strong>Copiar</strong> para substituir os valores de <code>agent_token</code> e <code>api_to_agent_token</code>. Mantenha as aspas, as vírgulas e as demais configurações.</li>
-            <li>Salve o arquivo e reinicie o ConsoleAgent para carregar os dois novos tokens.</li>
           </ol>
         </div>
         {(['agent_token', 'api_to_agent_token'] as const).map((key) => <div key={key} className="row">
@@ -284,6 +288,8 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           }}>Copiar</button>
         </div>)}
         {copy && <p className="small" role="status">{copy}</p>}
+        <p className="small">Salve o arquivo <code>config.json</code>.</p>
+        <AgentStartup />
       </section>}
     </div>
   </Modal>;
@@ -319,10 +325,17 @@ export default function Agents() {
       <PageHeader title="Agentes locais e dispositivos" subtitle="PC ao lado dos consoles: captura, encode, stream e interfaces de controle." />
       {msg}
       {deletion.dialog}
-      {selectedAgent && <AgentActions key={String(selectedAgent.row.id)} agent={selectedAgent.row}
+      {selectedAgent && <AgentActions key={String(selectedAgent.row.id)} agent={agents.data?.find((agent) => agent.id === selectedAgent.row.id) ?? selectedAgent.row}
         credentials={credentialsByAgent[String(selectedAgent.row.id)]}
         onCredentials={(value) => saveCredentials(String(selectedAgent.row.id), value)}
-        initialSummary={selectedAgent.summary} onChange={agents.reload} onClose={() => setSelectedAgent(null)} />}
+        initialSummary={selectedAgent.summary} onChange={(rotated) => {
+          if (rotated) {
+            const resetHeartbeat = (agent: AgentRow) => ({ ...agent, status: 'unknown', last_heartbeat_at: null });
+            agents.setData((rows) => rows?.map((agent) => agent.id === selectedAgent.row.id ? resetHeartbeat(agent) : agent) ?? null);
+            setSelectedAgent({ ...selectedAgent, row: resetHeartbeat(selectedAgent.row) });
+          }
+          void agents.reload();
+        }} onClose={() => setSelectedAgent(null)} />}
       <section className="card stack"><h2>Agentes</h2>
         <NewRecord title="Novo agente" onClose={() => { setA(EMPTY_AGENT); setConfigFile(null); }}>{(close) => <>
           <div className="grid3">

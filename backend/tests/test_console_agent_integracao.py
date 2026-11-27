@@ -23,6 +23,30 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def test_rotacao_aguarda_heartbeat_com_credencial_nova():
+    api, _ = admin_api()
+    created = api.post('/admin/agents', json={'name': 'pc-rotacao', 'host_name': 'pc'})
+    assert created.status_code == 201
+    original = created.json()
+
+    def heartbeat(token):
+        return api.post('/agents/heartbeat', json={}, headers={'Authorization': f'Bearer {token}'})
+
+    def agent():
+        return next(row for row in api.get('/admin/agents').json() if row['id'] == original['id'])
+
+    assert heartbeat(original['agent_token']).status_code == 200
+    assert agent()['status'] == 'online'
+    rotated = api.post(f"/admin/agents/{original['id']}/rotate-credentials")
+    assert rotated.status_code == 200
+    assert agent()['status'] == 'unknown'
+    assert agent()['last_heartbeat_at'] is None
+    assert heartbeat(original['agent_token']).status_code == 401
+    assert agent()['status'] == 'unknown'
+    assert heartbeat(rotated.json()['agent_token']).status_code == 200
+    assert agent()['status'] == 'online'
+
+
 def test_api_fala_com_agente_real_e_heartbeat_marca_online(freeze):
     freeze(at(1, 10))
     api, _ = admin_api()
