@@ -181,3 +181,41 @@ def test_fim_de_sessao_pede_repouso_so_sem_reserva_proxima(world, freeze, monkey
     freeze(at(2, 9, 40))
     assert api3.post(f'/sessions/{sid}/end').status_code == 200
     assert calls[-1] is True                      # nada na agenda: o console pode hibernar
+
+
+def test_sessao_continua_na_proxima_reserva_do_mesmo_jogador(world, freeze):
+    """Mesmo jogador, mesmo jogo e console, reserva logo em seguida: entra direto, contando os minutos da 2ª."""
+    freeze(at(2, 8, 0))
+    api = login(make_user('maratonista'))
+    r1 = reserve(api, world, 10).json()                           # fila: 08:00–08:10
+    pay(api, r1['id'])
+    worker.tick()                                                 # prepara e libera
+    j1 = api.post(f"/reservations/{r1['id']}/join", json={'input_device': 'gamepad'}).json()
+    freeze(at(2, 8, 5))
+    r2 = reserve(api, world, 30).json()                           # durante a sessão: logo após o fim
+    assert 'starts_at' in r2, r2
+    assert r2['starts_at'].startswith('2026-12-02T08:10')
+    pay(api, r2['id'])
+    freeze(at(2, 8, 10))
+    worker.tick()                                                 # fim da 1ª por tempo → continua na 2ª
+    st = api.get(f"/sessions/{j1['session_id']}").json()
+    assert st['status'] != 'active' and st['continued_by']['reservation_id'] == r2['id']
+    j2 = api.post(f"/reservations/{r2['id']}/join", json={'input_device': 'gamepad'})
+    assert j2.status_code == 200, j2.text
+    s2 = api.get(f"/sessions/{j2.json()['session_id']}").json()
+    assert s2['remaining_seconds'] == 30 * 60                    # minutos da 2ª reserva, a partir de agora
+
+
+def test_sem_continuacao_para_outro_jogador(world, freeze):
+    freeze(at(2, 8, 0))
+    a = login(make_user('cont_a'))
+    r1 = reserve(a, world, 10).json()
+    pay(a, r1['id'])
+    worker.tick()
+    j1 = a.post(f"/reservations/{r1['id']}/join", json={'input_device': 'gamepad'}).json()
+    b = login(make_user('cont_b'))
+    rb = reserve(b, world, 10).json()
+    pay(b, rb['id'])
+    freeze(at(2, 8, 10))
+    worker.tick()
+    assert a.get(f"/sessions/{j1['session_id']}").json()['continued_by'] is None

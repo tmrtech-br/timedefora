@@ -19,7 +19,8 @@ import { toast } from '@/components/Toaster';
 import type { InputCommand, StreamMetrics } from '@/lib/gamebridge';
 
 type State = { id: string; status: string; game: string; slug?: string; console: string; reservation_id?: string; contract_ends_at: string; server_time: string;
-  remaining_seconds: number; input_device: string; simulated: boolean; metrics: StreamMetrics | null; end_reason: string | null };
+  remaining_seconds: number; input_device: string; simulated: boolean; metrics: StreamMetrics | null; end_reason: string | null;
+  continued_by?: { reservation_id: string; session_id: string } | null };
 // Botões do controle (índices do "standard mapping") que nunca são enviados ao console.
 const BLOCKED_PAD: Record<number, string> = { 16: 'PS', 17: 'Touchpad' };
 // "standard mapping": axes[0..3] = analógico esquerdo X/Y, direito X/Y (Y negativo = para cima, igual ao DS4).
@@ -73,6 +74,20 @@ function Player() {
     toast('error', `Botão ${name} bloqueado por segurança`);
   }, []);
   useEffect(() => { try { setToken(sessionStorage.getItem(`lp_input_${sessionId}`)); } catch { setToken(null); } }, [sessionId]);
+  // Sessão contínua: a próxima reserva do jogador (mesmo jogo e console) começou logo em seguida. Entra nela sozinho.
+  const [continuing, setContinuing] = useState(false);
+  const nextReservation = s && !['ready', 'active'].includes(s.status) ? s.continued_by?.reservation_id : undefined;
+  useEffect(() => {
+    if (!nextReservation || continuing) return;
+    setContinuing(true);
+    post<{ session_id: string; input_token: string }>(`/reservations/${nextReservation}/join`,
+      { input_device: s?.input_device === 'keyboard_mouse' ? 'keyboard_mouse' : 'gamepad' })
+      .then((j) => {
+        try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); } catch { /* armazenamento indisponível */ }
+        router.replace(`/jogar/${j.session_id}`);
+      })
+      .catch(() => { setContinuing(false); toast('error', 'Não foi possível continuar na próxima reserva. Abra-a pela sala de espera.'); });
+  }, [nextReservation, continuing, router, s?.input_device]);
   const send = useCallback(async (command: InputCommand) => {
     if (!token) return;
     if (sendWebRtcControl(sessionId, command)) { setInputStatus('ativo'); return; }
@@ -202,7 +217,13 @@ function Player() {
       {s.simulated && <Alert kind="warn">Sessão <b>SIMULADA</b>: não há vídeo de console real. Os comandos são validados pelo servidor e aceitos pelo simulador GameBridge.</Alert>}
       {warn && <Alert kind={left <= 60 ? 'warn' : 'info'}>{warn}</Alert>}
 
-      {ended ? (
+      {ended && (continuing || s.continued_by) ? (
+        <section className="card session-over" role="status">
+          <Gamepad2 size={44} aria-hidden />
+          <h2>Continuando na sua próxima reserva…</h2>
+          <p className="muted">O tempo desta reserva terminou e a próxima (mesmo jogo e console) já começou. O jogo continua de onde parou.</p>
+        </section>
+      ) : ended ? (
         <section className="card session-over">
           <Gamepad2 size={44} aria-hidden />
           <h2>Sessão encerrada</h2>

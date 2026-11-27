@@ -31,6 +31,9 @@ function Room() {
   const [msg, setMsg] = useState('');
   const [joining, setJoining] = useState(false);
   useEffect(() => { if (!kbAllowed && device === 'keyboard_mouse') setDevice('gamepad'); }, [kbAllowed, device]);
+  // Link de e-mail/notificação para uma reserva que já terminou: mostra o motivo na tela de sessões.
+  const ended = r && ['completed', 'no_show', 'cancelled', 'expired', 'needs_resolution', 'refunded'].includes(r.status);
+  useEffect(() => { if (ended && r) router.replace(`/sessoes?encerrada=${r.id}`); }, [ended, r, router]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!r) return <Skeleton h={300} />;
   const startIn = (new Date(r.starts_at).getTime() - now()) / 1000;

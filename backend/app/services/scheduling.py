@@ -224,6 +224,39 @@ def find_slots(conn, game_id, minutes: int, mode: str, start_at: datetime | None
     return out
 
 
+def max_scheduled_minutes(conn, game_id, start: datetime) -> int:
+    """Maior duração contínua (min) para um horário fixo em `start`: até o fim da janela do jogo, o fim do período
+    de operação do console ou a próxima reserva/bloqueio (descontando preparação e tempo extra).
+    Cálculo direto (uma consulta por console); só consoles com faixas semanais de funcionamento caem na busca binária.
+    """
+    slots = find_slots(conn, game_id, 1, 'scheduled', start)
+    if not slots:
+        return 0
+    st = get_settings(conn)
+    gap = timedelta(minutes=int(st['setup_minutes'])) + join_bonus(st)
+    best = 0
+    for sl in slots:
+        if _hours(conn, sl.console_id):
+            low, high = 1, int((sl.window_end - start).total_seconds() // 60)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if find_slots(conn, game_id, middle, 'scheduled', start, console_id=sl.console_id):
+                    low = middle
+                else:
+                    high = middle - 1
+            best = max(best, low)
+            continue
+        end = sl.window_end
+        bounds = conn.execute('select operating_ends_at from consoles where id=%s', (sl.console_id,)).fetchone()
+        if bounds and bounds['operating_ends_at']:
+            end = min(end, bounds['operating_ends_at'])
+        nxt = min((bs for bs, _ in _busy(conn, sl.console_id, start, end + gap) if bs >= start), default=None)
+        if nxt is not None:
+            end = min(end, nxt - gap)
+        best = max(best, int((end - start).total_seconds() // 60))
+    return max(0, best)
+
+
 def _hm(dt: datetime) -> str:
     loc = timeutil.local(dt)
     today = timeutil.local(timeutil.now()).date()

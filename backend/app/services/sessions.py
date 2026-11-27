@@ -187,6 +187,34 @@ def should_standby(conn, ref, s: dict) -> bool:
                                         exclude_reservation=s['reservation_id'])
 
 
+def _continue_with_next(conn, s: dict, n):
+    """Sessão contínua: o mesmo jogador tem a próxima reserva do MESMO jogo no MESMO console logo em seguida.
+
+    A próxima reserva é antecipada para começar agora (com os minutos dela), marcada como pronta sem nova
+    preparação (o console já está com o jogo aberto) e a sessão é liberada. A tela do jogador entra sozinha nela.
+    """
+    r1 = conn.execute('select * from reservations where id=%s', (s['reservation_id'],)).fetchone()
+    r2 = conn.execute('''select * from reservations where user_id=%s and console_id=%s and game_id=%s and id<>%s
+                         and status='confirmed' and starts_at >= %s and starts_at <= %s
+                         and not exists (select 1 from game_sessions x where x.reservation_id=reservations.id)
+                         order by starts_at limit 1 for update''',
+                      (s['user_id'], s['console_id'], r1['game_id'], r1['id'], r1['starts_at'],
+                       r1['blocked_until'] + timedelta(minutes=1))).fetchone()
+    if not r2:
+        return None
+    if r2['starts_at'] > n:                              # antecipa para agora (o intervalo do anterior já foi liberado)
+        conn.execute('update reservations set starts_at=%s, ends_at=%s, blocked_until=%s where id=%s',
+                     (n, n + (r2['ends_at'] - r2['starts_at']), n + (r2['blocked_until'] - r2['starts_at']), r2['id']))
+    conn.execute('''insert into console_preparations(reservation_id, console_id, status, attempts, last_message, ready_at, created_at)
+                    values (%s,%s,'ready',0,'Continuação da sessão anterior: console já com o jogo aberto.',%s,%s)
+                    on conflict (reservation_id) do update set status='ready', ready_at=excluded.ready_at,
+                      last_message=excluded.last_message''', (r2['id'], r2['console_id'], n, n))
+    s2 = prepare_session(conn, r2)
+    _event(conn, s2['id'], 'continuation_of', {'session_id': str(s['id'])})
+    scheduling.recompute_queue(conn, s['console_id'])
+    return s2
+
+
 def end_session(conn, s: dict, reason: str, status: str = 'ended') -> None:
     n = timeutil.now()
     if s['status'] not in ('ready', 'active'):
@@ -218,12 +246,16 @@ def end_session(conn, s: dict, reason: str, status: str = 'ended') -> None:
     scheduling.recompute_queue(conn, s['console_id'])
     if reason in ('user_ended', 'admin', 'failure', 'no_show'):
         scheduling.compact_queue(conn, s['console_id'])
+    nxt = _continue_with_next(conn, s, n) if reason == 'time_up' else None
     if a is not None:
         try:
             # Depois de reorganizar a fila: a próxima reserva pode ter sido antecipada.
+            # Continuação: o console segue ligado e com o jogo aberto (should_standby vê a nova sessão).
             a.stop_stream(ref, str(s['id']), standby=should_standby(conn, ref, s))
         except AdapterError:
             pass
+    if nxt:
+        _event(conn, s['id'], 'continued', {'reservation_id': str(nxt['reservation_id']), 'session_id': str(nxt['id'])})
     r = conn.execute('select r.code, g.title from reservations r join games g on g.id=r.game_id where r.id=%s', (s['reservation_id'],)).fetchone()
     notifications.notify(conn, str(s['user_id']), 'session_ended', {'jogo': r['title'], 'motivo': {
         'time_up': 'tempo contratado encerrado', 'user_ended': 'encerrada por você', 'admin': 'encerrada pela operação',
@@ -264,6 +296,8 @@ def session_state(user, session_id) -> dict:
         if not s or (str(s['user_id']) != user.user_id and not user.is_staff):
             raise not_found('Sessão não encontrada.')
         ref = console_ref(conn, s['console_id'])
+        cont = conn.execute("""select details from session_events where session_id=%s and event_type='continued'
+                               order by created_at desc limit 1""", (session_id,)).fetchone()
     n = timeutil.now()
     adapter = get_adapter(ref.method)
     try:
@@ -274,7 +308,9 @@ def session_state(user, session_id) -> dict:
             'reservation_code': s['code'], 'reservation_id': str(s['reservation_id']), 'contract_starts_at': s['contract_starts_at'].isoformat(),
             'contract_ends_at': s['contract_ends_at'].isoformat(), 'server_time': n.isoformat(),
             'remaining_seconds': max(0, int((s['contract_ends_at'] - n).total_seconds())) if s['status'] in ('ready', 'active') else 0,
-            'input_device': s['input_device'], 'simulated': adapter.simulated, 'metrics': metrics, 'end_reason': s['end_reason']}
+            'input_device': s['input_device'], 'simulated': adapter.simulated, 'metrics': metrics, 'end_reason': s['end_reason'],
+            # Sessão contínua: a próxima reserva do jogador já foi liberada; a tela entra nela sozinha.
+            'continued_by': cont['details'] if cont else None}
 
 
 def admin_terminate(conn, session_id, reason: str, compensation: str | None) -> None:

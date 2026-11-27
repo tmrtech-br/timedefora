@@ -130,6 +130,7 @@ export default function GamePage() {
   return (
     <div className="stack">
       {g.is_demo && <Alert kind="warn">Jogo de demonstração: console e pagamento <b>simulados</b>. Exploração comercial ainda não autorizada.</Alert>}
+      <div className="game-top">
       <section className={`game-hero${g.banner_url ? ' has-banner' : ''}`}
         style={g.banner_url ? { '--game-banner': `url(${JSON.stringify(g.banner_url)})` } as React.CSSProperties : undefined}>
         <img
@@ -154,6 +155,22 @@ export default function GamePage() {
           <p className="small muted" style={{ margin: 0 }}>Recomendado: conexão estável de 15 Mbps+, navegador atualizado no PC/notebook, teclado e mouse ou controle USB/Bluetooth.</p>
         </div>
       </section>
+      <section className="card game-availability" aria-labelledby="t-disp">
+        <h2 id="t-disp"><CalendarClock size={18} aria-hidden /> Disponibilidade e fila</h2>
+        <p className="small muted">{g.availability.notice}</p>
+        {g.availability.consoles.map((c) => (
+          <div key={c.console_id} className="card game-availability-console">
+            <div className="spread"><h3 style={{ margin: 0 }}><Gamepad2 size={16} aria-hidden /> {c.console_name}</h3>
+              <span className="pill"><ListOrdered size={13} />{c.queue_size} na fila</span></div>
+            <ul className="small" style={{ paddingLeft: 18 }}>
+              {c.messages.map((m) => <li key={m}>{m.startsWith('Atenção') ? <b><AlertTriangle size={12} /> {m}</b> : m}</li>)}
+              {!byMinute && c.packages.map((p) => <li key={p.minutes}>{minutesLabel(p.minutes)}: {p.fits ? `início estimado ${dateTime(p.estimated_start_at)}, término máximo ${time(p.estimated_end_at)}` : 'indisponível nas janelas atuais'}</li>)}
+            </ul>
+            <QueueList items={c.queue} maxVisible={5} />
+          </div>
+        ))}
+      </section>
+      </div>
 
       <div className="grid2">
         <section className="card" id="reservar" aria-labelledby="t-reservar">
@@ -237,21 +254,6 @@ export default function GamePage() {
         </section>
       </div>
 
-      <section className="card" aria-labelledby="t-disp">
-        <h2 id="t-disp"><CalendarClock size={18} aria-hidden /> Disponibilidade e fila</h2>
-        <p className="small muted">{g.availability.notice}</p>
-        {g.availability.consoles.map((c) => (
-          <div key={c.console_id} className="card" style={{ marginTop: 12, background: 'rgba(255,255,255,.02)' }}>
-            <div className="spread"><h3 style={{ margin: 0 }}><Gamepad2 size={16} aria-hidden /> {c.console_name}</h3>
-              <span className="pill"><ListOrdered size={13} />{c.queue_size} na fila</span></div>
-            <ul className="small" style={{ paddingLeft: 18 }}>
-              {c.messages.map((m) => <li key={m}>{m.startsWith('Atenção') ? <b><AlertTriangle size={12} /> {m}</b> : m}</li>)}
-              {!byMinute && c.packages.map((p) => <li key={p.minutes}>{minutesLabel(p.minutes)}: {p.fits ? `início estimado ${dateTime(p.estimated_start_at)}, término máximo ${time(p.estimated_end_at)}` : 'indisponível nas janelas atuais'}</li>)}
-            </ul>
-            <QueueList items={c.queue} />
-          </div>
-        ))}
-      </section>
     </div>
   );
 }

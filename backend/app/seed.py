@@ -58,7 +58,7 @@ T = {  # code: (subject/title, text, include_email)
     'turn_ready': ('{jogo} está pronto para você!', 'Sua sessão foi liberada. Tempo contratado: {duracao} (até {fim_previsto}). Acesse sua conta e clique em "Começar a jogar": {link}', True),
     'session_ending': ('Restam {restante} de sessão', 'Sua sessão de {jogo} termina em {restante}.', False),
     'session_ended': ('Sessão encerrada', 'Sua sessão de {jogo} foi encerrada ({motivo}). O controle do console foi revogado.', False),
-    'console_not_ready': ('Problema técnico na sua sessão de {jogo}', 'O console {console} não ficou pronto no horário da reserva {codigo} por um problema técnico. Seu tempo NÃO foi consumido: nossa equipe já foi avisada e vai remarcar ou reembolsar sua reserva. Acompanhe: {link}', True),
+    'console_not_ready': ('Problema técnico na sua sessão de {jogo}', 'O console {console} não ficou pronto no horário da reserva {codigo} por um problema técnico. Seu tempo NÃO foi consumido: nossa equipe já foi avisada e vai remarcar ou reembolsar sua reserva. Fale com o suporte: {site}/suporte', True),
     'staff_incident': ('[timedefora] Incidente: {incidente}', '{incidente}. {detalhe}. Veja e defina a compensação no painel: {link}', True),
     'console_failure': ('Problema no console', 'Detectamos uma falha no console {console}. Nossa equipe foi acionada; o tempo perdido será compensado conforme a política.', True),
     'reservation_cancelled': ('Reserva cancelada', 'A reserva {codigo} foi cancelada. Se houve pagamento, o reembolso foi solicitado.', True),

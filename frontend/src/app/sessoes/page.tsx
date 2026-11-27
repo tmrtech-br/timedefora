@@ -1,10 +1,10 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import DateFilter from '@/components/DateFilter';
 import styles from '../pagamentos/payments.module.css';
 import Link from 'next/link';
 import RequireAuth from '@/components/RequireAuth';
-import { Empty, ErrorBox, PageHeader, Skeleton, StatusPill } from '@/components/ui';
+import { Alert, Empty, ErrorBox, PageHeader, Skeleton, StatusPill } from '@/components/ui';
 import { useApi } from '@/lib/hooks';
 import { ApiError, post } from '@/lib/api';
 import { toast } from '@/components/Toaster';
@@ -14,10 +14,26 @@ import type { Reservation } from '@/lib/types';
 const initialFilters = { search: '', status: '', mode: '', from: '', to: '' };
 const localDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Fortaleza' });
 
+/** Por que a reserva não está mais disponível (aberta a partir de um e-mail/notificação antigo). */
+function endedReason(r: Reservation): string {
+  switch (r.status) {
+    case 'completed': return 'já foi concluída: o tempo contratado terminou.';
+    case 'no_show': return 'foi encerrada por ausência: o console ficou pronto, mas a sessão não foi iniciada dentro do período.';
+    case 'cancelled': return `foi cancelada${r.cancel_reason ? ` (${r.cancel_reason})` : ''}.`;
+    case 'expired': return 'expirou porque o pagamento não foi concluído dentro do prazo.';
+    case 'refunded': return 'foi reembolsada.';
+    case 'needs_resolution': return `está em resolução pela equipe. ${r.resolution_notes || ''}`.trim();
+    default: return `está ${(RESERVATION_STATUS[r.status] || r.status).toLowerCase()}.`;
+  }
+}
+
 function Sessoes() {
   const res = useApi<Reservation[]>('/me/reservations', 10000);
   const [draft, setDraft] = useState(initialFilters);
   const [filters, setFilters] = useState(initialFilters);
+  const [endedId, setEndedId] = useState<string | null>(null);
+  useEffect(() => { try { setEndedId(new URLSearchParams(window.location.search).get('encerrada')); } catch { /* sem URL */ } }, []);
+  const ended = endedId ? res.data?.find((r) => r.id === endedId) : undefined;
   const rows = res.data?.filter((r) => {
     const date = localDate.format(new Date(r.starts_at));
     return (!filters.search || [r.code, r.game.title, r.console_name].some((value) => value?.toLowerCase().includes(filters.search)))
@@ -30,6 +46,8 @@ function Sessoes() {
         <Link className="btn" href="/sessoes/historico">Histórico de sessões</Link>
       </PageHeader>
       <ErrorBox error={res.error} onRetry={res.reload} />
+      {ended && <Alert kind={ended.status === 'needs_resolution' ? 'warn' : 'info'}>
+        A reserva <b>{ended.code}</b> ({ended.game.title}) {endedReason(ended)}</Alert>}
       <h2>Reservas</h2>
       <form className={styles.filters} onSubmit={(e) => { e.preventDefault(); setFilters({ ...draft, search: draft.search.trim().toLowerCase() }); }}>
         <label className="field">Buscar

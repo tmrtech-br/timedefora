@@ -126,6 +126,25 @@ def test_limite_agendado_termina_antes_do_bloqueio(world):
     assert response.json()['max_minutes'] == 45
 
 
+def test_limite_agendado_desconta_preparacao_e_tempo_extra(world, freeze):
+    freeze(at(2, 7, 0))
+    with tx() as conn:
+        conn.execute("update global_settings set value='5' where key='setup_minutes'")
+        conn.execute("update global_settings set value='30' where key='join_bonus_seconds'")
+    a = login(make_user('lim_a'))
+    r = reserve(a, world, 10, mode='scheduled', start_at=at(2, 9, 0))
+    assert r.status_code == 201, r.text
+    response = Api().get('/catalog/games/gta-vi/quote', params={
+        'minutes': 1, 'mode': 'scheduled', 'start_at': at(2, 8).isoformat(), 'duration_limit': True,
+    })
+    # 08:00 até a reserva das 09:00, menos 5 min de preparação e 30 s de tempo extra → 54 min inteiros
+    assert response.json()['max_minutes'] == 54
+    with tx() as conn:   # o limite calculado precisa caber de fato (mesma regra da reserva)
+        from app.services import scheduling
+        assert scheduling.find_slots(conn, world['game']['id'], 54, 'scheduled', at(2, 8))
+        assert not scheduling.find_slots(conn, world['game']['id'], 55, 'scheduled', at(2, 8))
+
+
 def test_hold_provisorio_bloqueia_e_expira(world, freeze):
     freeze(at(2, 9, 30))
     a = login(make_user('a1'))

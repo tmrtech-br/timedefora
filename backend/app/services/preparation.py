@@ -151,7 +151,7 @@ def _fail(conn, r: dict, p: dict, message: str) -> None:
     scheduling.recompute_queue(conn, r['console_id'])
     notifications.notify(conn, str(r['user_id']), 'console_not_ready',
                          {'jogo': info.get('title', ''), 'codigo': r['code'], 'console': info.get('console_name', '')},
-                         dedupe=f"console_not_ready:{r['id']}", link=f"/sessoes/{r['id']}")
+                         dedupe=f"console_not_ready:{r['id']}", link='/suporte')
     notify_staff(conn, 'staff_incident', {'incidente': f"Console {info.get('code', '?')} não ficou pronto",
                                           'detalhe': f"Reserva {r['code']} · {info.get('title', '?')} · cliente {info.get('username', '?')} · {message}"},
                  dedupe=f"staff_incident:{inc['id']}", link='/admin/sessoes')
