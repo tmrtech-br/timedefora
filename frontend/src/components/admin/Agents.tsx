@@ -58,7 +58,10 @@ async function readConfig(file: ConfigHandle) {
 }
 
 async function writeConfig(file: ConfigHandle, config: Record<string, unknown>) {
-  const writable = await file.createWritable();
+  await commitConfig(await file.createWritable(), config);
+}
+
+async function commitConfig(writable: FileSystemWritableFileStream, config: Record<string, unknown>) {
   try {
     await writable.write(JSON.stringify(config, null, 2) + '\n');
     await writable.close();
@@ -115,7 +118,7 @@ function ConfigTarget({ file, onFile, disabled }: {
 }) {
   const [feedback, setFeedback] = useState('');
   const supported = typeof window !== 'undefined' && Boolean((window as ConfigPickerWindow).showOpenFilePicker);
-  if (!supported) return <p className="small muted">Este navegador permite baixar o config.json. Use Chrome ou Edge para substituir o arquivo existente.</p>;
+  if (!supported) return <p className="small muted">Use Chrome ou Edge para autorizar a gravação no config.json.</p>;
   return <div className="stack">
     <div className="row">
       <button type="button" className="btn sm" disabled={disabled} onClick={async () => {
@@ -127,8 +130,11 @@ function ConfigTarget({ file, onFile, disabled }: {
         } catch (error) { setFeedback(error instanceof Error ? error.message : 'Não foi possível selecionar o arquivo.'); }
       }}>{file ? 'Trocar arquivo selecionado' : 'Selecionar arquivo'}</button>
       <FieldHelp text={CONFIG_HELP} />
-      {file && <span className="small muted" role="status">{file.name} selecionado.</span>}
     </div>
+    {file && <div role="status">
+      <strong>Arquivo selecionado</strong> <code>{file.name}</code>
+      <p className="small muted">O navegador exibe apenas o nome do arquivo. A gravação será feita no arquivo selecionado.</p>
+    </div>}
     {feedback && <p className="small" role="status">{feedback}</p>}
   </div>;
 }
@@ -174,19 +180,23 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           break;
         }
         case 'rotate': {
-          const existing = file ? await readConfig(file) : undefined;
-          const tokens = await post<AgentTokens>(`${base}/rotate-credentials`);
+          if (!file) throw new Error('Selecione o config.json e autorize a gravação antes de rotacionar.');
+          const existing = await readConfig(file);
+          const writable = await file.createWritable();
+          let tokens: AgentTokens;
+          try {
+            tokens = await post<AgentTokens>(`${base}/rotate-credentials`);
+          } catch (failure) {
+            await writable.abort().catch(() => {});
+            throw failure;
+          }
           const config = agentConfig(tokens, endpoint, existing);
           onCredentials({ tokens, config });
-          if (file) {
-            try {
-              await writeConfig(file, config);
-              setSummary('Tokens rotacionados e gravados no config.json. Reinicie o ConsoleAgent.');
-            } catch {
-              setSummary('Tokens rotacionados. A gravação falhou. Use Atualizar config.json existente ou Baixar config.json.');
-            }
-          } else {
-            setSummary('Tokens rotacionados. Os anteriores foram invalidados. Atualize o config.json e reinicie o ConsoleAgent.');
+          try {
+            await commitConfig(writable, config);
+            setSummary(`Tokens rotacionados e gravados automaticamente em ${file.name}. Reinicie o ConsoleAgent.`);
+          } catch {
+            setError('Os tokens foram rotacionados, mas o navegador não conseguiu concluir a gravação. Selecione Atualizar config.json existente para tentar novamente com os mesmos tokens.');
           }
           break;
         }
@@ -235,13 +245,13 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
               (value === 'update' && !(window as ConfigPickerWindow).showOpenFilePicker)}>{label}</option>)}
         </select></Field>
         {action === 'edit' && <AgentFields value={draft} onChange={setDraft} />}
-        {action === 'rotate' && <p className="small muted">A rotação invalida os tokens que o agente usa hoje.</p>}
+        {action === 'rotate' && <p className="small muted">Selecione o config.json antes de executar. O sistema substitui os tokens no arquivo e invalida os anteriores.</p>}
         {(action === 'update' || action === 'rotate') && <ConfigTarget file={file} onFile={setFile} disabled={busy} />}
         {action === 'delete' && <Field label="Motivo da exclusão" required>
           <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} rows={3} />
         </Field>}
         <button className={`btn ${action === 'delete' ? 'danger' : 'primary'}`} type="submit"
-          disabled={!action || busy || (action === 'update' && !file) || (action === 'delete' && !reason.trim())}>{busy ? 'Executando…' : 'Executar'}</button>
+          disabled={!action || busy || ((action === 'update' || action === 'rotate') && !file) || (action === 'delete' && !reason.trim())}>{busy ? 'Executando…' : 'Executar'}</button>
       </form>}
       {summary && <p role="status">{summary}</p>}
       {error && <p role="alert" className="field invalid"><span className="err">{error}</span></p>}
