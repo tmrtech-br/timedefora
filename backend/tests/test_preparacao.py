@@ -186,3 +186,18 @@ def test_share_bloqueado_por_padrao(world, freeze):
     assert adm.put('/admin/settings/share_button_enabled', json={'value': True, 'reason': 'teste'}).status_code == 200
     assert send('share').status_code == 200
     assert Api().get('/features').json()['share_button_enabled'] is True
+
+
+def test_atraso_nao_empurra_fila_para_fora_da_janela_do_jogo(world, freeze):
+    """Janela do jogo termina 10:00: a reserva seguinte não pode ser empurrada para além dela."""
+    _ADAPTERS['simulated'].fail_prepare.add(str(world['console']['id']))
+    a, a_rid = _paid(world, freeze, at(2, 9, 20))                  # 09:20–09:30
+    b = login(make_user('prep_janela_b'))
+    b_rid = reserve(b, world, 30).json()['id']                     # 09:30–10:00 (fim da janela)
+    assert pay(b, b_rid).status_code == 200
+    worker.tick()
+    _ADAPTERS['simulated'].fail_prepare.discard(str(world['console']['id']))
+    freeze(at(2, 9, 23))
+    worker.tick()
+    assert _row('select starts_at from reservations where id=%s', b_rid)['starts_at'] == at(2, 9, 30)
+    assert _row('select ends_at from reservations where id=%s', a_rid)['ends_at'] == at(2, 9, 30)

@@ -99,7 +99,7 @@ def join(user, reservation_id, input_device: str, ip: str, ua: str) -> dict:
         insert(conn, 'session_input_tokens', {'session_id': s['id'], 'user_id': user.user_id, 'reservation_id': r['id'],
                                               'console_id': r['console_id'], 'token_hash': security.sha256(token),
                                               'expires_at': r['ends_at']})
-        insert(conn, 'session_connections', {'session_id': s['id'], 'ip': ip, 'user_agent': (ua or '')[:300]})
+        connection = insert(conn, 'session_connections', {'session_id': s['id'], 'ip': ip, 'user_agent': (ua or '')[:300]})
         conn.execute("""update game_sessions set status='active', input_device=%s, first_connected_at=coalesce(first_connected_at,%s),
                         last_connected_at=%s where id=%s""", (input_device, n, n, s['id']))
         _event(conn, s['id'], 'joined', {'input_device': input_device})
@@ -114,7 +114,7 @@ def join(user, reservation_id, input_device: str, ip: str, ua: str) -> dict:
                                                'description': f'Falha ao iniciar stream: {e.code}'})
         raise AppError(503, 'stream_unavailable', 'Não foi possível iniciar a transmissão. O suporte foi notificado; '
                        'o tempo perdido por falha da plataforma será compensado conforme a política.')
-    return {'session_id': str(s['id']), 'input_token': token, 'contract_ends_at': r['ends_at'].isoformat(),
+    return {'session_id': str(s['id']), 'input_token': token, 'connection_id': str(connection['id']), 'contract_ends_at': r['ends_at'].isoformat(),
             'server_time': n.isoformat(), 'simulated': adapter.simulated, 'stream': stream.to_dict()}
 
 
@@ -296,6 +296,8 @@ def session_state(user, session_id) -> dict:
         if not s or (str(s['user_id']) != user.user_id and not user.is_staff):
             raise not_found('Sessão não encontrada.')
         ref = console_ref(conn, s['console_id'])
+        live = conn.execute("""select id from session_connections where session_id=%s and disconnected_at is null
+                               order by connected_at desc limit 1""", (session_id,)).fetchone()
         cont = conn.execute("""select details from session_events where session_id=%s and event_type='continued'
                                order by created_at desc limit 1""", (session_id,)).fetchone()
     n = timeutil.now()
@@ -310,7 +312,9 @@ def session_state(user, session_id) -> dict:
             'remaining_seconds': max(0, int((s['contract_ends_at'] - n).total_seconds())) if s['status'] in ('ready', 'active') else 0,
             'input_device': s['input_device'], 'simulated': adapter.simulated, 'metrics': metrics, 'end_reason': s['end_reason'],
             # Sessão contínua: a próxima reserva do jogador já foi liberada; a tela entra nela sozinha.
-            'continued_by': cont['details'] if cont else None}
+            'continued_by': cont['details'] if cont else None,
+            # Conexão (aba/aparelho) que está com o controle agora: as outras mostram o aviso de transferência.
+            'connection_id': str(live['id']) if live else None}
 
 
 def admin_terminate(conn, session_id, reason: str, compensation: str | None) -> None:

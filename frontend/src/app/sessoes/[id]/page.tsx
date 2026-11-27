@@ -46,8 +46,8 @@ function Room() {
     if (joining) return;
     setErr(''); setJoining(true);
     try {
-      const j = await post<{ session_id: string; input_token: string }>(`/reservations/${id}/join`, { input_device: device });
-      try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); } catch { /* armazenamento indisponível */ }
+      const j = await post<{ session_id: string; input_token: string; connection_id: string }>(`/reservations/${id}/join`, { input_device: device });
+      try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); sessionStorage.setItem(`lp_conn_${j.session_id}`, j.connection_id); } catch { /* armazenamento indisponível */ }
       router.push(`/jogar/${j.session_id}`);
     } catch (e) { setErr(e instanceof ApiError ? e.message : 'Erro ao entrar.'); reload(); }
     finally { setJoining(false); }

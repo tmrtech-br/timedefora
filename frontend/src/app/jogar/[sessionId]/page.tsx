@@ -20,7 +20,7 @@ import type { InputCommand, StreamMetrics } from '@/lib/gamebridge';
 
 type State = { id: string; status: string; game: string; slug?: string; console: string; reservation_id?: string; contract_ends_at: string; server_time: string;
   remaining_seconds: number; input_device: string; simulated: boolean; metrics: StreamMetrics | null; end_reason: string | null;
-  continued_by?: { reservation_id: string; session_id: string } | null };
+  continued_by?: { reservation_id: string; session_id: string } | null; connection_id?: string | null };
 // Botões do controle (índices do "standard mapping") que nunca são enviados ao console.
 const BLOCKED_PAD: Record<number, string> = { 16: 'PS', 17: 'Touchpad' };
 // "standard mapping": axes[0..3] = analógico esquerdo X/Y, direito X/Y (Y negativo = para cima, igual ao DS4).
@@ -80,14 +80,29 @@ function Player() {
   useEffect(() => {
     if (!nextReservation || continuing) return;
     setContinuing(true);
-    post<{ session_id: string; input_token: string }>(`/reservations/${nextReservation}/join`,
+    post<{ session_id: string; input_token: string; connection_id: string }>(`/reservations/${nextReservation}/join`,
       { input_device: s?.input_device === 'keyboard_mouse' ? 'keyboard_mouse' : 'gamepad' })
       .then((j) => {
-        try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); } catch { /* armazenamento indisponível */ }
+        try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); sessionStorage.setItem(`lp_conn_${j.session_id}`, j.connection_id); } catch { /* armazenamento indisponível */ }
         router.replace(`/jogar/${j.session_id}`);
       })
       .catch(() => { setContinuing(false); toast('error', 'Não foi possível continuar na próxima reserva. Abra-a pela sala de espera.'); });
   }, [nextReservation, continuing, router, s?.input_device]);
+  // Outra aba/aparelho entrou nesta sessão: o controle e o vídeo foram para lá. Avisa e permite retomar aqui.
+  const [myConnection, setMyConnection] = useState<string | null>(null);
+  useEffect(() => { try { setMyConnection(sessionStorage.getItem(`lp_conn_${sessionId}`)); } catch { setMyConnection(null); } }, [sessionId]);
+  const takenOver = !!s && s.status === 'active' && !!myConnection && !!s.connection_id && s.connection_id !== myConnection;
+  const [reclaiming, setReclaiming] = useState(false);
+  async function playHere() {
+    if (!s?.reservation_id) return;
+    setReclaiming(true);
+    try {
+      const j = await post<{ session_id: string; input_token: string; connection_id: string }>(`/reservations/${s.reservation_id}/join`,
+        { input_device: s.input_device === 'keyboard_mouse' ? 'keyboard_mouse' : 'gamepad' });
+      try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); sessionStorage.setItem(`lp_conn_${j.session_id}`, j.connection_id); } catch { /* */ }
+      window.location.reload();                       // reabre vídeo e controle nesta aba
+    } catch { toast('error', 'Não foi possível retomar aqui. Tente de novo.'); setReclaiming(false); }
+  }
   const send = useCallback(async (command: InputCommand) => {
     if (!token) return;
     if (sendWebRtcControl(sessionId, command)) { setInputStatus('ativo'); return; }
@@ -216,6 +231,8 @@ function Player() {
         <div className={`countdown${!ended && left <= 60 ? ' urgent' : ''}`} style={{ fontSize: 34 }} aria-live="polite">{duration(left)}</div></div>
       {s.simulated && <Alert kind="warn">Sessão <b>SIMULADA</b>: não há vídeo de console real. Os comandos são validados pelo servidor e aceitos pelo simulador GameBridge.</Alert>}
       {warn && <Alert kind={left <= 60 ? 'warn' : 'info'}>{warn}</Alert>}
+      {takenOver && <Alert kind="warn"><span>Esta sessão foi aberta em <b>outra aba ou aparelho</b>: o controle e o vídeo estão lá agora.{' '}
+        <button className="btn sm" disabled={reclaiming} onClick={playHere}>{reclaiming ? 'Retomando…' : 'Jogar aqui'}</button></span></Alert>}
 
       {ended && (continuing || s.continued_by) ? (
         <section className="card session-over" role="status">

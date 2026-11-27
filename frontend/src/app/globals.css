@@ -419,6 +419,8 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 /* subitens da família: mesma largura do card da família; vínculo indicado pela faixa lateral */
 .param.sub { background: #120e25; border-left: 3px solid rgba(177, 60, 255, .55); padding-left: 24px; }
 .param-group { display: grid; gap: 6px; align-content: start; }
+/* Plataformas: uma coluna por família (todas alinhadas no topo, mesma largura). */
+.params-platforms { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); align-items: start; }
 /* campo + unidade + salvar em colunas fixas: todos os cards alinham */
 .param-ctrl { display: grid; grid-template-columns: 84px 58px 64px; align-items: center; gap: 8px; flex-shrink: 0; }
 .param-ctrl input { width: 100%; }

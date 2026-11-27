@@ -478,8 +478,10 @@ def push_queue_after(conn, r: dict, needed_until):
     Retorna None se conseguiu (ou nada atrapalhava) ou o limite possível: início da primeira reserva que não pode
     mudar (horário marcado ou já com sessão). Horários marcados nunca são movidos.
     """
-    rows = conn.execute('''select r.*, g.title, exists(select 1 from game_sessions s where s.reservation_id=r.id) has_session
-                           from reservations r join games g on g.id=r.game_id
+    rows = conn.execute('''select r.*, g.title, exists(select 1 from game_sessions s where s.reservation_id=r.id) has_session,
+                                  a.ends_at window_end, c.operating_ends_at
+                           from reservations r join games g on g.id=r.game_id join consoles c on c.id=r.console_id
+                           left join console_game_assignments a on a.id=r.assignment_id
                            where r.console_id=%s and r.id<>%s and r.status = any(%s) and r.starts_at >= %s
                            order by r.starts_at for update of r''',
                         (r['console_id'], r['id'], list(OCCUPYING), r['blocked_until'])).fetchall()
@@ -487,9 +489,11 @@ def push_queue_after(conn, r: dict, needed_until):
     for x in rows:
         if x['starts_at'] >= cursor:
             break                                       # há folga: a cadeia termina aqui
-        if x['mode'] != 'queue' or x['has_session']:
-            return x['starts_at'] if not moves else moves[0][0]['starts_at']
         delta = cursor - x['starts_at']
+        # Não move: horário marcado, já em sessão, ou o novo horário sairia da janela do jogo / operação do console.
+        limit = min((t for t in (x['window_end'], x['operating_ends_at']) if t is not None), default=None)
+        if x['mode'] != 'queue' or x['has_session'] or (limit is not None and x['ends_at'] + delta > limit):
+            return x['starts_at'] if not moves else moves[0][0]['starts_at']
         moves.append((x, delta))
         cursor = x['blocked_until'] + delta
     for x, delta in reversed(moves):                   # do último para o primeiro: nunca sobrepõe no meio

@@ -208,7 +208,12 @@ export default function GamePage() {
                     min={endDate && earliestEndInput.startsWith(endDate) ? earliestEndInput.slice(11) : undefined}
                     max={endDate && latestEndInput.startsWith(endDate) ? latestEndInput.slice(11) : undefined} value={endTime} onChange={(e) => setEndTime(e.target.value)} /></label>
                 </div>
-                {mode === 'scheduled' && startLocal && (!assignmentEnd || (limitReady && !latestEnd)) && <p className="small muted">Escolha um início dentro da disponibilidade do console.</p>}
+                {mode === 'scheduled' && startLocal && (!assignmentEnd || (limitReady && !latestEnd)) && <p className="small" role="status" style={{ color: '#ffb366' }}>
+                  {firstTime?.startsWith(startDate) && startTime < firstTime.slice(11)
+                    ? `Nesse dia o início precisa ser a partir de ${firstTime.slice(11)} (horário de Brasília).`
+                    : lastTime?.startsWith(startDate) && startTime > lastTime.slice(11)
+                      ? `Nesse dia o último início possível é ${lastTime.slice(11)}.`
+                      : 'Esse horário não está livre no console: escolha outro início.'}</p>}
                 {mode === 'scheduled' && assignmentEnd > 0 && !limitReady && <p className="small muted" role="status">
                   {limit.error ? 'Não foi possível consultar a disponibilidade.' : 'Consultando o horário disponível…'}
                 </p>}

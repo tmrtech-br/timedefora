@@ -145,7 +145,7 @@ export default function Params() {
           {show('platforms', families.length) && <section className="card stack">{head('platforms', 'Plataformas e consoles', families.length)}
             {!isClosed('platforms') && <>
               <p className="small muted" style={{ margin: 0 }}>Desligar uma plataforma tira da venda todos os consoles dela e esconde do catálogo os jogos que só existem nela. Reservas já pagas continuam valendo.</p>
-              <div className="params">
+              <div className="params params-platforms">
                 {families.map(([fam, list]) => {
                   const codes = list.map((p) => p.code);
                   const famOn = codes.some((c) => !off.includes(c));
