@@ -12,6 +12,60 @@ const EMPTY_AGENT = { name: '', host_name: '', endpoint_url: '', location: '', i
 const EMPTY_CAPTURE = { agent_id: '', manufacturer: '', model: '', device_identifier: '', input_port: 'HDMI-1', supports_simultaneous_inputs: false };
 const EMPTY_CONTROL = { agent_id: '', adapter_type: 'usb_controller_interface', identifier: '', manufacturer: '', model: '', authorized: false };
 
+type AgentTokens = { agent_token: string; api_to_agent_token: string };
+type ConfigHandle = FileSystemFileHandle & {
+  requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
+};
+type ConfigPickerWindow = Window & {
+  showOpenFilePicker?: (options: {
+    types: { description: string; accept: Record<string, string[]> }[];
+  }) => Promise<ConfigHandle[]>;
+};
+
+function isLocalAgent(endpoint: string) {
+  return /^http:\/\/127\.0\.0\.1(?=[:/]|$)/.test(endpoint);
+}
+
+function agentConfig(tokens: AgentTokens, endpoint: string, existing: Record<string, unknown> = {}) {
+  return {
+    api_url: isLocalAgent(endpoint) ? 'http://127.0.0.1:8000' : `${window.location.origin}/api`,
+    listen_host: '127.0.0.1',
+    listen_port: 8765,
+    ...existing,
+    agent_token: tokens.agent_token,
+    api_to_agent_token: tokens.api_to_agent_token,
+  };
+}
+
+function downloadConfig(config: Record<string, unknown>) {
+  const file = new Blob([JSON.stringify(config, null, 2) + '\n'], { type: 'application/json' });
+  const url = URL.createObjectURL(file);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'config.json';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function readConfig(file: ConfigHandle) {
+  const data: unknown = JSON.parse((await (await file.getFile()).text()).replace(/^\uFEFF/, ''));
+  need(data !== null && typeof data === 'object' && !Array.isArray(data), 'O config.json precisa conter um objeto JSON.');
+  return data as Record<string, unknown>;
+}
+
+async function writeConfig(file: ConfigHandle, config: Record<string, unknown>) {
+  const writable = await file.createWritable();
+  try {
+    await writable.write(JSON.stringify(config, null, 2) + '\n');
+    await writable.close();
+  } catch (error) {
+    await writable.abort().catch(() => {});
+    throw error;
+  }
+}
+
 function formValues<T extends Record<string, string | boolean>>(initial: T, row: Record<string, unknown>): T {
   return Object.fromEntries(Object.entries(initial).map(([key, value]) => [key,
     typeof value === 'boolean' ? row[key] === true : String(row[key] ?? value),
@@ -28,32 +82,98 @@ export default function Agents() {
   const [aId, setAId] = useState('');
   const [cId, setCId] = useState('');
   const [kId, setKId] = useState('');
-  const [secret, setSecret] = useState<Record<string, string> | null>(null);
+  const [secret, setSecret] = useState<{ tokens: AgentTokens; endpoint: string; config?: Record<string, unknown> } | null>(null);
+  const [configFile, setConfigFile] = useState<ConfigHandle | null>(null);
   const { run, msg, busy } = useAction();
   const deletion = useDelete();
   const agentOpts = agents.data?.filter((x) => !x.is_simulated).map((x) => <option key={String(x.id)} value={String(x.id)}>{String(x.name)}</option>);
+  const canSelectConfig = typeof window !== 'undefined' && Boolean((window as ConfigPickerWindow).showOpenFilePicker);
+
+  async function chooseConfig() {
+    const picker = (window as ConfigPickerWindow).showOpenFilePicker;
+    if (!picker) return;
+    try {
+      const [handle] = await picker.call(window, {
+        types: [{ description: 'Configuração do ConsoleAgent', accept: { 'application/json': ['.json'] } }],
+      });
+      if (handle.name !== 'config.json') throw new Error('Selecione o arquivo config.json do ConsoleAgent.');
+      if (await handle.requestPermission({ mode: 'readwrite' }) !== 'granted') {
+        throw new Error('Permita a gravação para atualizar o arquivo selecionado.');
+      }
+      return handle;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      throw error;
+    }
+  }
+
   return (
     <div className="stack">
       <PageHeader title="Agentes locais e dispositivos" subtitle="PC ao lado dos consoles: captura, encode, stream e interfaces de controle." />
       {msg}
       {deletion.dialog}
-      {secret && <Alert kind="warn" dismissible={false}><span>Tokens gerados (exibidos uma única vez): agente→API <code>{secret.agent_token}</code> · API→agente <code>{secret.api_to_agent_token}</code></span></Alert>}
-      <section className="card stack"><h2>Agentes</h2><NewRecord title="Novo agente" editingTitle={aId ? "Editar agente" : undefined} onClose={() => { setAId(''); setA(EMPTY_AGENT); }}>{(close) => <><div className="grid3">
+      {secret && <Alert kind="warn" dismissible={false}>
+        <span>O config.json contém credenciais. Mantenha-o no computador do agente.{' '}
+          <button type="button" className="btn sm" onClick={() => downloadConfig(secret.config ?? agentConfig(secret.tokens, secret.endpoint))}>Baixar config.json</button>{' '}
+          {canSelectConfig && <button type="button" className="btn sm" disabled={busy} onClick={() => run(async () => {
+            const file = await chooseConfig();
+            if (!file) return;
+            await writeConfig(file, agentConfig(secret.tokens, secret.endpoint, await readConfig(file)));
+            setSecret(null);
+          }, '')}>Atualizar config.json existente</button>}{' '}
+          <button type="button" className="btn sm" onClick={() => setSecret(null)}>Fechar</button>
+        </span>
+      </Alert>}
+      <section className="card stack"><h2>Agentes</h2><NewRecord title="Novo agente" editingTitle={aId ? "Editar agente" : undefined} onClose={() => { setAId(''); setA(EMPTY_AGENT); setConfigFile(null); }}>{(close) => <><div className="grid3">
         <Field label="Nome" help="Nome exibido no painel."><input value={a.name} onChange={(e) => setA({ ...a, name: e.target.value })} /></Field>
         <Field label="Host" help="Nome de rede ou IP do computador do agente."><input maxLength={253} value={a.host_name} onChange={(e) => setA({ ...a, host_name: e.target.value })} /></Field>
-        <Field label="Endpoint HTTPS do agente" help="Endereço usado para chamar o agente." hint="Em desenvolvimento, com o agente no mesmo PC: http://127.0.0.1:8765"><input maxLength={500} value={a.endpoint_url} onChange={(e) => setA({ ...a, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
+        <Field label="Endpoint do agente" help="Endereço que o FastAPI consegue alcançar. Para outro PC, use HTTPS acessível pela rede ou VPN." hint="Em homologação, com o agente no mesmo PC do FastAPI: http://127.0.0.1:8765"><input maxLength={500} value={a.endpoint_url} onChange={(e) => setA({ ...a, endpoint_url: e.target.value })} placeholder="https://agente-01.vpn.local" /></Field>
         <Field label="Localização" help="Local físico do agente."><input maxLength={120} value={a.location} onChange={(e) => setA({ ...a, location: e.target.value })} /></Field>
         {!aId && <div className="row"><label className="check"><input type="checkbox" checked={a.is_simulated} onChange={(e) => setA({ ...a, is_simulated: e.target.checked })} />Agente SIMULADO (desenvolvimento)</label><FieldHelp text="Agente de desenvolvimento que opera sem console físico." /></div>}</div>
+        {!aId && !a.is_simulated && canSelectConfig && <div className="row">
+          <button type="button" className="btn" disabled={busy} onClick={() => run(async () => {
+            const file = await chooseConfig();
+            if (file) setConfigFile(file);
+          }, '')}>
+            {configFile ? 'Trocar config.json selecionado' : 'Selecionar config.json existente'}
+          </button>
+          {configFile && <button type="button" className="btn sm" onClick={() => setConfigFile(null)}>Usar download</button>}
+        </div>}
         <button className="btn primary" disabled={busy} onClick={() => run(async () => {
           need(a.name.trim().length >= 2, 'Informe o nome do agente (mínimo 2 caracteres).');
           need(a.host_name.trim(), 'Informe o host do agente.');
           need(!a.endpoint_url || /^https?:\/\//.test(a.endpoint_url), 'O endpoint deve começar com https:// (ou http:// em desenvolvimento).');
           const { is_simulated, ...agent } = a;
           const payload = { ...agent, endpoint_url: a.endpoint_url || null };
-          if (aId) await patch(`/admin/agents/${aId}`, payload);
-          else setSecret(await post('/admin/agents', { ...payload, is_simulated })); agents.reload(); close(); }, aId ? 'Agente atualizado.' : 'Agente cadastrado.')}>{aId ? 'Salvar' : 'Cadastrar'}</button></>}</NewRecord>
+          const file = is_simulated ? null : configFile;
+          const existing = file ? await readConfig(file) : undefined;
+          if (aId) {
+            await patch(`/admin/agents/${aId}`, payload);
+          } else {
+            const tokens = await post<AgentTokens>('/admin/agents', { ...payload, is_simulated });
+            if (!is_simulated) {
+              const config = agentConfig(tokens, a.endpoint_url, existing);
+              if (file) {
+                try {
+                  await writeConfig(file, config);
+                } catch {
+                  setSecret({ tokens, endpoint: a.endpoint_url, config });
+                  downloadConfig(config);
+                }
+              } else {
+                setSecret({ tokens, endpoint: a.endpoint_url });
+                downloadConfig(config);
+              }
+            }
+          }
+          agents.reload();
+          close();
+        }, aId ? 'Agente atualizado.' : 'Agente cadastrado.')}>{aId ? 'Salvar' : 'Cadastrar'}</button></>}</NewRecord>
         <DataTable rows={agents.data} error={agents.error?.message} cols={[['Nome', (r) => String(r.name)], ['Host', (r) => String(r.host_name)], ['Status', (r) => <StatusPill status={String(r.status)} map={AGENT_STATUS} tone={({ online: 'green', offline: 'red', degraded: 'amber', unknown: '' } as Record<string, string>)[String(r.status)]} />], ['Simulado', (r) => (r.is_simulated ? 'sim' : 'não')],
-          ['Último heartbeat', (r) => dateTime(r.last_heartbeat_at as string)], ['Ações', (r) => <div className="row"><button className="btn sm" onClick={() => run(async () => setSecret(await post(`/admin/agents/${r.id}/rotate-credentials`)), 'Credenciais rotacionadas.')}>Rotacionar tokens</button><button className="btn sm" onClick={() => { setA(formValues(EMPTY_AGENT, r)); setAId(String(r.id)); }}>Editar</button><button className="btn sm danger" onClick={() => deletion.remove(`/admin/agents/${r.id}`, 'Excluir agente?', (request) => run(async () => { await request(); agents.reload(); }, 'Exclusão concluída.'))}>Excluir</button></div>]]} />
+          ['Último heartbeat', (r) => dateTime(r.last_heartbeat_at as string)], ['Ações', (r) => <div className="row"><button className="btn sm" disabled={busy} onClick={() => run(async () => {
+            const tokens = await post<AgentTokens>(`/admin/agents/${r.id}/rotate-credentials`);
+            setSecret({ tokens, endpoint: String(r.endpoint_url ?? '') });
+          }, 'Credenciais rotacionadas.')}>Rotacionar tokens</button><button className="btn sm" onClick={() => { setA(formValues(EMPTY_AGENT, r)); setAId(String(r.id)); }}>Editar</button><button className="btn sm danger" onClick={() => deletion.remove(`/admin/agents/${r.id}`, 'Excluir agente?', (request) => run(async () => { await request(); agents.reload(); }, 'Exclusão concluída.'))}>Excluir</button></div>]]} />
       </section>
       <section className="card stack"><h2>Capturadoras HDMI</h2>
         <p className="small muted">Cada console precisa de uma entrada de captura independente. Saída HDMI de notebook não é capturadora. Respeite HDCP/DRM.</p>
