@@ -1,0 +1,111 @@
+.input {
+  position: relative;
+}
+
+.input input {
+  width: 100%;
+  padding-inline-end: 48px;
+}
+
+.input input[aria-invalid='true'] {
+  border-color: var(--red);
+}
+
+.visibility {
+  position: absolute;
+  inset: 3px 4px 3px auto;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.visibility:hover,
+.visibility:focus-visible {
+  color: var(--cyan);
+  background: rgb(41 214 240 / 8%);
+}
+
+.requirements {
+  --signal: var(--amber);
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: radial-gradient(ellipse at 100% 0%, rgb(177 60 255 / 14%), transparent 76%), var(--bg2);
+}
+
+.requirements[data-score='0'] { --signal: var(--muted); }
+.requirements[data-score='1'] { --signal: #ff8f9a; }
+.requirements[data-score='3'] { --signal: var(--violet); }
+.requirements[data-score='4'] { --signal: var(--cyan); }
+.requirements[data-score='5'] { --signal: var(--green); }
+
+.strength {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.strength strong {
+  color: var(--signal);
+}
+
+.meter {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+  margin: 8px 0 12px;
+}
+
+.meter span {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line2);
+  transition: background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.meter span[data-filled='true'] {
+  background: var(--signal);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--signal) 54%, transparent);
+}
+
+.checks {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checks li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.checks svg {
+  width: 15px;
+  flex: 0 0 15px;
+}
+
+.checks li[data-met='true'] { color: var(--text); }
+.checks li[data-met='true'] svg { color: var(--green); }
+
+.confirmation {
+  margin-top: -7px;
+  color: var(--green);
+  font-size: 12px;
+}
+
+.confirmation:empty { margin-top: 0; height: 0; }
+.confirmation[data-mismatch='true'] { color: #ff8f9a; }
+
+@media (prefers-reduced-motion: reduce) {
+  .meter span { transition: none; }
+}
