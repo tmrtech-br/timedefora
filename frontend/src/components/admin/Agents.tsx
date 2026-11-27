@@ -1,10 +1,12 @@
 'use client';
 import { useState } from 'react';
+import { Clipboard } from 'lucide-react';
 import { Alert, Field, FieldHelp, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
 import { DataTable, need, NewRecord, useAction, useDelete } from './common';
+import styles from './agents.module.css';
 
 const AGENT_STATUS: Record<string, string> = { online: 'online', offline: 'offline', degraded: 'instável', unknown: 'aguardando primeiro sinal' };
 
@@ -154,6 +156,37 @@ const ACTIONS = [
   ['delete', 'Excluir agente'],
 ] as const;
 
+const START_AGENT_COMMAND = [
+  "Set-Location 'E:\\LocadoraOnline\\locaplay\\agent'",
+  '& "$env:LOCALAPPDATA\\Timedefora\\agent-venv\\Scripts\\python.exe" -m consoleagent --config .\\config.json',
+].join('\n');
+
+function AgentStartup() {
+  const [feedback, setFeedback] = useState('');
+  return (
+    <section className={styles.startup} aria-labelledby="agent-startup-title">
+      <div className={styles.startupHeader}>
+        <h3 id="agent-startup-title">Iniciar o ConsoleAgent no Windows</h3>
+        <button className="btn sm" type="button" onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(START_AGENT_COMMAND);
+            setFeedback('Comando copiado.');
+          } catch {
+            setFeedback('Selecione o comando abaixo e copie com Ctrl+C.');
+          }
+        }}><Clipboard size={15} aria-hidden /> Copiar comando</button>
+      </div>
+      <pre tabIndex={0} aria-label="Comando PowerShell"><code>{START_AGENT_COMMAND}</code></pre>
+      {feedback && <p className="small" role="status">{feedback}</p>}
+      <ol className="small">
+        <li>Salve os tokens no <code>config.json</code>. Se o agente estiver rodando, encerre-o com <kbd>Ctrl+C</kbd>.</li>
+        <li>No PC do agente, abra o PowerShell, cole o comando e pressione <kbd>Enter</kbd>. Deixe a janela aberta.</li>
+        <li>Atualize a lista de agentes e aguarde o status <strong>Online</strong>. Depois, abra <a className="link-purple" href="/admin/contas-psn">Contas PSN</a> para vincular a conta.</li>
+      </ol>
+    </section>
+  );
+}
+
 function AgentActions({ agent, credentials, onCredentials, onChange, onClose, initialSummary }: {
   agent: AgentRow; credentials?: AgentTokens; onCredentials: (value: AgentTokens | null) => void;
   onChange: () => void; onClose: () => void; initialSummary?: string;
@@ -208,14 +241,17 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
 
   return <Modal title="Ações do agente" onClose={() => { if (!busy) onClose(); }}>
     <div className="stack">
-      <dl className="kv">
-        <dt>Nome</dt><dd>{String(record.name)}</dd>
-        <dt>Host</dt><dd>{String(record.host_name)}</dd>
-        <dt>Endpoint</dt><dd style={{ overflowWrap: 'anywhere' }}>{endpoint || '—'}</dd>
-        <dt>Localização</dt><dd>{String(record.location || '—')}</dd>
-        <dt>Status</dt><dd><StatusPill status={String(record.status)} map={AGENT_STATUS} /></dd>
-        <dt>Último heartbeat</dt><dd>{dateTime(record.last_heartbeat_at as string)}</dd>
-      </dl>
+      <div className={styles.overview}>
+        <dl className={`kv ${styles.agentDetails}`}>
+          <dt>Nome</dt><dd>{String(record.name)}</dd>
+          <dt>Host</dt><dd>{String(record.host_name)}</dd>
+          <dt>Endpoint</dt><dd>{endpoint || '—'}</dd>
+          <dt>Localização</dt><dd>{String(record.location || '—')}</dd>
+          <dt>Status</dt><dd><StatusPill status={String(record.status)} map={AGENT_STATUS} /></dd>
+          <dt>Último heartbeat</dt><dd>{dateTime(record.last_heartbeat_at as string)}</dd>
+        </dl>
+        {!deleted && <AgentStartup />}
+      </div>
       {!deleted && <form className="stack" onSubmit={(event) => { event.preventDefault(); void execute(); }}>
         <Field label="Ação"><select value={action} disabled={busy} onChange={(event) => setAction(event.target.value)}>
           <option value="">Selecione uma ação</option>
