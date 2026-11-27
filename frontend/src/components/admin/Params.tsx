@@ -62,6 +62,21 @@ export default function Params() {
   const [reason, setReason] = useState('');
   const [nums, setNums] = useState<Record<string, string>>({});
   const [pausedReason, setPausedReason] = useState<string | null>(null);
+  // Filtros e seções recolhíveis (preferência do navegador; padrão: todas abertas).
+  const [q, setQ] = useState('');
+  const [kind, setKind] = useState<'all' | 'platforms' | 'features' | 'power' | 'rules'>('all');
+  const [state, setState] = useState<'all' | 'on' | 'off'>('all');
+  const [closed, setClosed] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem('lp_params_closed') || '{}'); } catch { return {}; }
+  });
+  function toggleSection(id: string) {
+    const next = { ...closed, [id]: !closed[id] };
+    setClosed(next);
+    try { localStorage.setItem('lp_params_closed', JSON.stringify(next)); } catch { /* armazenamento indisponível */ }
+  }
+  const norm = (x: string) => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const textOk = (...parts: string[]) => !q.trim() || norm(parts.join(' ')).includes(norm(q.trim()));
+  const stateOk = (on: boolean) => state === 'all' || (state === 'on') === on;
   const v = s.data?.values || {};
   const off = (v.disabled_platforms as string[] | undefined) || [];
   const byFamily = useMemo(() => {
@@ -88,86 +103,122 @@ export default function Params() {
       <PageHeader title="Parâmetros do sistema" subtitle="Ligue e desligue funções. Cada alteração vale na hora, é aplicada no servidor e fica registrada na auditoria." />
       {msg}
 
-      <div className="parameter-cards">
-      <section className="card stack"><h2>Plataformas e consoles</h2>
-        <p className="small muted" style={{ margin: 0 }}>Desligar uma plataforma tira da venda todos os consoles dela e esconde do catálogo os jogos que só existem nela. Reservas já pagas continuam valendo.</p>
-        <div className="params">
-          {Object.entries(byFamily).map(([fam, list]) => {
-            const codes = list.map((p) => p.code);
-            const famOn = codes.some((c) => !off.includes(c));
-            return (
-              <div key={fam} className="param-group">
-                <div className={`param ${famOn ? '' : 'off'}`}>
-                  <div><h3>{FAMILY[fam] || fam} (todas)</h3><p>{list.map((p) => p.name).join(', ')}</p></div>
-                  <button className="switch" role="switch" aria-checked={famOn} aria-label={`${FAMILY[fam] || fam}: ${famOn ? 'ligado' : 'desligado'}`} disabled={busy}
-                    onClick={() => togglePlatforms(codes, !famOn, `todas as plataformas ${FAMILY[fam] || fam}`)} />
-                </div>
-                {list.length > 1 && list.map((p) => {
-                  const on = !off.includes(p.code);
+      <section className="card params-filters" aria-label="Filtrar parâmetros">
+        <Field label="Pesquisar"><input maxLength={60} placeholder="Nome ou descrição" value={q} onChange={(e) => setQ(e.target.value)} /></Field>
+        <Field label="Tipo"><select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
+          <option value="all">Todos</option><option value="platforms">Plataformas e consoles</option><option value="features">Funções</option>
+          <option value="power">Console: ligar e hibernar</option><option value="rules">Regras de agenda e limites</option></select></Field>
+        <Field label="Situação"><select value={state} onChange={(e) => setState(e.target.value as typeof state)}>
+          <option value="all">Todos</option><option value="on">Ativados</option><option value="off">Desativados</option></select></Field>
+        <div className="params-filters-actions">
+          <button type="button" className="btn sm" onClick={() => { setClosed({}); try { localStorage.removeItem('lp_params_closed'); } catch { /* */ } }}>Expandir tudo</button>
+          <button type="button" className="btn sm" onClick={() => { const all = { platforms: true, features: true, power: true, rules: true }; setClosed(all); try { localStorage.setItem('lp_params_closed', JSON.stringify(all)); } catch { /* */ } }}>Recolher tudo</button>
+          {(q || kind !== 'all' || state !== 'all') && <button type="button" className="btn sm" onClick={() => { setQ(''); setKind('all'); setState('all'); }}>Limpar filtros</button>}
+        </div>
+      </section>
+
+      {(() => {
+        const families = Object.entries(byFamily).filter(([fam, list]) => {
+          const codes = list.map((p) => p.code);
+          const famOn = codes.some((c) => !off.includes(c));
+          const any = list.some((p) => textOk(p.name, p.code) && stateOk(!off.includes(p.code)));
+          return (textOk(FAMILY[fam] || fam, ...list.map((p) => p.name)) && stateOk(famOn)) || any;
+        });
+        const toggles = TOGGLES.filter((t) => { const raw = Boolean(v[t.key]); return textOk(t.title, t.desc) && stateOk(t.invert ? !raw : raw); });
+        const power = POWER.filter((t) => textOk(t.title, t.desc) && stateOk(v[t.key] !== false));
+        // Regras numéricas não têm liga/desliga: aparecem só com "Situação: Todos".
+        const numbers = NUMBERS.filter((n) => n.key in v && state === 'all' && textOk(n.title, n.unit));
+        const show = (k: typeof kind, count: number) => (kind === 'all' || kind === k) && count > 0;
+        const head = (id: string, title: string, count: number) => (
+          <button type="button" className="params-section-head" aria-expanded={!closed[id]} onClick={() => toggleSection(id)}>
+            <h2>{title}</h2><span className="pill">{count}</span><span className="params-chevron" aria-hidden>{closed[id] ? '▸' : '▾'}</span>
+          </button>);
+        const nothing = !show('platforms', families.length) && !show('features', toggles.length) && !show('power', power.length) && !show('rules', numbers.length);
+        return <div className="parameter-cards">
+          {nothing && <section className="card"><p className="muted" style={{ margin: 0 }}>Nenhum parâmetro encontrado com esses filtros.</p></section>}
+
+          {show('platforms', families.length) && <section className="card stack">{head('platforms', 'Plataformas e consoles', families.length)}
+            {!closed.platforms && <>
+              <p className="small muted" style={{ margin: 0 }}>Desligar uma plataforma tira da venda todos os consoles dela e esconde do catálogo os jogos que só existem nela. Reservas já pagas continuam valendo.</p>
+              <div className="params">
+                {families.map(([fam, list]) => {
+                  const codes = list.map((p) => p.code);
+                  const famOn = codes.some((c) => !off.includes(c));
                   return (
-                    <div key={p.code} className={`param sub ${on ? '' : 'off'}`}>
-                      <div><h3>{p.name}</h3><p>{consoleCount(p.code)} console(s) cadastrado(s)</p></div>
-                      <button className="switch" role="switch" aria-checked={on} aria-label={`${p.name}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
-                        onClick={() => togglePlatforms([p.code], !on, p.name)} />
+                    <div key={fam} className="param-group">
+                      <div className={`param ${famOn ? '' : 'off'}`}>
+                        <div><h3>{FAMILY[fam] || fam} (todas)</h3><p>{list.map((p) => p.name).join(', ')}</p></div>
+                        <button className="switch" role="switch" aria-checked={famOn} aria-label={`${FAMILY[fam] || fam}: ${famOn ? 'ligado' : 'desligado'}`} disabled={busy}
+                          onClick={() => togglePlatforms(codes, !famOn, `todas as plataformas ${FAMILY[fam] || fam}`)} />
+                      </div>
+                      {list.length > 1 && list.filter((p) => stateOk(!off.includes(p.code))).map((p) => {
+                        const on = !off.includes(p.code);
+                        return (
+                          <div key={p.code} className={`param sub ${on ? '' : 'off'}`}>
+                            <div><h3>{p.name}</h3><p>{consoleCount(p.code)} console(s) cadastrado(s)</p></div>
+                            <button className="switch" role="switch" aria-checked={on} aria-label={`${p.name}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
+                              onClick={() => togglePlatforms([p.code], !on, p.name)} />
+                          </div>);
+                      })}
                     </div>);
                 })}
-              </div>);
-          })}
-        </div>
-      </section>
+              </div>
+            </>}
+          </section>}
 
-      <section className="card stack"><h2>Funções</h2>
-        <div className="params">
-          {TOGGLES.map((t) => {
-            const raw = Boolean(v[t.key]);
-            const on = t.invert ? !raw : raw;
-            return (
-              <div key={t.key} className={`param ${on ? '' : 'off'}`}>
-                <div><h3>{t.title}{s.data!.critical.includes(t.key) && <span className="pill amber" style={{ marginLeft: 8 }}>crítico</span>}</h3><p>{t.desc}</p>
-                  {t.key === 'sales_paused' && raw && <p style={{ marginTop: 4 }}>Mensagem aos clientes: <i>{String(v.sales_paused_reason || '(sem mensagem)')}</i>
-                    <button className="btn sm" style={{ marginLeft: 8 }} onClick={() => setPausedReason(String(v.sales_paused_reason || ''))}>Editar</button></p>}</div>
-                <button className="switch" role="switch" aria-checked={on} aria-label={`${t.title}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
-                  onClick={() => ask(t.key, t.invert ? on : !on, `${on ? 'Desligar' : 'Ligar'}: ${t.title}`)} />
-              </div>);
-          })}
-        </div>
-      </section>
+          {show('features', toggles.length) && <section className="card stack">{head('features', 'Funções', toggles.length)}
+            {!closed.features && <div className="params">
+              {toggles.map((t) => {
+                const raw = Boolean(v[t.key]);
+                const on = t.invert ? !raw : raw;
+                return (
+                  <div key={t.key} className={`param ${on ? '' : 'off'}`}>
+                    <div><h3>{t.title}{s.data!.critical.includes(t.key) && <span className="pill amber" style={{ marginLeft: 8 }}>crítico</span>}</h3><p>{t.desc}</p>
+                      {t.key === 'sales_paused' && raw && <p style={{ marginTop: 4 }}>Mensagem aos clientes: <i>{String(v.sales_paused_reason || '(sem mensagem)')}</i>
+                        <button className="btn sm" style={{ marginLeft: 8 }} onClick={() => setPausedReason(String(v.sales_paused_reason || ''))}>Editar</button></p>}</div>
+                    <button className="switch" role="switch" aria-checked={on} aria-label={`${t.title}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
+                      onClick={() => ask(t.key, t.invert ? on : !on, `${on ? 'Desligar' : 'Ligar'}: ${t.title}`)} />
+                  </div>);
+              })}
+            </div>}
+          </section>}
 
-      <section className="card stack"><h2>Console: ligar e hibernar</h2>
-        <div className="params">
-          {POWER.map((t) => {
-            const on = v[t.key] !== false;
-            return (
-              <div key={t.key} className={`param ${on ? '' : 'off'}`}>
-                <div><h3>{t.title}</h3><p>{t.desc}</p></div>
-                <button className="switch" role="switch" aria-checked={on} aria-label={`${t.title}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
-                  onClick={() => ask(t.key, !on, `${on ? 'Desligar' : 'Ligar'}: ${t.title}`)} />
-              </div>);
-          })}
-        </div>
-      </section>
+          {show('power', power.length) && <section className="card stack">{head('power', 'Console: ligar e hibernar', power.length)}
+            {!closed.power && <div className="params">
+              {power.map((t) => {
+                const on = v[t.key] !== false;
+                return (
+                  <div key={t.key} className={`param ${on ? '' : 'off'}`}>
+                    <div><h3>{t.title}</h3><p>{t.desc}</p></div>
+                    <button className="switch" role="switch" aria-checked={on} aria-label={`${t.title}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
+                      onClick={() => ask(t.key, !on, `${on ? 'Desligar' : 'Ligar'}: ${t.title}`)} />
+                  </div>);
+              })}
+            </div>}
+          </section>}
 
-      <section className="card stack parameter-rules"><h2>Regras de agenda e limites</h2>
-        <div className="params">
-          {NUMBERS.filter((n) => n.key in v).map((n) => {
-            const cur = String(v[n.key]);
-            const val = nums[n.key] ?? cur;
-            const num = Number(val);
-            const invalid = val.trim() === '' || !Number.isInteger(num) || num < n.min || num > n.max;
-            return (
-              <div key={n.key} className="param">
-                <div><h3>{n.title}{s.data!.critical.includes(n.key) && <span className="pill amber" style={{ marginLeft: 8 }}>crítico</span>}</h3><p>Atual: {cur} {n.unit} · padrão {String(s.data!.defaults[n.key])} · de {n.min} a {n.max}</p></div>
-                <div className="param-ctrl">
-                  <input className="btn sm" type="number" min={n.min} max={n.max} value={val} aria-label={n.title} aria-invalid={invalid || undefined}
-                    onChange={(e) => setNums({ ...nums, [n.key]: e.target.value })} />
-                  <span className="small dim">{n.unit}</span>
-                  <button className="btn sm" disabled={busy || invalid || val === cur} onClick={() => ask(n.key, num, `${n.title}: ${cur} → ${num} ${n.unit}`)}>Salvar</button>
-                </div>
-              </div>);
-          })}
-        </div>
-      </section>
-      </div>
+          {show('rules', numbers.length) && <section className="card stack parameter-rules">{head('rules', 'Regras de agenda e limites', numbers.length)}
+            {!closed.rules && <div className="params">
+              {numbers.map((n) => {
+                const cur = String(v[n.key]);
+                const val = nums[n.key] ?? cur;
+                const num = Number(val);
+                const invalid = val.trim() === '' || !Number.isInteger(num) || num < n.min || num > n.max;
+                return (
+                  <div key={n.key} className="param">
+                    <div><h3>{n.title}{s.data!.critical.includes(n.key) && <span className="pill amber" style={{ marginLeft: 8 }}>crítico</span>}</h3><p>Atual: {cur} {n.unit} · padrão {String(s.data!.defaults[n.key])} · de {n.min} a {n.max}</p></div>
+                    <div className="param-ctrl">
+                      <input className="btn sm" type="number" min={n.min} max={n.max} value={val} aria-label={n.title} aria-invalid={invalid || undefined}
+                        onChange={(e) => setNums({ ...nums, [n.key]: e.target.value })} />
+                      <span className="small dim">{n.unit}</span>
+                      <button className="btn sm" disabled={busy || invalid || val === cur} onClick={() => ask(n.key, num, `${n.title}: ${cur} → ${num} ${n.unit}`)}>Salvar</button>
+                    </div>
+                  </div>);
+              })}
+            </div>}
+          </section>}
+        </div>;
+      })()}
 
       {pausedReason !== null && (
         <Modal title="Mensagem de vendas pausadas" onClose={() => setPausedReason(null)}>

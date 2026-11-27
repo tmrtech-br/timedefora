@@ -323,6 +323,13 @@ async def _request_console(client, headers, session, platform, duid, online_id, 
             'parameters': {'initialParams': json.dumps(initial, separators=(',', ':'))}, 'platform': 'PS5',
         }}
     response = await client.post(target, json=body, headers=headers, timeout=8, follow_redirects=False)
+    if platform == 'PS4' and response.status_code == 404:
+        # A Sony não tem conexão ativa com o console: desligado por completo, sem internet ou o modo de repouso não
+        # mantém a conexão. Nada no agente resolve isso; precisa de ação no console/rede.
+        raise NegotiationError('console_request', 'A PSN não encontrou o PS4 conectado (resposta 404). Confira no console: '
+                               'luz laranja (repouso, não desligado), Configurações > Economia de energia > Funções disponíveis '
+                               'no modo de repouso > "Permanecer conectado à Internet" e "Ativar ligar o PS4 pela rede", '
+                               'e se a internet do local do console está funcionando.')
     response.raise_for_status()
 
 

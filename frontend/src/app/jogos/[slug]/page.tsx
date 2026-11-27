@@ -130,16 +130,14 @@ export default function GamePage() {
   return (
     <div className="stack">
       {g.is_demo && <Alert kind="warn">Jogo de demonstração: console e pagamento <b>simulados</b>. Exploração comercial ainda não autorizada.</Alert>}
-      <section className="game-hero">
+      <section className={`game-hero${g.banner_url ? ' has-banner' : ''}`}
+        style={g.banner_url ? { '--game-banner': `url(${JSON.stringify(g.banner_url)})` } as React.CSSProperties : undefined}>
         <img
-          src={g.banner_url || g.cover_url || undefined}
-          alt={`${g.banner_url ? 'Banner' : 'Capa'} de ${g.title}`}
+          src={g.cover_url || g.banner_url || undefined}
+          alt={`Capa de ${g.title}`}
           onError={(event) => {
             const image = event.currentTarget;
-            if (g.cover_url && image.getAttribute('src') !== g.cover_url) {
-              image.src = g.cover_url;
-              image.alt = `Capa de ${g.title}`;
-            }
+            if (g.banner_url && image.getAttribute('src') !== g.banner_url) image.src = g.banner_url;
           }}
         />
         <div className="stack">
