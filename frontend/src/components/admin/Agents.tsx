@@ -164,6 +164,7 @@ function ConfigTarget({ file, onFile, disabled }: {
 const ACTIONS = [
   ['edit', 'Editar agente'],
   ['rotate', 'Rotacionar tokens'],
+  ['rotate-download', 'Rotacionar tokens e baixar config.json'],
   ['download', 'Baixar config.json'],
   ['update', 'Atualizar config.json existente'],
   ['delete', 'Excluir agente'],
@@ -222,6 +223,14 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           }
           break;
         }
+        case 'rotate-download': {
+          const tokens = await post<AgentTokens>(`${base}/rotate-credentials`);
+          const config = agentConfig(tokens, endpoint);
+          onCredentials({ tokens, config });
+          downloadConfig(config);
+          setSummary('Tokens rotacionados e download iniciado. Use o atualizador local do ConsoleAgent para aplicar os tokens no arquivo existente.');
+          break;
+        }
         case 'download':
           if (!credentials) throw new Error('Rotacione os tokens para gerar o arquivo.');
           downloadConfig(credentials.config ?? agentConfig(credentials.tokens, endpoint));
@@ -268,6 +277,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         </select></Field>
         {action === 'edit' && <AgentFields value={draft} onChange={setDraft} />}
         {action === 'rotate' && <p className="small muted">Selecione o config.json antes de executar. Depois da autorização de gravação, o sistema substitui os tokens no arquivo e invalida os anteriores.</p>}
+        {action === 'rotate-download' && <p className="small muted">Use esta opção quando o navegador bloquear a pasta. A rotação invalida os tokens anteriores. Aplique o arquivo baixado com o atualizador local antes de reiniciar o ConsoleAgent.</p>}
         {(action === 'update' || action === 'rotate') && <ConfigTarget file={file} onFile={setFile} disabled={busy} />}
         {action === 'delete' && <Field label="Motivo da exclusão" required>
           <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} rows={3} />
