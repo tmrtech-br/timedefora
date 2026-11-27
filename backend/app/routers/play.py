@@ -232,12 +232,13 @@ def waiting_room(rid: uuid.UUID, p: Principal = Depends(current_user)):
         v['public_queue'] = scheduling.public_queue(conn, r['console_id'], p.user_id)
         n = timeutil.now()
         v['seconds_to_start'] = max(0, int((r['starts_at'] - n).total_seconds()))
-        prep = one(conn, 'select status, last_message from console_preparations where reservation_id=%s', (r['id'],))
+        prep = one(conn, 'select status, last_message, created_at from console_preparations where reservation_id=%s', (r['id'],))
         session = one(conn, "select 1 from game_sessions where reservation_id=%s and status in ('ready','active')", (r['id'],))
         # Console pronto = preparação concluída (acordado e jogo aberto) ou sessão já liberada (reconexão).
         ready = bool(session) or bool(prep and prep['status'] == 'ready')
         v['preparation'] = {'status': 'ready' if ready else (prep['status'] if prep else 'waiting'),
-                            'message': (prep['last_message'] or '')[:300] if prep and not ready else ''}
+                            'message': (prep['last_message'] or '')[:300] if prep and not ready else '',
+                            'started_at': prep['created_at'].isoformat() if prep else None}
         v['console_ready'] = ready
         v['can_join'] = ready and r['status'] in ('confirmed', 'active') and r['starts_at'] <= n < r['ends_at']
         v['allocation_policy'] = ('O intervalo contratado é exclusivo. Atrasos do jogador não estendem o término; '

@@ -134,6 +134,8 @@ def test_aviso_antes_do_fim_e_ausencia(world, freeze):
     freeze(at(2, 9, 25))
     rb = reserve(b, world, 10, mode='scheduled', start_at=at(2, 9, 40)).json()
     pay(b, rb['id'])
+    freeze(at(2, 9, 40))
+    worker.tick()                                   # console preparado e liberado no horário: ausência é do jogador
     freeze(at(2, 9, 51))
     worker.tick()
     assert b.get(f"/reservations/{rb['id']}").json()['status'] == 'no_show'

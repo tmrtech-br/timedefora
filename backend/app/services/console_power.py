@@ -4,8 +4,9 @@ Parâmetros globais (menu Parâmetros) e do cadastro de cada console:
 - console_standby_enabled (global) + standby_after_session (console): hibernar ao fim da sessão / quando ocioso.
 - keep_awake_for_next_enabled (global) + keep_awake_minutes (console): não hibernar se houver reserva começando
   dentro desse intervalo (o próximo jogador não espera o console acordar).
-- wake_on_reservation_enabled (global): ao criar a reserva (antes do pagamento), acordar o console se a sessão
-  começar em breve. Se o pagamento não vier, o console volta a hibernar quando a reserva expira.
+- wake_on_reservation_enabled (global): ao criar a reserva (checkout, antes do pagamento), preparar o console
+  (acordar + abrir o jogo) se a sessão começar dentro de prep_lead_minutes. Se o pagamento não vier, o console
+  volta a hibernar quando a reserva expira.
 - prewake_enabled + prep_lead_minutes (global): a preparação (acordar + abrir o jogo) começa N minutos antes do
   início (ver preparation.lead).
 
@@ -79,13 +80,16 @@ def wake_for_reservation(reservation_id) -> None:
             st = get_settings(conn)
             if not st.get('wake_on_reservation_enabled', True):
                 return
-            r = conn.execute('select id, console_id, starts_at, status from reservations where id=%s', (reservation_id,)).fetchone()
+            r = conn.execute('''select r.id, r.console_id, r.starts_at, r.status, g.id game_id, g.slug, g.title
+                                from reservations r join games g on g.id=r.game_id where r.id=%s''', (reservation_id,)).fetchone()
             if not r or r['status'] not in ('pending_payment', 'confirmed') or not r['console_id']:
                 return
             ref = console_ref(conn, r['console_id'])
-            lead = timedelta(minutes=max(keep_awake_minutes(ref), int(st.get('prep_lead_minutes', 5) or 0)))
+            # Sessão dentro da antecedência de preparação: prepara já (no checkout). Mais tarde: a preparação
+            # antecipada do worker começa `prep_lead_minutes` antes do início.
+            lead = timedelta(minutes=max(1, int(st.get('prep_lead_minutes', 5) or 0)))
             if r['starts_at'] > timeutil.now() + lead:
-                return                                  # longe demais: a preparação antecipada cuida disso depois
+                return
             if _busy(conn, r['console_id']):
                 return                                  # outro jogador no console: ele já está ligado
             ahead = conn.execute('''select 1 from reservations where console_id=%s and id<>%s and status = any(%s)
@@ -94,8 +98,10 @@ def wake_for_reservation(reservation_id) -> None:
             if ahead:
                 return                                  # há alguém antes: o console será preparado para essa pessoa
         adapter = get_adapter(ref.method)
-        res = adapter.connect(ref)                      # só acorda e conecta; o jogo é aberto na preparação
-        log.info('reserva %s: console acordado ao reservar (%s)', reservation_id, res.message[:120])
+        # Acorda, conecta e abre o jogo (roteiro). A preparação oficial (após o pagamento) reaproveita o trabalho:
+        # o agente responde "já conectado com este jogo aberto" ou devolve o andamento em curso.
+        res = adapter.prepare_console(ref, {'id': str(r['game_id']), 'slug': r['slug'], 'title': r['title']})
+        log.info('reserva %s: console sendo preparado já no checkout (%s)', reservation_id, res.message[:120])
     except AdapterError as e:
         log.warning('reserva %s: não foi possível acordar o console ao reservar: %s', reservation_id, e.message)
     except Exception:  # nunca afeta a reserva

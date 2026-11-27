@@ -20,17 +20,17 @@ def _set(key, value):
 def _calls(monkeypatch):
     sim = _ADAPTERS['simulated']
     calls = {'connect': 0, 'standby': 0}
-    orig_connect, orig_stop = sim.connect, sim.stop_stream
+    orig_prepare, orig_stop = sim.prepare_console, sim.stop_stream
 
-    def connect(ref):
+    def prepare(ref, game):                         # checkout: prepara o console (acorda + abre o jogo)
         calls['connect'] += 1
-        return orig_connect(ref)
+        return orig_prepare(ref, game)
 
     def stop_stream(ref, session_id, standby=False):
         if standby:
             calls['standby'] += 1
         return orig_stop(ref, session_id, standby)
-    monkeypatch.setattr(sim, 'connect', connect)
+    monkeypatch.setattr(sim, 'prepare_console', prepare)
     monkeypatch.setattr(sim, 'stop_stream', stop_stream)
     return calls
 

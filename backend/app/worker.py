@@ -91,14 +91,24 @@ def _end_expired_sessions(conn, n) -> int:
     for s in rows:
         sessions.end_session(conn, s, 'time_up' if s['first_connected_at'] else 'no_show',
                              'expired' if s['first_connected_at'] else 'ended')
-    # Reservas confirmadas cujo intervalo passou sem sessão (ausência)
-    # (preparação ainda em andamento não é ausência: o tempo do cliente nem começou)
-    no_shows = conn.execute("""update reservations r set status='no_show' where status='confirmed' and ends_at <= %s
-                               and not exists (select 1 from console_preparations p where p.reservation_id=r.id and p.status='pending')
-                               returning id, console_id""", (n,)).fetchall()
-    for r in no_shows:
+    # Reserva confirmada cujo intervalo passou SEM sessão: com o console pronto, a sessão teria sido liberada (e a
+    # ausência é tratada acima). Sem sessão = o console nunca ficou pronto → falha do sistema, não ausência do jogador.
+    # (preparação ainda em andamento fica de fora: o tempo do cliente nem começou)
+    unserved = conn.execute("""update reservations r set status='needs_resolution',
+                                 resolution_notes='O console não foi preparado a tempo. Seu tempo não foi consumido: '
+                                                  'a equipe vai remarcar ou reembolsar a reserva.'
+                               where status='confirmed' and ends_at <= %s
+                                 and not exists (select 1 from console_preparations p where p.reservation_id=r.id and p.status='pending')
+                                 and not exists (select 1 from game_sessions s where s.reservation_id=r.id)
+                               returning id, code, console_id, user_id""", (n,)).fetchall()
+    for r in unserved:
         scheduling.recompute_queue(conn, r['console_id'])
-    return len(rows) + len(no_shows)
+        notifications.notify(conn, str(r['user_id']), 'needs_resolution', {'codigo': r['code']},
+                             dedupe=f"needs_resolution:{r['id']}", link='/sessoes')
+        preparation.notify_staff(conn, 'staff_incident', {'incidente': 'Reserva sem console preparado',
+                                                          'detalhe': f"Reserva {r['code']}: o intervalo terminou sem o console ficar pronto."},
+                                 dedupe=f"staff_unserved:{r['id']}", link='/admin/reservas')
+    return len(rows) + len(unserved)
 
 
 def _session_warnings(conn, n) -> None:

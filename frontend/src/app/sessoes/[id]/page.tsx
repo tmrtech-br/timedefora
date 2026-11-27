@@ -15,7 +15,7 @@ import { CANCEL_REQUEST_STATUS, RESERVATION_STATUS, dateTime, duration, money, t
 import type { Reservation } from '@/lib/types';
 
 type Room = Reservation & { seconds_to_start: number; can_join: boolean; allocation_policy: string;
-  console_ready?: boolean; preparation?: { status: string; message: string } };
+  console_ready?: boolean; preparation?: { status: string; message: string; started_at: string | null } };
 
 function Room() {
   const { id } = useParams<{ id: string }>();
@@ -69,10 +69,11 @@ function Room() {
             <p>{dateTime(r.starts_at)} – {time(r.ends_at)} · {r.minutes} min</p>
             {startIn <= 300 && <Alert kind="info">Sua vez está chegando! Prepare controle ou teclado/mouse e verifique sua conexão.</Alert>}
           </> : preparingConsole ? <>
-            <p className="muted">Ligando o console e abrindo o jogo</p>
-            <div className="countdown" aria-live="polite">{r.minutes} min</div>
-            <p className="small muted">Seu tempo ainda não começou: ele conta a partir de quando o console estiver pronto.
-              O botão para jogar aparece assim que tudo estiver pronto.</p>
+            <p className="muted">Ligando o console e abrindo o jogo há</p>
+            {/* Contador do tempo de preparação (o tempo contratado só começa quando o console fica pronto). */}
+            <div className="countdown" aria-live="off">{duration(Math.max(0, (now() - new Date(r.preparation?.started_at || r.starts_at).getTime()) / 1000))}</div>
+            <p className="small muted">Seus {r.minutes} min ainda não começaram: contam a partir de quando o console estiver pronto.
+              O botão para jogar aparece assim que tudo estiver pronto (costuma levar de 1 a 3 minutos).</p>
           </> : <>
             <p className="muted">Tempo restante do período contratado</p>
             <div className="countdown">{duration((new Date(r.ends_at).getTime() - now()) / 1000)}</div>

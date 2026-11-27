@@ -110,6 +110,24 @@ def test_atraso_do_console_empurra_a_fila_seguinte(world, freeze):
     assert _row("select 1 from notifications where event_code='queue_changed' and user_id=(select user_id from reservations where id=%s)", b_rid)
 
 
+def test_fila_paga_depois_do_inicio_comeca_no_pagamento(world, freeze):
+    freeze(at(2, 8, 0))
+    user = login(make_user('prep_pagou_tarde'))
+    rid = reserve(user, world, 10).json()['id']
+    freeze(at(2, 8, 1, ) + timedelta(seconds=30))                   # checkout demorou 1:30
+    assert pay(user, rid).status_code == 200
+    r = _row('select starts_at, ends_at from reservations where id=%s', rid)
+    assert r['starts_at'] == at(2, 8, 1) + timedelta(seconds=30) and r['ends_at'] == at(2, 8, 11) + timedelta(seconds=30)
+
+
+def test_intervalo_sem_console_pronto_nao_vira_ausencia(world, freeze):
+    user, rid = _paid(world, freeze, at(2, 8, 0))
+    freeze(at(2, 8, 11))                                             # nenhuma preparação rodou (worker parado)
+    with tx() as conn:
+        worker._end_expired_sessions(conn, at(2, 8, 11))
+    assert _row('select status from reservations where id=%s', rid)['status'] == 'needs_resolution'
+
+
 def test_tempo_so_conta_com_console_pronto(world, freeze):
     """Console demorou a acordar (preparação começou no horário): o fim é empurrado pelo atraso."""
     _ADAPTERS['simulated'].fail_prepare.add(str(world['console']['id']))

@@ -330,6 +330,9 @@ class ConsoleRuntime:
     def revoke(self, session_id: str | None = None) -> None:
         if session_id and self.session_id and session_id != self.session_id:
             return                                                   # pedido de outra sessão: não afeta a atual
+        if self.session_id:
+            # O jogador pode ter saído do jogo (menu, outro app): a próxima preparação roda o roteiro de novo.
+            self.ready_game = None
         self.session_id = None
         if self.pad is not None:
             try:

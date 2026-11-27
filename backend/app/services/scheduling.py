@@ -439,6 +439,49 @@ def create_reservation(user, game_id, minutes: int, mode: str, start_at: datetim
     return r
 
 
+def push_queue_after(conn, r: dict, needed_until):
+    """Abre espaço até `needed_until` empurrando as próximas reservas EM FILA do console (em cadeia).
+
+    Retorna None se conseguiu (ou nada atrapalhava) ou o limite possível: início da primeira reserva que não pode
+    mudar (horário marcado ou já com sessão). Horários marcados nunca são movidos.
+    """
+    rows = conn.execute('''select r.*, g.title, exists(select 1 from game_sessions s where s.reservation_id=r.id) has_session
+                           from reservations r join games g on g.id=r.game_id
+                           where r.console_id=%s and r.id<>%s and r.status = any(%s) and r.starts_at >= %s
+                           order by r.starts_at for update of r''',
+                        (r['console_id'], r['id'], list(OCCUPYING), r['blocked_until'])).fetchall()
+    cursor, moves = needed_until, []
+    for x in rows:
+        if x['starts_at'] >= cursor:
+            break                                       # há folga: a cadeia termina aqui
+        if x['mode'] != 'queue' or x['has_session']:
+            return x['starts_at'] if not moves else moves[0][0]['starts_at']
+        delta = cursor - x['starts_at']
+        moves.append((x, delta))
+        cursor = x['blocked_until'] + delta
+    for x, delta in reversed(moves):                   # do último para o primeiro: nunca sobrepõe no meio
+        conn.execute('update reservations set starts_at=%s, ends_at=%s, blocked_until=%s where id=%s',
+                     (x['starts_at'] + delta, x['ends_at'] + delta, x['blocked_until'] + delta, x['id']))
+        notifications.notify(conn, str(x['user_id']), 'queue_changed',
+                             {'jogo': x['title'], 'inicio_previsto': timeutil.fmt_time(x['starts_at'] + delta),
+                              'mensagem': 'Sua vez foi adiada um pouco porque o jogador anterior começou mais tarde.'},
+                             dedupe=f"queue_changed:{x['id']}:{int((x['starts_at'] + delta).timestamp())}", link=f"/sessoes/{x['id']}")
+    return None
+
+
+def _start_at_payment(conn, r: dict, n) -> None:
+    """Fila paga depois do horário estimado: a vez começa no pagamento (o checkout não consome o tempo do jogador)."""
+    if r['mode'] != 'queue' or r['starts_at'] >= n:
+        return
+    delta = n - r['starts_at']
+    cap = push_queue_after(conn, r, r['blocked_until'] + delta)
+    if cap is not None:
+        delta = max(timedelta(0), min(delta, cap - r['blocked_until']))
+    if delta > timedelta(0):
+        conn.execute('update reservations set starts_at=%s, ends_at=%s, blocked_until=%s where id=%s',
+                     (r['starts_at'] + delta, r['ends_at'] + delta, r['blocked_until'] + delta, r['id']))
+
+
 def confirm_reservation(conn, reservation_id, source: str) -> str:
     """Chamado pelo processamento de pagamento aprovado. Retorna o estado final.
     Pagamento tardio: se o hold expirou e o horário ainda está livre, reconfirma; se não, NÃO fura a fila:
@@ -449,6 +492,7 @@ def confirm_reservation(conn, reservation_id, source: str) -> str:
         return r['status']
     conn.execute('select id from consoles where id=%s for update', (r['console_id'],))
     if r['status'] == 'pending_payment' and r['hold_expires_at'] > n:
+        _start_at_payment(conn, r, n)
         conn.execute("update reservations set status='confirmed', confirmed_at=%s, hold_expires_at=null where id=%s", (n, r['id']))
         conn.execute("update reservation_holds set released_at=%s, release_reason='paid' where reservation_id=%s and released_at is null", (n, r['id']))
         conn.execute("update coupon_redemptions set status='redeemed' where reservation_id=%s", (r['id'],))
