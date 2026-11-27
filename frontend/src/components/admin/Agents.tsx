@@ -77,7 +77,7 @@ function formValues<T extends Record<string, string | boolean>>(initial: T, row:
   ])) as T;
 }
 
-const CONFIG_HELP = 'Selecione o config.json no PC do ConsoleAgent. Na instalação padrão deste projeto, ele fica em E:\\LocadoraOnline\\locaplay\\agent\\config.json. Abra o arquivo na janela do navegador e autorize a gravação.';
+const CONFIG_HELP = 'Selecione o config.json no PC do ConsoleAgent. Na instalação padrão deste projeto, ele fica em E:\\LocadoraOnline\\locaplay\\agent\\config.json. O navegador pode pedir autorização para gravar quando você confirmar a ação.';
 
 function AgentFields({ value, onChange }: { value: typeof EMPTY_AGENT; onChange: (value: typeof EMPTY_AGENT) => void }) {
   return <>
@@ -105,12 +105,17 @@ async function chooseConfig() {
       types: [{ description: 'Configuração do ConsoleAgent', accept: { 'application/json': ['.json'] } }],
     });
     need(handle?.name === 'config.json', 'Selecione o arquivo config.json do ConsoleAgent.');
-    need(await handle.requestPermission({ mode: 'readwrite' }) === 'granted', 'Permita a gravação para atualizar o arquivo selecionado.');
     return handle;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return;
     throw error;
   }
+}
+
+async function authorizeConfigWrite(file: ConfigHandle) {
+  const permission = await file.requestPermission({ mode: 'readwrite' });
+  need(permission === 'granted',
+    'O navegador bloqueou a gravação neste arquivo. Confira as permissões de timedefora.com.br no navegador, selecione o config.json novamente e tente executar. Se o bloqueio continuar, tente no Chrome ou no Edge.');
 }
 
 function ConfigTarget({ file, onFile, disabled }: {
@@ -133,7 +138,7 @@ function ConfigTarget({ file, onFile, disabled }: {
     </div>
     {file && <div role="status">
       <strong>Arquivo selecionado</strong> <code>{file.name}</code>
-      <p className="small muted">O navegador exibe apenas o nome do arquivo. A gravação será feita no arquivo selecionado.</p>
+      <p className="small muted">Ao confirmar a ação, permita a gravação se o navegador solicitar.</p>
     </div>}
     {feedback && <p className="small" role="status">{feedback}</p>}
   </div>;
@@ -181,6 +186,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         }
         case 'rotate': {
           if (!file) throw new Error('Selecione o config.json e autorize a gravação antes de rotacionar.');
+          await authorizeConfigWrite(file);
           const existing = await readConfig(file);
           const writable = await file.createWritable();
           let tokens: AgentTokens;
@@ -208,6 +214,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         case 'update': {
           if (!credentials) throw new Error('Gere os tokens para atualizar o config.json.');
           if (!file) throw new Error('Selecione o config.json antes de executar.');
+          await authorizeConfigWrite(file);
           await writeConfig(file, agentConfig(credentials.tokens, endpoint, await readConfig(file)));
           setSummary('Tokens gravados no config.json. Reinicie o ConsoleAgent para aplicar a atualização.');
           break;
@@ -245,7 +252,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
               (value === 'update' && !(window as ConfigPickerWindow).showOpenFilePicker)}>{label}</option>)}
         </select></Field>
         {action === 'edit' && <AgentFields value={draft} onChange={setDraft} />}
-        {action === 'rotate' && <p className="small muted">Selecione o config.json antes de executar. O sistema substitui os tokens no arquivo e invalida os anteriores.</p>}
+        {action === 'rotate' && <p className="small muted">Selecione o config.json antes de executar. Depois da autorização de gravação, o sistema substitui os tokens no arquivo e invalida os anteriores.</p>}
         {(action === 'update' || action === 'rotate') && <ConfigTarget file={file} onFile={setFile} disabled={busy} />}
         {action === 'delete' && <Field label="Motivo da exclusão" required>
           <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} rows={3} />
@@ -313,6 +320,7 @@ export default function Agents() {
           <button className="btn primary" disabled={busy} onClick={() => run(async () => {
             const payload = agentPayload(a);
             const file = a.is_simulated ? null : configFile;
+            if (file) await authorizeConfigWrite(file);
             const existing = file ? await readConfig(file) : undefined;
             const result = await post<AgentTokens & { id: string }>('/admin/agents', { ...payload, is_simulated: a.is_simulated });
             let summary = 'Agente cadastrado. Aguardando o primeiro sinal.';
