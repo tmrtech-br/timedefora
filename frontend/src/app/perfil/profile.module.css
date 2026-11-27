@@ -4,27 +4,30 @@
 .form button { justify-self: start; }
 .compact :global(.field) { gap: 3px; }
 .compact :global(.field-foot):has(> span:only-child:empty) { display: none; }
-@media (max-width: 900px) {
-  .profileForms:global(.grid2) { grid-template-columns: minmax(0, 1fr); }
-}
+.profileCards { display: grid; gap: 12px; }
+.profileCards > section { min-width: 0; }
+.stats > p, .stats > dl { margin: 0; }
+.actions, .linkForm { gap: 8px; }
+.linkForm > input { flex: 1 1 180px; min-width: 0; }
+.linked :global(.spread) > span { min-width: 0; overflow-wrap: anywhere; }
+.linked :global(.spread) > button { flex-shrink: 0; }
+
 @media (min-width: 901px) {
-  .profileForms:global(.grid2) { align-items: start; gap: 10px; }
-  .profileForms > .compact:global(.stack) {
-    display: grid;
-    align-content: start;
-    min-width: 0;
+  .profileCards {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "personal linked" "stats linked";
   }
-  .personal {
+  .personal:global(.stack) {
+    grid-area: personal;
+    display: grid;
     grid-template-columns: 120px minmax(0, 1fr);
     column-gap: 14px;
   }
-  .personal > h2, .personal > .save { grid-column: 1 / -1; }
-  .personal > .avatarButton { grid-column: 1; grid-row: 2 / 4; align-self: start; }
-  .personal > :global(.field) { grid-column: 2; grid-row: 2; }
-  .personal > :global(.field) + :global(.field) { grid-row: 3; }
-  .personal > a { grid-column: 2; grid-row: 4; align-self: start; }
-  .personal > .save { grid-column: 2; }
-  .profileForms :global(.field) { align-self: start; min-width: 0; }
+  .personal > h2 { grid-column: 1 / -1; }
+  .personal > .avatarButton { grid-column: 1; grid-row: 2 / 5; }
+  .personal > :global(.field), .personal > a, .personal > .actions { grid-column: 2; }
+  .stats { grid-area: stats; }
+  .linked { grid-area: linked; }
 }
 .avatarButton {
   position: relative;

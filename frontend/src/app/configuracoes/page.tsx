@@ -81,7 +81,7 @@ function Config() {
             </fieldset>
           </>}
         </section>
-        {isStaff(me) && <section className="card stack">
+        {isStaff(me) && <section className={`card stack ${styles.totp}`}>
           <h2>Autenticação em dois fatores (TOTP)</h2>
           <p className="muted small">Protege o acesso ao painel administrativo.</p>
           {me.mfa_enabled ? <>

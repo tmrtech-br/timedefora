@@ -22,3 +22,6 @@
 .request { overflow-wrap: anywhere; }
 .session > span { min-width: 0; overflow-wrap: anywhere; }
 .session > button { flex-shrink: 0; }
+.totp:global(.stack), .totp :global(.mfa-qr) { gap: 6px; }
+.totp :global(.field) { gap: 3px; }
+.totp > p { margin: 0; }
