@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { Clipboard } from 'lucide-react';
 import { Alert, Field, FieldHelp, Modal, PageHeader, StatusPill } from '@/components/ui';
+import { toast } from '@/components/Toaster';
 import { del, patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime } from '@/lib/format';
@@ -162,7 +163,6 @@ const START_AGENT_COMMAND = [
 ].join('\n');
 
 function AgentStartup() {
-  const [feedback, setFeedback] = useState('');
   return (
     <section className={styles.startup} aria-labelledby="agent-startup-title">
       <div className={styles.startupHeader}>
@@ -170,14 +170,13 @@ function AgentStartup() {
         <button className="btn sm" type="button" onClick={async () => {
           try {
             await navigator.clipboard.writeText(START_AGENT_COMMAND);
-            setFeedback('Comando copiado.');
+            toast('ok', 'Comando copiado.');
           } catch {
-            setFeedback('Selecione o comando abaixo e copie com Ctrl+C.');
+            toast('error', 'Não foi possível copiar o comando. Selecione-o e use Ctrl+C.');
           }
         }}><Clipboard size={15} aria-hidden /> Copiar comando</button>
       </div>
       <pre tabIndex={0} aria-label="Comando PowerShell"><code>{START_AGENT_COMMAND}</code></pre>
-      {feedback && <p className="small" role="status">{feedback}</p>}
       <ol className="small">
         <li>Se o agente estiver rodando, encerre-o com <kbd>Ctrl+C</kbd>.</li>
         <li>No PC do agente, abra o PowerShell, cole o comando e pressione <kbd>Enter</kbd>. Mantenha a janela aberta enquanto o agente estiver em uso.</li>
@@ -197,7 +196,6 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
   const [reason, setReason] = useState('');
   const [summary, setSummary] = useState(initialSummary ?? '');
   const [error, setError] = useState('');
-  const [copy, setCopy] = useState('');
   const [busy, setBusy] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const endpoint = String(record.endpoint_url ?? '');
@@ -208,7 +206,6 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
     setBusy(true);
     setError('');
     setSummary('');
-    setCopy('');
     try {
       const base = `/admin/agents/${agent.id}`;
       switch (action) {
@@ -256,7 +253,6 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
           setAction(event.target.value);
           setSummary('');
           setError('');
-          setCopy('');
         }}>
           <option value="">Selecione uma ação</option>
           {ACTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -272,25 +268,27 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
       </div>
       {summary && <p role="status">{summary}</p>}
       {error && <p role="alert" className="field invalid"><span className="err">{error}</span></p>}
-      {showCredentials && <section className="stack" aria-label="Credenciais do agente">
-        <div className="small">
-          <strong>Como aplicar os tokens</strong>
-          <ol>
+      {showCredentials && <>
+        <section className={styles.startup} aria-labelledby="agent-credentials-title">
+          <h3 id="agent-credentials-title">Como aplicar os tokens</h3>
+          <ol className="small">
             <li>No computador que executa o ConsoleAgent, abra o <code>config.json</code> usado na inicialização. Por padrão, ele fica na pasta <code>agent</code> do projeto.</li>
             <li>Ao rotacionar, os tokens anteriores perdem a validade. Use os botões <strong>Copiar</strong> para substituir os valores de <code>agent_token</code> e <code>api_to_agent_token</code>. Mantenha as aspas, as vírgulas e as demais configurações.</li>
           </ol>
-        </div>
-        {(['agent_token', 'api_to_agent_token'] as const).map((key) => <div key={key} className="row">
-          <div style={{ flex: '1 1 240px', minWidth: 0 }}><Field label={key}><input readOnly value={credentials[key]} spellCheck={false} autoComplete="off" /></Field></div>
-          <button className="btn sm" type="button" aria-label={`Copiar ${key}`} onClick={async () => {
-            try { await navigator.clipboard.writeText(credentials[key]); setCopy(`${key} copiado.`); }
-            catch { setCopy('Selecione e copie o token no campo.'); }
-          }}>Copiar</button>
-        </div>)}
-        {copy && <p className="small" role="status">{copy}</p>}
-        <p className="small">Salve o arquivo <code>config.json</code>.</p>
+          {(['agent_token', 'api_to_agent_token'] as const).map((key) => <div key={key} className={styles.tokenRow}>
+            <label className="field">
+              {key}
+              <input readOnly value={credentials[key]} spellCheck={false} autoComplete="off" />
+            </label>
+            <button className="btn sm" type="button" aria-label={`Copiar ${key}`} onClick={async () => {
+              try { await navigator.clipboard.writeText(credentials[key]); toast('ok', 'Token copiado.'); }
+              catch { toast('error', 'Não foi possível copiar. Selecione o token e use Ctrl+C.'); }
+            }}><Clipboard size={15} aria-hidden /> Copiar</button>
+          </div>)}
+          <p className="small">Salve o arquivo <code>config.json</code>.</p>
+        </section>
         <AgentStartup />
-      </section>}
+      </>}
     </div>
   </Modal>;
 }

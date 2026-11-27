@@ -45,6 +45,15 @@
   font-size: 12px;
 }
 
+.tokenRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.tokenRow input { min-width: 0; }
+
 @media (max-width: 760px) {
   .overview { grid-template-columns: minmax(0, 1fr); gap: 12px; }
 }
