@@ -1,0 +1,13 @@
+.form {
+  gap: 5px;
+}
+
+.form :global(.field) {
+  gap: 3px;
+}
+
+.consents {
+  display: grid;
+  gap: 7px;
+  margin: 4px 0 6px;
+}
