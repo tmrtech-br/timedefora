@@ -103,6 +103,8 @@ function ConsoleDateTime({ label, value, min, onChange }: {
 
 function ConsoleWindows({ c, group, onChange }: { c: AdminConsole; group: string; onChange: () => void }) {
   const [window, setWindow] = useState(EMPTY_WINDOW);
+  // Remonta o formulário após salvar: zera o estado "tocado" dos campos obrigatórios.
+  const [formKey, setFormKey] = useState(0);
   const [now] = useState(() => new Date().toISOString());
   const games = useApi<{ id: string; title: string; platform_codes: string[] }[]>('/admin/games');
   const assignments = useApi<{ id: string; game_title: string; starts_at: string; ends_at: string }[]>(`/admin/assignments?console_id=${c.id}&date_from=${now}`);
@@ -110,13 +112,14 @@ function ConsoleWindows({ c, group, onChange }: { c: AdminConsole; group: string
   const validWindow = window.starts_at.length === 16 && window.ends_at.length === 16 && window.starts_at < window.ends_at;
   return <ConsoleSection group={group} title="Vínculo de jogos" summary={assignments.data?.length ? `${assignments.data.length} vínculo(s)` : 'Sem vínculos'}>
     {msg}
-    <form className="stack" onSubmit={(e) => {
+    <form key={formKey} className="stack" onSubmit={(e) => {
       e.preventDefault();
       if (!validWindow) return;
       void run(async () => {
         await post('/admin/assignments', { console_id: c.id, game_id: window.game_id,
           starts_at: fromLocalInput(window.starts_at), ends_at: fromLocalInput(window.ends_at) });
         setWindow(EMPTY_WINDOW);
+        setFormKey((k) => k + 1);
         void assignments.reload();
         onChange();
       }, 'Jogo vinculado.');

@@ -5,33 +5,38 @@ import { Field, PageHeader } from '@/components/ui';
 import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { dateTime, money } from '@/lib/format';
-import { DataTable, fromLocalInput, need, NewRecord, nowLocalInput, useAction } from './common';
+import { DataTable, fromLocalInput, need, NewRecord, nowLocalInput, useAction, useDelete } from './common';
 
 export default function Pricing() {
   const pk = useApi<Record<string, unknown>[]>('/admin/packages');
   const cp = useApi<Record<string, unknown>[]>('/admin/coupons');
-  const games = useApi<{ id: string; title: string }[]>('/admin/games').data;
+  const games = useApi<{ id: string; title: string; min_minutes: number; max_minutes: number }[]>('/admin/games').data;
+  const deletion = useDelete();
   const [p, setP] = useState({ name: '', minutes: 10, price: '30', game_id: '', platform_code: '', is_promotion: false, local_start_time: '', local_end_time: '', valid_until: '' });
   const [c, setC] = useState({ code: '', discount_type: 'percent', discount_value: 10, max_redemptions: '', per_user_limit: 1, valid_until: '', game_id: '' });
   const { run, msg } = useAction();
+  const pkgGame = games?.find((g) => g.id === p.game_id);
   return (
     <div className="stack">
       <PageHeader title="Preços, pacotes e cupons" subtitle="Preços resolvidos no servidor (jogo > console > plataforma > geral, e por faixa horária)." />
       {msg}
+      {deletion.dialog}
       <section className="card stack"><h2>Pacotes</h2><NewRecord title="Novo pacote">{(close) => <><div className="grid3">
         <Field label="Nome"><input value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} /></Field>
-        <Field label="Minutos" hint="5 a 480"><input type="number" min={5} max={480} value={p.minutes} onChange={(e) => setP({ ...p, minutes: Number(e.target.value) })} /></Field>
+        <Field label="Minutos" hint={pkgGame ? `${pkgGame.min_minutes} a ${pkgGame.max_minutes} (limite do jogo)` : '5 a 480'}><input type="number" min={5} max={480} value={p.minutes} onChange={(e) => setP({ ...p, minutes: Number(e.target.value) })} /></Field>
         <Field label="Preço (R$)"><input maxLength={10} inputMode="decimal" value={p.price} onChange={(e) => setP({ ...p, price: e.target.value.replace(/[^\d.,]/g, '') })} /></Field>
         <Field label="Jogo (opcional)"><select value={p.game_id} onChange={(e) => setP({ ...p, game_id: e.target.value })}><option value="">Todos</option>{games?.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</select></Field>
         <Field label="Plataforma (opcional)"><select value={p.platform_code} onChange={(e) => setP({ ...p, platform_code: e.target.value })}><option value="">Todas</option>{['PS5', 'PS4', 'XBOX_SERIES', 'XBOX_ONE', 'SWITCH'].map((x) => <option key={x}>{x}</option>)}</select></Field>
         <Field label="Faixa horária início"><input type="time" value={p.local_start_time} onChange={(e) => setP({ ...p, local_start_time: e.target.value })} /></Field>
         <Field label="Faixa horária fim"><input type="time" value={p.local_end_time} onChange={(e) => setP({ ...p, local_end_time: e.target.value })} /></Field>
-        <label className="check"><input type="checkbox" checked={p.is_promotion} onChange={(e) => setP({ ...p, is_promotion: e.target.checked })} />Promoção</label></div>
+        <label className="check field-check"><input type="checkbox" checked={p.is_promotion} onChange={(e) => setP({ ...p, is_promotion: e.target.checked })} />Promoção</label></div>
         <div className="pricing-validity"><DateTimeField label="Válido até (opcional)" min={nowLocalInput()} value={p.valid_until} onChange={(valid_until) => setP({ ...p, valid_until })} /></div>
         <button className="btn primary" onClick={() => run(async () => {
           const price = Number(p.price.replace(',', '.'));
           need(p.name.trim().length >= 2, 'Informe o nome do pacote (mínimo 2 caracteres).');
           need(Number.isInteger(p.minutes) && p.minutes >= 5 && p.minutes <= 480, 'Minutos devem estar entre 5 e 480.');
+          need(!pkgGame || (p.minutes >= pkgGame.min_minutes && p.minutes <= pkgGame.max_minutes),
+            `${pkgGame?.title} aceita de ${pkgGame?.min_minutes} a ${pkgGame?.max_minutes} minutos; fora disso o pacote não aparece no site.`);
           need(p.price.trim() !== '' && Number.isFinite(price) && price >= 0, 'Informe um preço válido (não pode ser negativo).');
           need(price <= 10000, 'Preço máximo: R$ 10.000,00.');
           need(!p.valid_until || (isLocalDateTime(p.valid_until) && p.valid_until > nowLocalInput()), '“Válido até” deve ser uma data futura.');
@@ -41,7 +46,9 @@ export default function Pricing() {
           valid_until: fromLocalInput(p.valid_until) }); pk.reload(); close(); }, 'Pacote criado.')}>Criar</button></>}</NewRecord>
         <DataTable limit={5} rows={pk.data} error={pk.error?.message} cols={[['Nome', (r) => String(r.name)], ['Minutos', (r) => String(r.minutes)], ['Preço', (r) => money(Number(r.price_cents))],
           ['Escopo', (r) => [r.game_title, r.console_name, r.platform_code].filter(Boolean).join(' · ') || 'geral'], ['Faixa', (r) => (r.local_start_time ? `${r.local_start_time}–${r.local_end_time}` : '—')],
-          ['Ativo', (r) => <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/packages/${r.id}`, { active: !r.active }); pk.reload(); })}>{r.active ? 'ativo (desativar)' : 'inativo (ativar)'}</button>]]} />
+          ['Ativo', (r) => <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/packages/${r.id}`, { active: !r.active }); pk.reload(); })}>{r.active ? 'ativo (desativar)' : 'inativo (ativar)'}</button>],
+          ['', (r) => <button className="btn sm danger" onClick={() => deletion.remove(`/admin/packages/${r.id}`, `Excluir o pacote ${r.name}?`,
+            (request) => run(async () => { await request(); pk.reload(); }, 'Pacote excluído.'))}>Excluir</button>]]} />
       </section>
       <section className="card stack"><h2>Cupons</h2><NewRecord title="Novo cupom">{(close) => <><div className="grid3">
         <Field label="Código"><input maxLength={30} value={c.code} onChange={(e) => setC({ ...c, code: e.target.value.toUpperCase() })} /></Field>
@@ -62,7 +69,9 @@ export default function Pricing() {
           await post('/admin/coupons', { ...c, max_redemptions: c.max_redemptions ? Number(c.max_redemptions) : null, valid_until: fromLocalInput(c.valid_until), game_id: c.game_id || null }); cp.reload(); close(); }, 'Cupom criado.')}>Criar</button></>}</NewRecord>
         <DataTable limit={5} rows={cp.data} error={cp.error?.message} cols={[['Código', (r) => String(r.code)], ['Desconto', (r) => (r.discount_type === 'percent' ? `${r.discount_value}%` : money(Number(r.discount_value)))],
           ['Usos', (r) => `${r.used}/${r.max_redemptions ?? '∞'}`], ['Validade', (r) => dateTime(r.valid_until as string)],
-          ['', (r) => <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/coupons/${r.id}`, { active: !r.active }); cp.reload(); })}>{r.active ? 'Desativar' : 'Ativar'}</button>]]} />
+          ['', (r) => <button className="btn sm" onClick={() => run(async () => { await patch(`/admin/coupons/${r.id}`, { active: !r.active }); cp.reload(); })}>{r.active ? 'Desativar' : 'Ativar'}</button>],
+          ['', (r) => <button className="btn sm danger" onClick={() => deletion.remove(`/admin/coupons/${r.id}`, `Excluir o cupom ${r.code}?`,
+            (request) => run(async () => { await request(); cp.reload(); }, 'Cupom excluído.'))}>Excluir</button>]]} />
       </section>
     </div>
   );

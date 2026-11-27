@@ -205,6 +205,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .field.invalid input, .field.invalid select { border-color: #ff5d6c; }
 .check { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px; }
 .check input { margin-top: 3px; width: 17px; height: 17px; accent-color: var(--purple); }
+/* Checkbox dentro de grade de campos: alinha com a linha dos inputs (42px), abaixo dos rótulos. */
+.check.field-check { align-self: end; align-items: center; height: 42px; }
+.check.field-check input { margin-top: 0; }
 .alert { display: flex; gap: 10px; align-items: flex-start; padding: 11px 14px; border-radius: 10px; font-size: 13.5px; }
 .alert svg { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; }
 .alert.error { background: rgba(255, 75, 92, .1); border: 1px solid rgba(255, 75, 92, .4); color: #ffb3ba; }

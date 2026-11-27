@@ -1530,6 +1530,18 @@ def patch_package(pid: uuid.UUID, body: dict, p: Principal = Depends(ADMIN)):
                                                                     'valid_until', 'sort_order'}))
 
 
+@router.delete('/packages/{pid}')
+def delete_package(pid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
+    try:
+        with tx() as conn:
+            if not conn.execute('delete from price_packages where id=%s', (pid,)).rowcount:
+                raise not_found('Pacote não encontrado.')
+            audit_event(conn, 'package.deleted', 'price_packages', pid, reason=body.reason)
+    except psycopg.errors.ForeignKeyViolation:
+        raise conflict('package_in_use', 'Pacote já usado em reservas; desative-o em vez de excluir.')
+    return {'ok': True}
+
+
 class CouponIn(BaseModel):
     code: str
     description: str = ''
@@ -1571,6 +1583,18 @@ def create_coupon(body: CouponIn, p: Principal = Depends(ADMIN)):
 def patch_coupon(cid: uuid.UUID, body: dict, p: Principal = Depends(ADMIN)):
     with tx() as conn:
         return jsonable(_patch(conn, 'coupons', cid, body, {'description', 'active', 'valid_until', 'max_redemptions'}))
+
+
+@router.delete('/coupons/{cid}')
+def delete_coupon(cid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
+    try:
+        with tx() as conn:
+            if not conn.execute('delete from coupons where id=%s', (cid,)).rowcount:
+                raise not_found('Cupom não encontrado.')
+            audit_event(conn, 'coupon.deleted', 'coupons', cid, reason=body.reason)
+    except psycopg.errors.ForeignKeyViolation:
+        raise conflict('coupon_in_use', 'Cupom já usado em reservas; desative-o em vez de excluir.')
+    return {'ok': True}
 
 
 # ================================================================== transmissões públicas
