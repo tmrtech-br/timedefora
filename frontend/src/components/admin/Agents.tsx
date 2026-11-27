@@ -180,7 +180,7 @@ function AgentStartup() {
       {feedback && <p className="small" role="status">{feedback}</p>}
       <ol className="small">
         <li>Salve os tokens no <code>config.json</code>. Se o agente estiver rodando, encerre-o com <kbd>Ctrl+C</kbd>.</li>
-        <li>No PC do agente, abra o PowerShell, cole o comando e pressione <kbd>Enter</kbd>. Deixe a janela aberta.</li>
+        <li>No PC do agente, abra o PowerShell, cole o comando e pressione <kbd>Enter</kbd>. Mantenha a janela aberta enquanto o agente estiver em uso.</li>
         <li>Atualize a lista de agentes e aguarde o status <strong>Online</strong>. Depois, abra <a className="link-purple" href="/admin/contas-psn">Contas PSN</a> para vincular a conta.</li>
       </ol>
     </section>
@@ -271,9 +271,9 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         <div className="small">
           <strong>Como aplicar os tokens</strong>
           <ol>
-            <li>No PC do ConsoleAgent, abra o <code>config.json</code> na pasta <code>locaplay\agent</code>. Nesta instalação, o caminho é <code>E:\LocadoraOnline\locaplay\agent\config.json</code>.</li>
-            <li>Use os botões <strong>Copiar</strong> e substitua os valores de <code>agent_token</code> e <code>api_to_agent_token</code> entre aspas. Preserve as vírgulas e as demais configurações.</li>
-            <li>Salve o arquivo e reinicie o ConsoleAgent.</li>
+            <li>No computador que executa o ConsoleAgent, abra o <code>config.json</code> usado na inicialização. Por padrão, ele fica na pasta <code>agent</code> do projeto.</li>
+            <li>Ao rotacionar, os tokens anteriores perdem a validade. Use os botões <strong>Copiar</strong> para substituir os valores de <code>agent_token</code> e <code>api_to_agent_token</code>. Mantenha as aspas, as vírgulas e as demais configurações.</li>
+            <li>Salve o arquivo e reinicie o ConsoleAgent para carregar os dois novos tokens.</li>
           </ol>
         </div>
         {(['agent_token', 'api_to_agent_token'] as const).map((key) => <div key={key} className="row">
