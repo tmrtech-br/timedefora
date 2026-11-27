@@ -3,9 +3,12 @@
 Regras:
 - Só prepara com o console LIVRE (sem sessão ativa de outro jogador) — nunca atrapalha quem está jogando.
 - Janela: a partir de `setup_minutes` (mínimo 1 min) antes do início.
-- Falha definitiva se o adaptador não suporta a preparação, ou se o console não ficar pronto até
-  PREP_GRACE após o início. Nesse caso a sessão NÃO começa: reserva → "Em resolução" (o cliente não perde
-  tempo), incidente automático, cliente e equipe (operador/admin) notificados.
+- Falha definitiva se o adaptador não suporta a preparação, ou se o console não ficar pronto até a
+  tolerância após o início (PREP_GRACE; maior na rota PSN, onde acordar o console do repouso leva minutos).
+  Nesse caso a sessão NÃO começa: reserva → "Em resolução" (o cliente não perde tempo), incidente
+  automático, cliente e equipe (operador/admin) notificados.
+- O tempo do cliente só começa a contar quando o console fica pronto: se a preparação termina depois do
+  início, o fim da reserva é empurrado pelo atraso (limitado pela próxima reserva do console).
 - Resposta "simulada" de um agente real não conta como console pronto.
 """
 from __future__ import annotations
@@ -21,20 +24,57 @@ from .consoles import console_ref
 from .settings_store import get_settings
 
 log = logging.getLogger('locaplay.preparation')
-PREP_GRACE = timedelta(seconds=60)
+PREP_GRACE = timedelta(seconds=90)
+# Rota PSN: o agente faz até 3 tentativas (a 1ª quase sempre se perde enquanto o console sai do repouso).
+PREP_GRACE_PSN = timedelta(minutes=5)
 PERMANENT = {'not_implemented', 'not_configured', 'unsupported_platform'}
+# Estados que ocupam o console (mesmos da restrição reservations_no_overlap).
+BLOCKING = ('pending_payment', 'confirmed', 'active')
 
 
 def lead(conn) -> timedelta:
     return timedelta(minutes=max(1, int(get_settings(conn).get('setup_minutes', 2) or 0)))
 
 
-def _row(conn, r) -> dict:
+def grace(conn, console_id) -> timedelta:
+    """Tolerância após o início para o console ficar pronto (a mais longa entre as conhecidas, na dúvida)."""
+    row = conn.execute('select network_route from console_connection_configs where console_id=%s', (console_id,)).fetchone()
+    return PREP_GRACE_PSN if not row or row['network_route'] == 'internet_psn' else PREP_GRACE
+
+
+def _start_clock(conn, r: dict, p: dict, ready_at) -> None:
+    """Console pronto depois do início: empurra o fim da reserva pelo atraso, sem invadir a próxima reserva.
+
+    Só compensa atraso do SISTEMA: a preparação precisa ter começado logo que possível (no início, ou no pagamento
+    quando ele cai em cima do horário). Preparação que só começou quando o jogador chegou atrasado não estende nada.
+    """
+    late = ready_at - r['starts_at']
+    if late <= timedelta(0):
+        return
+    due = max(r['starts_at'], r['confirmed_at'] or r['starts_at']) + timedelta(minutes=1)
+    if p['created_at'] > due:
+        return
+    nxt = conn.execute('''select min(starts_at) s from reservations where console_id=%s and id<>%s
+                          and status = any(%s) and starts_at >= %s''',
+                       (r['console_id'], r['id'], list(BLOCKING), r['blocked_until'])).fetchone()['s']
+    blocked = r['blocked_until'] + late
+    if nxt is not None:
+        blocked = min(blocked, nxt)
+    ends = min(r['ends_at'] + late, blocked)
+    if ends <= r['ends_at']:
+        return
+    conn.execute('update reservations set ends_at=%s, blocked_until=%s where id=%s', (ends, blocked, r['id']))
+    log.info('reserva %s: console pronto %ss após o início; fim empurrado para %s',
+             r['code'], int(late.total_seconds()), ends.isoformat())
+
+
+def _row(conn, r, n) -> dict:
     p = conn.execute('select * from console_preparations where reservation_id=%s for update', (r['id'],)).fetchone()
     if p:
         return p
-    conn.execute('insert into console_preparations(reservation_id, console_id) values (%s,%s) on conflict (reservation_id) do nothing',
-                 (r['id'], r['console_id']))
+    # created_at pelo relógio do servidor da aplicação: marca quando a preparação começou (ver _start_clock).
+    conn.execute('''insert into console_preparations(reservation_id, console_id, created_at) values (%s,%s,%s)
+                    on conflict (reservation_id) do nothing''', (r['id'], r['console_id'], n))
     return conn.execute('select * from console_preparations where reservation_id=%s for update', (r['id'],)).fetchone()
 
 
@@ -46,13 +86,14 @@ def _console_busy(conn, r) -> bool:
 def ensure(conn, r: dict, n=None) -> str:
     """Executa/atualiza a preparação da reserva. Retorna 'ready', 'pending' ou 'failed'."""
     n = n or timeutil.now()
-    p = _row(conn, r)
+    p = _row(conn, r, n)
     if p['status'] in ('ready', 'failed'):
         return p['status']
     if n < r['starts_at'] - lead(conn):
         return 'pending'
+    limit = r['starts_at'] + grace(conn, r['console_id'])
     if _console_busy(conn, r):
-        if n >= r['starts_at'] + PREP_GRACE:
+        if n >= limit:
             _fail(conn, r, p, 'O console continuou ocupado pela sessão anterior além do horário de início.')
             return 'failed'
         return 'pending'
@@ -65,6 +106,7 @@ def ensure(conn, r: dict, n=None) -> str:
         if res.ok and (adapter.simulated or not res.simulated):
             conn.execute("""update console_preparations set status='ready', attempts=%s, simulated=%s, last_message=%s, ready_at=%s
                             where id=%s""", (attempts, adapter.simulated or res.simulated, res.message[:500], n, p['id']))
+            _start_clock(conn, r, p, n)
             return 'ready'
         msg, permanent = (res.message or 'Console não ficou pronto.'), False
         if res.ok and res.simulated:
@@ -72,7 +114,7 @@ def ensure(conn, r: dict, n=None) -> str:
     except AdapterError as e:
         msg, permanent = e.message, e.code in PERMANENT
     conn.execute('update console_preparations set attempts=%s, last_message=%s where id=%s', (attempts, msg[:500], p['id']))
-    if permanent or n >= r['starts_at'] + PREP_GRACE:
+    if permanent or n >= limit:
         _fail(conn, r, p, msg)
         return 'failed'
     return 'pending'

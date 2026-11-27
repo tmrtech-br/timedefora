@@ -29,11 +29,15 @@ def prepare_session(conn, r: dict) -> dict:
     s = conn.execute('select * from game_sessions where reservation_id=%s', (r['id'],)).fetchone()
     if s:
         return s
+    # Relê a reserva: a preparação pode ter empurrado o fim (o tempo só conta com o console pronto).
+    r = conn.execute('select * from reservations where id=%s', (r['id'],)).fetchone()
+    # Fim empurrado = contrato começa quando o console ficou pronto (sem empurrão: o próprio início da reserva).
+    starts = max(r['starts_at'], r['ends_at'] - timedelta(minutes=r['minutes']))
     method = conn.execute('select method from console_connection_configs where console_id=%s', (r['console_id'],)).fetchone()
     s = insert(conn, 'game_sessions', {
         'reservation_id': r['id'], 'user_id': r['user_id'], 'console_id': r['console_id'], 'status': 'ready',
         'adapter_method': method['method'] if method else 'unconfigured', 'released_at': timeutil.now(),
-        'contract_starts_at': r['starts_at'], 'contract_ends_at': r['ends_at']})
+        'contract_starts_at': starts, 'contract_ends_at': r['ends_at']})
     conn.execute("update reservations set status='active' where id=%s", (r['id'],))
     _event(conn, s['id'], 'console_released')
     return s
@@ -44,12 +48,16 @@ def join(user, reservation_id, input_device: str, ip: str, ua: str) -> dict:
         raise AppError(422, 'validation_error', 'Escolha teclado e mouse ou controle.')
     n = timeutil.now()
     with tx() as conn:
-        r0 = conn.execute('select user_id, starts_at, ends_at, status from reservations where id=%s', (reservation_id,)).fetchone()
-    if r0 and str(r0['user_id']) == user.user_id and r0['status'] == 'confirmed' and r0['starts_at'] <= n < r0['ends_at']:
+        r0 = conn.execute('''select r.user_id, r.starts_at, r.ends_at, r.status, p.status p_status from reservations r
+                             left join console_preparations p on p.reservation_id=r.id where r.id=%s''', (reservation_id,)).fetchone()
+    # Preparação em andamento vale mesmo após o fim original: o tempo do cliente só começa com o console pronto.
+    if (r0 and str(r0['user_id']) == user.user_id and r0['status'] == 'confirmed' and r0['starts_at'] <= n
+            and (n < r0['ends_at'] or r0['p_status'] == 'pending')):
         # Console precisa estar pronto (acordado, jogo aberto). Transação própria: a falha fica registrada.
         state = preparation.ensure_now(reservation_id)
         if state == 'pending':
-            raise AppError(409, 'console_preparing', 'Estamos preparando o console para você. Tente novamente em alguns segundos.')
+            raise AppError(409, 'console_preparing', 'Estamos ligando o console e abrindo o jogo. Seu tempo só começa a contar '
+                           'quando ele estiver pronto; você entra automaticamente.')
         if state == 'failed':
             raise AppError(409, 'console_unavailable', 'O console não ficou pronto por um problema técnico. Seu tempo não foi '
                            'consumido: a equipe foi avisada e vai remarcar ou reembolsar sua reserva.')

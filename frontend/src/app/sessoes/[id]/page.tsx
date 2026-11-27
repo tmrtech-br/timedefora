@@ -28,18 +28,33 @@ function Room() {
   const [err, setErr] = useState('');
   const [reason, setReason] = useState('');
   const [msg, setMsg] = useState('');
+  // Console sendo ligado/preparado: a página tenta entrar sozinha até ele ficar pronto (sem segundo clique).
+  const [preparing, setPreparing] = useState('');
+  const [joining, setJoining] = useState(false);
   useEffect(() => { if (!kbAllowed && device === 'keyboard_mouse') setDevice('gamepad'); }, [kbAllowed, device]);
+  useEffect(() => {
+    if (!preparing) return;
+    const timer = window.setTimeout(() => { void join(); }, 4000);
+    return () => window.clearTimeout(timer);
+  });
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!r) return <Skeleton h={300} />;
   const startIn = (new Date(r.starts_at).getTime() - now()) / 1000;
-  const canJoin = ['confirmed', 'active'].includes(r.status) && startIn <= 0 && new Date(r.ends_at).getTime() > now();
+  // Reserva confirmada após o início fica liberada: se o console ainda está sendo preparado, o servidor decide.
+  const canJoin = ['confirmed', 'active'].includes(r.status) && startIn <= 0
+    && (r.status === 'confirmed' || new Date(r.ends_at).getTime() > now());
   async function join() {
-    setErr('');
+    if (joining) return;
+    setErr(''); setJoining(true);
     try {
       const j = await post<{ session_id: string; input_token: string }>(`/reservations/${id}/join`, { input_device: device });
+      setPreparing('');
       try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); } catch { /* armazenamento indisponível */ }
       router.push(`/jogar/${j.session_id}`);
-    } catch (e) { setErr(e instanceof ApiError ? e.message : 'Erro ao entrar.'); }
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'console_preparing') setPreparing(e.message);
+      else { setPreparing(''); setErr(e instanceof ApiError ? e.message : 'Erro ao entrar.'); reload(); }
+    } finally { setJoining(false); }
   }
   async function cancel() {
     try { const res = await post<{ message: string }>(`/reservations/${id}/cancel`, { reason }); setMsg(res.message); reload(); }
@@ -66,8 +81,9 @@ function Room() {
           </>) : r.status === 'pending_payment' ? <Link className="btn primary" href={`/checkout/${r.id}`}>Concluir pagamento ({money(r.total_cents)})</Link>
             : <p className="muted">Esta reserva está {RESERVATION_STATUS[r.status].toLowerCase()}.</p>}
           {['confirmed', 'active'].includes(r.status) && (
-            <button className="btn primary block" style={{ marginTop: 14, height: 48 }} disabled={!canJoin} onClick={join}>
-              {canJoin ? 'Começar a jogar' : 'O botão será liberado no horário de início'}</button>)}
+            <button className="btn primary block" style={{ marginTop: 14, height: 48 }} disabled={!canJoin || !!preparing || joining} onClick={join}>
+              {preparing ? 'Preparando o console…' : canJoin ? 'Começar a jogar' : 'O botão será liberado no horário de início'}</button>)}
+          {preparing && <div style={{ marginTop: 10 }} role="status" aria-live="polite"><Alert kind="info">{preparing}</Alert></div>}
           {err && <div style={{ marginTop: 10 }}><Alert kind="error">{err}</Alert></div>}
           {r.public_queue && r.public_queue.length > 0 && (
             <div className="waiting-queue">

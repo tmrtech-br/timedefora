@@ -4,6 +4,7 @@ from datetime import timedelta
 from app import worker
 from app.core.db import one, tx
 from app.gamebridge.registry import _ADAPTERS
+from app.services import preparation
 
 from conftest import Api, admin_api, at, login, make_user, pay, reserve
 
@@ -41,7 +42,7 @@ def test_falha_na_preparacao_nao_consome_tempo_e_avisa_equipe(world, freeze):
     assert r.status_code == 409 and r.json()['code'] == 'console_preparing'
     assert _row('select status from reservations where id=%s', rid)['status'] == 'confirmed'
     # Passou da tolerância: falha definitiva
-    freeze(at(2, 8, 1, ) + timedelta(seconds=5))
+    freeze(at(2, 8, 0) + preparation.PREP_GRACE_PSN + timedelta(seconds=5))
     worker.tick()
     res = _row('select status, resolution_notes from reservations where id=%s', rid)
     assert res['status'] == 'needs_resolution' and 'não foi consumido' in res['resolution_notes']
@@ -60,6 +61,38 @@ def test_falha_na_preparacao_nao_consome_tempo_e_avisa_equipe(world, freeze):
     r = user.post(f'/reservations/{rid}/join', json={'input_device': 'gamepad'})
     assert r.status_code == 409 and r.json()['code'] == 'console_unavailable'
     assert admin.get('/admin/incidents').status_code == 200
+
+
+def test_tempo_so_conta_com_console_pronto(world, freeze):
+    """Console demorou a acordar (preparação começou no horário): o fim é empurrado pelo atraso."""
+    _ADAPTERS['simulated'].fail_prepare.add(str(world['console']['id']))
+    user, rid = _paid(world, freeze, at(2, 8, 0))
+    worker.tick()                                                   # 08:00 preparação começa, console não fica pronto
+    assert _row('select status from console_preparations where reservation_id=%s', rid)['status'] == 'pending'
+    _ADAPTERS['simulated'].fail_prepare.discard(str(world['console']['id']))
+    freeze(at(2, 8, 3))                                             # pronto 3 min depois do início
+    worker.tick()
+    r = _row('select ends_at, blocked_until from reservations where id=%s', rid)
+    assert r['ends_at'] == at(2, 8, 13)                             # 10 min contados a partir de 08:03
+    s = _row('select contract_starts_at, contract_ends_at from game_sessions where reservation_id=%s', rid)
+    assert s['contract_starts_at'] == at(2, 8, 3) and s['contract_ends_at'] == at(2, 8, 13)
+
+
+def test_preparacao_alem_do_fim_original_nao_vira_ausencia(world, freeze, monkeypatch):
+    """Tolerância maior que a reserva: a preparação em andamento após o fim original não marca "não compareceu"."""
+    monkeypatch.setattr(preparation, 'PREP_GRACE', timedelta(minutes=15))
+    _ADAPTERS['simulated'].fail_prepare.add(str(world['console']['id']))
+    user, rid = _paid(world, freeze, at(2, 8, 0))
+    worker.tick()
+    freeze(at(2, 8, 11))                                            # passou do fim original (08:10), ainda preparando
+    worker.tick()
+    assert _row('select status from reservations where id=%s', rid)['status'] == 'confirmed'
+    r = user.post(f'/reservations/{rid}/join', json={'input_device': 'gamepad'})
+    assert r.status_code == 409 and r.json()['code'] == 'console_preparing'
+    _ADAPTERS['simulated'].fail_prepare.discard(str(world['console']['id']))
+    r = user.post(f'/reservations/{rid}/join', json={'input_device': 'gamepad'})
+    assert r.status_code == 200, r.text
+    assert _row('select ends_at from reservations where id=%s', rid)['ends_at'] == at(2, 8, 21)
 
 
 def test_nao_prepara_com_console_ocupado(world, freeze):

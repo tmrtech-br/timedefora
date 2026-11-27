@@ -50,7 +50,7 @@ def _prepare_upcoming(conn, n) -> int:
     """Prepara (acorda o console e abre o jogo) as reservas que começam em breve, uma por vez por console."""
     rows = conn.execute("""select r.* from reservations r
                            left join console_preparations p on p.reservation_id=r.id
-                           where r.status='confirmed' and r.starts_at <= %s and r.ends_at > %s
+                           where r.status='confirmed' and r.starts_at <= %s and (r.ends_at > %s or p.status='pending')
                              and coalesce(p.status, 'pending')='pending'
                            order by r.starts_at for update of r skip locked""", (n + preparation.lead(conn), n)).fetchall()
     done = 0
@@ -67,7 +67,8 @@ def _prepare_upcoming(conn, n) -> int:
 def _start_due_sessions(conn, n) -> int:
     count = 0
     rows = conn.execute("""select r.*, g.title from reservations r join games g on g.id=r.game_id
-                           where r.status='confirmed' and r.starts_at <= %s and r.ends_at > %s
+                           left join console_preparations p on p.reservation_id=r.id
+                           where r.status='confirmed' and r.starts_at <= %s and (r.ends_at > %s or p.status='pending')
                            order by r.starts_at for update of r skip locked""", (n, n)).fetchall()
     for r in rows:
         busy = conn.execute("select 1 from game_sessions where console_id=%s and status in ('ready','active') and reservation_id<>%s",
@@ -76,9 +77,9 @@ def _start_due_sessions(conn, n) -> int:
             continue
         if preparation.ensure(conn, r, n) != 'ready':
             continue   # ainda preparando, ou falhou (reserva já foi para resolução e a equipe notificada)
-        sessions.prepare_session(conn, r)
+        s = sessions.prepare_session(conn, r)   # relê a reserva: o fim pode ter sido empurrado pelo atraso da preparação
         notifications.notify(conn, str(r['user_id']), 'turn_ready', {'jogo': r['title'], 'duracao': f"{r['minutes']} minutos",
-                                                                     'fim_previsto': timeutil.fmt_time(r['ends_at'])},
+                                                                     'fim_previsto': timeutil.fmt_time(s['contract_ends_at'])},
                              dedupe=f"ready:{r['id']}", link=f"/sessoes/{r['id']}")
         count += 1
     return count
@@ -91,7 +92,9 @@ def _end_expired_sessions(conn, n) -> int:
         sessions.end_session(conn, s, 'time_up' if s['first_connected_at'] else 'no_show',
                              'expired' if s['first_connected_at'] else 'ended')
     # Reservas confirmadas cujo intervalo passou sem sessão (ausência)
-    no_shows = conn.execute("""update reservations set status='no_show' where status='confirmed' and ends_at <= %s
+    # (preparação ainda em andamento não é ausência: o tempo do cliente nem começou)
+    no_shows = conn.execute("""update reservations r set status='no_show' where status='confirmed' and ends_at <= %s
+                               and not exists (select 1 from console_preparations p where p.reservation_id=r.id and p.status='pending')
                                returning id, console_id""", (n,)).fetchall()
     for r in no_shows:
         scheduling.recompute_queue(conn, r['console_id'])
