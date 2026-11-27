@@ -2364,6 +2364,8 @@ def put_setting(key: str, body: SettingIn, p: Principal = Depends(ADMIN)):
         raise unprocessable('validation_error', 'Tipo de valor inválido para esta configuração.')
     if key == 'booking_rate_cents_per_minute' and (type(body.value) is not int or not 0 <= body.value <= 49000):
         raise unprocessable('validation_error', 'Informe de 0 a 49000 centavos por minuto.')
+    if key == 'join_bonus_seconds' and not 0 <= body.value <= 300:
+        raise unprocessable('validation_error', 'Tempo extra do jogador: use de 0 a 300 segundos.')
     if key == 'prep_lead_minutes' and not 1 <= body.value <= 60:
         raise unprocessable('validation_error', 'Antecedência da preparação: use de 1 a 60 minutos.')
     if key == 'player_video_max_kbps' and not 1000 <= body.value <= 15000:

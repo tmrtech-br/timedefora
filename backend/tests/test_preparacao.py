@@ -75,6 +75,41 @@ def test_sala_de_espera_so_libera_com_console_pronto(world, freeze):
     assert room['console_ready'] is True and room['can_join'] is True
 
 
+def _setting(key, value):
+    with tx() as conn:
+        conn.execute('''insert into global_settings(key, value) values (%s, to_jsonb(%s::int))
+                        on conflict (key) do update set value=excluded.value''', (key, value))
+
+
+def test_tempo_extra_reservado_na_agenda_e_somado_ao_fim(world, freeze):
+    _setting('join_bonus_seconds', 30)
+    user, rid = _paid(world, freeze, at(2, 8, 0))
+    assert _row('select blocked_until from reservations where id=%s', rid)['blocked_until'] == at(2, 8, 10) + timedelta(seconds=30)
+    other = login(make_user('prep_bonus_b'))
+    nxt = reserve(other, world, 10).json()
+    assert nxt['starts_at'].startswith('2026-12-02T08:11')          # a fila respeita o tempo extra do anterior
+    worker.tick()
+    s = _row('select contract_starts_at, contract_ends_at from game_sessions where reservation_id=%s', rid)
+    assert s['contract_starts_at'] == at(2, 8, 0) and s['contract_ends_at'] == at(2, 8, 10) + timedelta(seconds=30)
+
+
+def test_atraso_do_console_empurra_a_fila_seguinte(world, freeze):
+    _ADAPTERS['simulated'].fail_prepare.add(str(world['console']['id']))
+    a, a_rid = _paid(world, freeze, at(2, 8, 0))
+    b = login(make_user('prep_fila_b'))
+    b_rid = reserve(b, world, 10).json()['id']
+    assert pay(b, b_rid).status_code == 200
+    assert _row('select starts_at from reservations where id=%s', b_rid)['starts_at'] == at(2, 8, 10)
+    worker.tick()
+    _ADAPTERS['simulated'].fail_prepare.discard(str(world['console']['id']))
+    freeze(at(2, 8, 3))
+    worker.tick()
+    assert _row('select ends_at from reservations where id=%s', a_rid)['ends_at'] == at(2, 8, 13)
+    rb = _row('select starts_at, ends_at from reservations where id=%s', b_rid)
+    assert rb['starts_at'] == at(2, 8, 13) and rb['ends_at'] == at(2, 8, 23)
+    assert _row("select 1 from notifications where event_code='queue_changed' and user_id=(select user_id from reservations where id=%s)", b_rid)
+
+
 def test_tempo_so_conta_com_console_pronto(world, freeze):
     """Console demorou a acordar (preparação começou no horário): o fim é empurrado pelo atraso."""
     _ADAPTERS['simulated'].fail_prepare.add(str(world['console']['id']))

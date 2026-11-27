@@ -147,16 +147,24 @@ def _ceil_minute(t: datetime) -> datetime:
     return t if (t.second == 0 and t.microsecond == 0) else (t.replace(second=0, microsecond=0) + timedelta(minutes=1))
 
 
+def join_bonus(st: dict) -> timedelta:
+    """Tempo extra do jogador (entre liberar o console e a imagem chegar): faz parte do intervalo bloqueado."""
+    try:
+        return timedelta(seconds=max(0, int(st.get('join_bonus_seconds', 15) or 0)))
+    except (TypeError, ValueError):
+        return timedelta(0)
+
+
 def earliest_in_window(conn, console_id, a: datetime, b: datetime, minutes: int, setup: int, not_before: datetime,
-                       exclude_reservation=None) -> datetime | None:
+                       exclude_reservation=None, extra: timedelta = timedelta(0)) -> datetime | None:
     bounds = conn.execute('select operating_starts_at, operating_ends_at from consoles where id=%s', (console_id,)).fetchone()
     if bounds and bounds['operating_starts_at']:
         a, b = max(a, bounds['operating_starts_at']), min(b, bounds['operating_ends_at'])
-    d, block = timedelta(minutes=minutes), timedelta(minutes=minutes + setup)
+    d, block = timedelta(minutes=minutes), timedelta(minutes=minutes + setup) + extra
     t = _ceil_minute(max(a, not_before))
     if d > b - t:
         return None
-    busy = _busy(conn, console_id, t, b + timedelta(minutes=setup), exclude_reservation)
+    busy = _busy(conn, console_id, t, b + timedelta(minutes=setup) + extra, exclude_reservation)
     hours = _hours(conn, console_id)
     for _ in range(500):
         if d > b - t:
@@ -180,6 +188,8 @@ def find_slots(conn, game_id, minutes: int, mode: str, start_at: datetime | None
     st = get_settings(conn)
     n = timeutil.now()
     setup = int(st['setup_minutes'])
+    bonus = join_bonus(st)
+    block = timedelta(minutes=minutes + setup) + bonus        # jogo + tempo extra + preparação do próximo
     horizon = n + timedelta(days=int(st['booking_horizon_days']))
     consoles = eligible_consoles(conn, game_id, console_id, lock=lock)
     out: list[Slot] = []
@@ -197,18 +207,18 @@ def find_slots(conn, game_id, minutes: int, mode: str, start_at: datetime | None
                     continue
                 if s < n + timedelta(minutes=int(st['scheduled_lead_minutes'])):
                     continue
-                busy = _busy(conn, c['id'], s, s + timedelta(minutes=minutes + setup), exclude_reservation)
-                if any(bs < s + timedelta(minutes=minutes + setup) and be > s for bs, be in busy):
+                busy = _busy(conn, c['id'], s, s + block, exclude_reservation)
+                if any(bs < s + block and be > s for bs, be in busy):
                     continue
                 if not _within_hours(_hours(conn, c['id']), s, s + timedelta(minutes=minutes)):
                     continue
             else:
                 s = earliest_in_window(conn, c['id'], w['starts_at'], w['ends_at'], minutes, setup,
-                                       n + timedelta(minutes=int(st['queue_lead_minutes'])), exclude_reservation)
+                                       n + timedelta(minutes=int(st['queue_lead_minutes'])), exclude_reservation, bonus)
                 if s is None:
                     continue
             out.append(Slot(str(c['id']), c['code'], c['name'], str(w['id']), w['starts_at'], w['ends_at'], s,
-                            s + timedelta(minutes=minutes), s + timedelta(minutes=minutes + setup)))
+                            s + timedelta(minutes=minutes), s + block))
             break  # primeira janela viável deste console
     out.sort(key=lambda x: (x.start, x.console_code))
     return out
@@ -517,11 +527,13 @@ def compact_queue(conn, console_id) -> int:
            where r.console_id=%s and r.mode='queue' and r.status='confirmed' and r.starts_at > %s order by r.starts_at for update of r""",
         (console_id, lead)).fetchall()
     for r in rows:
-        s = earliest_in_window(conn, console_id, r['a_start'], r['a_end'], r['minutes'], r['setup_minutes'], lead, r['id'])
+        # Mantém o intervalo bloqueado da própria reserva (inclui o tempo extra do jogador definido ao reservar).
+        extra = max(timedelta(0), (r['blocked_until'] - r['starts_at']) - timedelta(minutes=r['minutes'] + r['setup_minutes']))
+        s = earliest_in_window(conn, console_id, r['a_start'], r['a_end'], r['minutes'], r['setup_minutes'], lead, r['id'], extra)
         if s is None or s >= r['starts_at'] - timedelta(minutes=1):
             continue
         conn.execute('update reservations set starts_at=%s, ends_at=%s, blocked_until=%s where id=%s',
-                     (s, s + timedelta(minutes=r['minutes']), s + timedelta(minutes=r['minutes'] + r['setup_minutes']), r['id']))
+                     (s, s + (r['ends_at'] - r['starts_at']), s + (r['blocked_until'] - r['starts_at']), r['id']))
         moved += 1
         notifications.notify(conn, str(r['user_id']), 'queue_changed',
                              {'jogo': r['title'], 'inicio_previsto': timeutil.fmt_time(s),

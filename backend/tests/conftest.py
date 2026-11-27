@@ -141,6 +141,7 @@ def world(freeze):
     n = timeutil.now()
     with tx() as conn:
         conn.execute("insert into global_settings(key, value) values ('setup_minutes', '0')")
+        conn.execute("insert into global_settings(key, value) values ('join_bonus_seconds', '0')")   # testes de borda exatos
         ag = insert(conn, 'console_agents', {'name': 'sim-1', 'host_name': 'sim', 'is_simulated': True, 'status': 'online'})
         plat = one(conn, "select id from platforms where code='PS5'")
         c = insert(conn, 'consoles', {'code': 'PS5-01', 'name': 'PS5 nº 01', 'platform_id': plat['id'], 'status': 'online', 'agent_id': ag['id']})

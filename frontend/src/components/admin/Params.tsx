@@ -36,6 +36,7 @@ const NUMBERS: { key: string; title: string; unit: string; min: number; max: num
   { key: 'booking_rate_cents_per_minute', title: 'Preço por minuto dos consoles da plataforma (0 mantém os pacotes)', unit: 'centavos', min: 0, max: 49000 },
   { key: 'hold_minutes', title: 'Tempo para pagar a reserva', unit: 'min', min: 1, max: 60 },
   { key: 'setup_minutes', title: 'Intervalo de preparação entre jogadores', unit: 'min', min: 0, max: 30 },
+  { key: 'join_bonus_seconds', title: 'Tempo extra do jogador ao entrar (clique até a imagem aparecer; reservado na agenda e na fila)', unit: 's', min: 0, max: 300 },
   { key: 'scheduled_lead_minutes', title: 'Antecedência mínima do horário marcado', unit: 'min', min: 0, max: 1440 },
   { key: 'queue_lead_minutes', title: 'Antecedência mínima no modo fila', unit: 'min', min: 0, max: 120 },
   { key: 'booking_horizon_days', title: 'Reservar com até quantos dias de antecedência', unit: 'dias', min: 1, max: 90 },

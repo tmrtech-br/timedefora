@@ -33,6 +33,12 @@ def prepare_session(conn, r: dict) -> dict:
     r = conn.execute('select * from reservations where id=%s', (r['id'],)).fetchone()
     # Fim empurrado = contrato começa quando o console ficou pronto (sem empurrão: o próprio início da reserva).
     starts = max(r['starts_at'], r['ends_at'] - timedelta(minutes=r['minutes']))
+    # Tempo extra do jogador (clique → imagem na tela): já reservado no intervalo bloqueado, entra no fim do contrato.
+    bonus = scheduling.join_bonus(get_settings(conn))
+    ends = min(r['ends_at'] + bonus, r['blocked_until'])
+    if ends > r['ends_at']:
+        conn.execute('update reservations set ends_at=%s where id=%s', (ends, r['id']))
+        r = {**r, 'ends_at': ends}
     method = conn.execute('select method from console_connection_configs where console_id=%s', (r['console_id'],)).fetchone()
     s = insert(conn, 'game_sessions', {
         'reservation_id': r['id'], 'user_id': r['user_id'], 'console_id': r['console_id'], 'status': 'ready',
@@ -80,6 +86,7 @@ def join(user, reservation_id, input_device: str, ip: str, ua: str) -> dict:
         if other:
             raise conflict('console_busy', 'O console ainda está em uso pela sessão anterior. Aguarde alguns instantes.')
         s = prepare_session(conn, r)
+        r = conn.execute('select * from reservations where id=%s', (r['id'],)).fetchone()   # fim pode ter ganho o tempo extra
         s = conn.execute('select * from game_sessions where id=%s for update', (s['id'],)).fetchone()
         if s['status'] not in ('ready', 'active'):
             raise forbidden('Sessão encerrada.', code='session_over')

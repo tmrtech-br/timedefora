@@ -58,18 +58,48 @@ def _start_clock(conn, r: dict, p: dict, ready_at) -> None:
     due = max(r['starts_at'], r['confirmed_at'] or r['starts_at']) + timedelta(minutes=1)
     if p['created_at'] > due:
         return
-    nxt = conn.execute('''select min(starts_at) s from reservations where console_id=%s and id<>%s
-                          and status = any(%s) and starts_at >= %s''',
-                       (r['console_id'], r['id'], list(BLOCKING), r['blocked_until'])).fetchone()['s']
     blocked = r['blocked_until'] + late
-    if nxt is not None:
-        blocked = min(blocked, nxt)
+    cap = _push_queue_after(conn, r, blocked)
+    if cap is not None:
+        blocked = min(blocked, cap)
     ends = min(r['ends_at'] + late, blocked)
     if ends <= r['ends_at']:
         return
     conn.execute('update reservations set ends_at=%s, blocked_until=%s where id=%s', (ends, blocked, r['id']))
     log.info('reserva %s: console pronto %ss após o início; fim empurrado para %s',
              r['code'], int(late.total_seconds()), ends.isoformat())
+
+
+def _push_queue_after(conn, r: dict, needed_until):
+    """Abre espaço até `needed_until` empurrando as próximas reservas EM FILA do console (em cadeia).
+
+    Retorna None se conseguiu (ou nada atrapalhava) ou o limite possível: início da primeira reserva que não pode
+    mudar (horário marcado ou já com sessão). Horários marcados nunca são movidos.
+    """
+    rows = conn.execute('''select r.*, g.title, exists(select 1 from game_sessions s where s.reservation_id=r.id) has_session
+                           from reservations r join games g on g.id=r.game_id
+                           where r.console_id=%s and r.id<>%s and r.status = any(%s) and r.starts_at >= %s
+                           order by r.starts_at for update of r''',
+                        (r['console_id'], r['id'], list(BLOCKING), r['blocked_until'])).fetchall()
+    cursor, moves = needed_until, []
+    for x in rows:
+        if x['starts_at'] >= cursor:
+            break                                       # há folga: a cadeia termina aqui
+        if x['mode'] != 'queue' or x['has_session']:
+            return x['starts_at'] if not moves else moves[0][0]['starts_at']
+        delta = cursor - x['starts_at']
+        moves.append((x, delta))
+        cursor = x['blocked_until'] + delta
+    for x, delta in reversed(moves):                   # do último para o primeiro: nunca sobrepõe no meio
+        conn.execute('update reservations set starts_at=%s, ends_at=%s, blocked_until=%s where id=%s',
+                     (x['starts_at'] + delta, x['ends_at'] + delta, x['blocked_until'] + delta, x['id']))
+        notifications.notify(conn, str(x['user_id']), 'queue_changed',
+                             {'jogo': x['title'], 'inicio_previsto': timeutil.fmt_time(x['starts_at'] + delta),
+                              'mensagem': 'Sua vez foi adiada um pouco porque o console demorou a ficar pronto para o jogador anterior.'},
+                             dedupe=f"queue_changed:{x['id']}:{int((x['starts_at'] + delta).timestamp())}", link=f"/sessoes/{x['id']}")
+    if moves:
+        log.info('reserva %s: %s reserva(s) da fila adiadas pelo atraso do console', r['code'], len(moves))
+    return None
 
 
 def _row(conn, r, n) -> dict:
