@@ -46,7 +46,8 @@ def fits_window(start: datetime, minutes: int, a: datetime, b: datetime) -> bool
     return a <= start < b and timedelta(minutes=minutes) <= b - start
 
 
-def expire_stale_holds(conn, console_ids: list | None = None) -> int:
+def expire_stale_holds(conn, console_ids: list | None = None, expired_consoles: set | None = None) -> int:
+    """Expira reservas não pagas. `expired_consoles` (opcional) recebe os consoles liberados."""
     n = timeutil.now()
     q = "select id, user_id, console_id from reservations where status='pending_payment' and hold_expires_at <= %s"
     params: list = [n]
@@ -60,6 +61,8 @@ def expire_stale_holds(conn, console_ids: list | None = None) -> int:
         conn.execute("update coupon_redemptions set status='released' where reservation_id=%s", (r['id'],))
         conn.execute("update payments set status='expired' where reservation_id=%s and status in ('created','pending')", (r['id'],))
         notifications.notify(conn, str(r['user_id']), 'hold_expired', {}, dedupe=f"hold_expired:{r['id']}", link='/sessoes')
+        if expired_consoles is not None and r['console_id']:
+            expired_consoles.add(r['console_id'])
     return len(rows)
 
 

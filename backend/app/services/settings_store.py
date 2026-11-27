@@ -32,6 +32,12 @@ DEFAULTS = {
     'public_streams_enabled': True,           # botão/links "Assistir ao vivo"
     'support_tickets_enabled': True,          # abertura de novos chamados (mensagens em chamados abertos continuam)
     'share_button_enabled': False,            # botão Share do controle (compartilhar/transmitir pela conta do console)
+    # ---- Energia do console (ver services/console_power.py). Valem junto com o cadastro de cada console.
+    'console_standby_enabled': True,          # hibernar ao fim da sessão e quando o console ficar ocioso
+    'keep_awake_for_next_enabled': True,      # não hibernar se houver reserva começando em breve (keep_awake_minutes do console)
+    'prewake_enabled': True,                  # preparar (acordar + abrir o jogo) antes do início
+    'prep_lead_minutes': 5,                   # quantos minutos antes do início a preparação começa
+    'wake_on_reservation_enabled': True,      # acordar o console já ao reservar (antes do pagamento), se a sessão for em breve
 }
 
 # Parâmetros expostos ao público (para a interface esconder o que estiver desligado).

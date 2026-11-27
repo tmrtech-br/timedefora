@@ -13,7 +13,7 @@ from .core import timeutil
 from .core.db import get_pool, insert, tx
 from .diagnostic_worker import DiagnosticWorker
 from .gamebridge import AdapterError, get_adapter
-from .services import notifications, payments, preparation, scheduling, sessions
+from .services import console_power, notifications, payments, preparation, scheduling, sessions
 from .services.consoles import console_ref
 from .services.settings_store import get_settings
 
@@ -168,8 +168,15 @@ def tick() -> dict:
         if not got:
             return {'skipped': 'outra instância executando'}
         try:
+            freed: set = set()
             with tx() as conn:
-                out['holds_expired'] = scheduling.expire_stale_holds(conn)
+                out['holds_expired'] = scheduling.expire_stale_holds(conn, expired_consoles=freed)
+            for console_id in freed:            # console pode ter sido acordado ao reservar e o pagamento não veio
+                try:
+                    with tx() as conn:
+                        console_power.standby_if_idle(conn, console_id)
+                except Exception:
+                    log.exception('falha ao avaliar hibernação do console %s', console_id)
             with tx() as conn:
                 out['sessions_ended'] = _end_expired_sessions(conn, n)
             with tx() as conn:

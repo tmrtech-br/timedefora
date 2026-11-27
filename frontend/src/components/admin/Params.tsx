@@ -23,7 +23,16 @@ const TOGGLES: { key: string; title: string; desc: string; invert?: boolean }[] 
   { key: 'share_button_enabled', title: 'Botão Share do controle', desc: 'Desligado (recomendado): o cliente não abre o menu de compartilhar/transmitir nem publica capturas pela conta do console.' },
 ];
 
+/** Energia do console: valem junto com "Hibernar ao fim" e "Manter acordado X min" do cadastro de cada console. */
+const POWER: { key: string; title: string; desc: string }[] = [
+  { key: 'console_standby_enabled', title: 'Hibernar o console quando ninguém for usar', desc: 'Ao fim da sessão (e quando uma reserva não paga expira), coloca o console em repouso. Respeita o "Hibernar ao fim da sessão" de cada console.' },
+  { key: 'keep_awake_for_next_enabled', title: 'Manter ligado se houver próxima reserva', desc: 'Não hiberna se outra reserva começar dentro do "Manter acordado X minutos" do console: o próximo jogador não espera o console acordar.' },
+  { key: 'prewake_enabled', title: 'Preparar o console antes do início', desc: 'Acorda o console e abre o jogo alguns minutos antes da sessão (antecedência abaixo). Desligado: prepara só no intervalo entre jogadores.' },
+  { key: 'wake_on_reservation_enabled', title: 'Ligar o console ao reservar', desc: 'Assim que o cliente escolhe o jogo e cria a reserva (antes de pagar), acorda o console se a sessão for começar em breve. Se não pagar, ele volta a hibernar quando a reserva expira.' },
+];
+
 const NUMBERS: { key: string; title: string; unit: string; min: number; max: number }[] = [
+  { key: 'prep_lead_minutes', title: 'Antecedência da preparação do console (com "Preparar antes do início" ligado)', unit: 'min', min: 1, max: 60 },
   { key: 'booking_rate_cents_per_minute', title: 'Preço por minuto dos consoles da plataforma (0 mantém os pacotes)', unit: 'centavos', min: 0, max: 49000 },
   { key: 'hold_minutes', title: 'Tempo para pagar a reserva', unit: 'min', min: 1, max: 60 },
   { key: 'setup_minutes', title: 'Intervalo de preparação entre jogadores', unit: 'min', min: 0, max: 30 },
@@ -119,6 +128,20 @@ export default function Params() {
                     <button className="btn sm" style={{ marginLeft: 8 }} onClick={() => setPausedReason(String(v.sales_paused_reason || ''))}>Editar</button></p>}</div>
                 <button className="switch" role="switch" aria-checked={on} aria-label={`${t.title}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
                   onClick={() => ask(t.key, t.invert ? on : !on, `${on ? 'Desligar' : 'Ligar'}: ${t.title}`)} />
+              </div>);
+          })}
+        </div>
+      </section>
+
+      <section className="card stack"><h2>Console: ligar e hibernar</h2>
+        <div className="params">
+          {POWER.map((t) => {
+            const on = v[t.key] !== false;
+            return (
+              <div key={t.key} className={`param ${on ? '' : 'off'}`}>
+                <div><h3>{t.title}</h3><p>{t.desc}</p></div>
+                <button className="switch" role="switch" aria-checked={on} aria-label={`${t.title}: ${on ? 'ligado' : 'desligado'}`} disabled={busy}
+                  onClick={() => ask(t.key, !on, `${on ? 'Desligar' : 'Ligar'}: ${t.title}`)} />
               </div>);
           })}
         </div>

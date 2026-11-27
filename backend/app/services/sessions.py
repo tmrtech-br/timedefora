@@ -12,7 +12,7 @@ from ..core import security, timeutil
 from ..core.db import audit_event, insert, tx
 from ..core.errors import AppError, conflict, forbidden, not_found
 from ..gamebridge import AdapterError, get_adapter
-from . import notifications, owner_settlements, preparation, scheduling
+from . import console_power, notifications, owner_settlements, preparation, scheduling
 from .consoles import console_ref
 from .settings_store import get_settings, require_enabled
 
@@ -175,26 +175,9 @@ def send_input(session_id, token: str, command: dict) -> dict:
 
 
 def should_standby(conn, ref, s: dict) -> bool:
-    """Hibernar ao fim da sessão só se o cadastro pedir e não houver outra reserva começando em breve."""
-    settings = ref.settings or {}
-    if not settings.get('standby_after_session', True):
-        return False
-    try:
-        minutes = max(0, int(settings.get('keep_awake_minutes', 15)))
-    except (TypeError, ValueError):
-        minutes = 15
-    soon = conn.execute(
-        '''select 1 from reservations where console_id=%s and id<>%s and status = any(%s)
-           and starts_at <= %s limit 1''',
-        (s['console_id'], s['reservation_id'], list(scheduling.OCCUPYING), timeutil.now() + timedelta(minutes=minutes)),
-    ).fetchone()
-    if soon:
-        return False
-    other = conn.execute(
-        "select 1 from game_sessions where console_id=%s and id<>%s and status in ('ready','active') limit 1",
-        (s['console_id'], s['id']),
-    ).fetchone()
-    return not other
+    """Hibernar ao fim da sessão: parâmetros globais + cadastro do console, sem reserva começando em breve."""
+    return console_power.should_standby(conn, ref, s['console_id'], exclude_session=s['id'],
+                                        exclude_reservation=s['reservation_id'])
 
 
 def end_session(conn, s: dict, reason: str, status: str = 'ended') -> None:

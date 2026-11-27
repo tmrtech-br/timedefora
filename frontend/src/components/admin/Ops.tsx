@@ -218,28 +218,48 @@ export function Channels() {
   const ch = useApi<R[]>('/admin/channels');
   const games = useApi<{ id: string; title: string }[]>('/admin/games').data;
   const consoles = useApi<{ id: string; name: string }[]>('/admin/consoles').data;
-  const [f, setF] = useState({ provider: 'twitch', channel_name: '', external_url: '', console_id: '', game_id: '', privacy_mask_enabled: true });
+  const EMPTY = { provider: 'twitch', channel_name: '', external_url: '', console_id: '', game_id: '', privacy_mask_enabled: true, notes: '' };
+  const [f, setF] = useState(EMPTY);
+  const [editing, setEditing] = useState<string | null>(null);
   const { run, msg } = useAction();
+  function edit(r: R) {
+    setF({ provider: String(r.provider || 'twitch'), channel_name: String(r.channel_name || ''), external_url: String(r.external_url || ''),
+      console_id: String(r.console_id || ''), game_id: String(r.game_id || ''), privacy_mask_enabled: r.privacy_mask_enabled !== false, notes: String(r.notes || '') });
+    setEditing(String(r.id));
+  }
+  function stopEditing() { setEditing(null); setF(EMPTY); }
   return (
     <div className="stack">
       <PageHeader title="Transmissões públicas" subtitle="Somente espectadores. Nunca exiba credenciais, telas de compra/configuração ou dados pessoais." />
       {msg}
       {deletion.dialog}
-      <NewRecord title="Nova transmissão">{(close) => <><div className="grid3">
+      <NewRecord title="Nova transmissão" editingTitle={editing ? 'Editar transmissão' : undefined} onClose={stopEditing}>{(close) => <><div className="grid3">
         <Field label="Plataforma"><select value={f.provider} onChange={(e) => setF({ ...f, provider: e.target.value })}><option value="twitch">Twitch</option><option value="kick">Kick</option><option value="external">Link externo</option></select></Field>
         {f.provider === 'external' ? <Field label="URL https"><input maxLength={500} value={f.external_url} onChange={(e) => setF({ ...f, external_url: e.target.value })} /></Field>
           : <Field label="Nome do canal"><input value={f.channel_name} onChange={(e) => setF({ ...f, channel_name: e.target.value })} /></Field>}
         <Field label="Console"><select value={f.console_id} onChange={(e) => setF({ ...f, console_id: e.target.value })}><option value="">—</option>{consoles?.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         <Field label="Jogo"><select value={f.game_id} onChange={(e) => setF({ ...f, game_id: e.target.value })}><option value="">—</option>{games?.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</select></Field>
-        <label className="check"><input type="checkbox" checked={f.privacy_mask_enabled} onChange={(e) => setF({ ...f, privacy_mask_enabled: e.target.checked })} />Máscara/corte de telas sensíveis ativo</label></div>
-        <button className="btn primary" onClick={() => run(async () => { await post('/admin/channels', { ...f, console_id: f.console_id || null, game_id: f.game_id || null, channel_name: f.channel_name || null, external_url: f.external_url || null }); ch.reload(); close(); }, 'Canal cadastrado.')}>Cadastrar</button></>}</NewRecord>
+        <label className="check field-check"><input type="checkbox" checked={f.privacy_mask_enabled} onChange={(e) => setF({ ...f, privacy_mask_enabled: e.target.checked })} />Máscara/corte de telas sensíveis ativo</label></div>
+        <Field label="Observações (opcional)"><input maxLength={500} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
+        <button className="btn primary" onClick={() => run(async () => {
+          need(Boolean(f.console_id || f.game_id), 'Escolha um console ou um jogo.');
+          need(f.provider === 'external' ? /^https:\/\/\S+$/.test(f.external_url) : f.channel_name.trim().length > 0,
+            f.provider === 'external' ? 'Informe uma URL começando com https://.' : 'Informe o nome do canal.');
+          const body = { ...f, console_id: f.console_id || null, game_id: f.game_id || null,
+            channel_name: f.provider === 'external' ? null : f.channel_name.trim(), external_url: f.provider === 'external' ? f.external_url.trim() : null };
+          if (editing) await patch(`/admin/channels/${editing}`, body);
+          else await post('/admin/channels', body);
+          ch.reload(); close();
+        }, editing ? 'Transmissão atualizada.' : 'Canal cadastrado.')}>{editing ? 'Salvar alterações' : 'Cadastrar'}</button></>}</NewRecord>
       <section className="card"><h2>Transmissões</h2><DataTable limit={5} rows={ch.data} error={ch.error?.message} cols={[['Plataforma', (r) => PROVIDER_LABEL[String(r.provider)] || String(r.provider)], ['Canal', (r) => String(r.channel_name || r.external_url)], ['Console / jogo', (r) => [r.console_name, r.game_title].filter(Boolean).join(' · ')],
         ['Aparece no site?', (r) => { const issues = (r.issues as string[]) || []; const shown = (r.shown_on as string[]) || [];
           return issues.length ? <div className="stack" style={{ gap: 4 }}>{shown.length > 0 && <span className="pill amber">parcial: {shown.join(', ')}</span>}
             {!shown.length && <span className="pill red">não aparece</span>}<ul className="small" style={{ margin: 0, paddingLeft: 16 }}>{issues.map((x) => <li key={x}>{x}</li>)}</ul></div>
             : <span className="pill green">sim — {shown.join(', ')}</span>; }],
         ['Status', (r) => <select className="btn sm" value={String(r.status)} onChange={(e) => run(async () => { await patch(`/admin/channels/${r.id}`, { status: e.target.value }); ch.reload(); })}><option value="offline">offline</option><option value="live">ao vivo</option><option value="disabled">desativado</option></select>],
-        ['', (r) => <button className="btn sm danger" onClick={() => deletion.remove(`/admin/channels/${r.id}`, 'Excluir canal?', (request) => run(async () => { await request(); ch.reload(); }, 'Removido.'))}>Excluir</button>]]} /></section>
+        ['', (r) => <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+          <button className="btn sm" onClick={() => edit(r)}>Editar</button>
+          <button className="btn sm danger" onClick={() => deletion.remove(`/admin/channels/${r.id}`, 'Excluir canal?', (request) => run(async () => { await request(); ch.reload(); }, 'Removido.'))}>Excluir</button></div>]]} /></section>
     </div>
   );
 }

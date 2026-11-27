@@ -1649,11 +1649,23 @@ def create_channel(body: ChannelIn, p: Principal = Depends(ADMIN)):
 
 @router.patch('/channels/{chid}')
 def patch_channel(chid: uuid.UUID, body: dict, p: Principal = Depends(OPERATOR)):
+    allowed = {'status', 'privacy_mask_enabled', 'channel_name', 'external_url', 'notes'}
+    # Edição completa do cadastro (plataforma, console, jogo): só administradores, como no cadastro.
+    if {'provider', 'console_id', 'game_id'} & body.keys():
+        if not p.has('admin'):
+            raise forbidden('Somente administradores editam o cadastro da transmissão.')
+        allowed |= {'provider', 'console_id', 'game_id'}
+        if body.get('provider') not in (None, 'twitch', 'kick', 'external'):
+            raise unprocessable('validation_error', 'Plataforma inválida.')
     with tx() as conn:
         try:
-            return jsonable(_patch(conn, 'streaming_channels', chid, body, {'status', 'privacy_mask_enabled', 'channel_name', 'external_url', 'notes'}))
+            row = _patch(conn, 'streaming_channels', chid, body, allowed)
+            audit_event(conn, 'channel.updated', 'streaming_channels', chid, details={k: body[k] for k in body.keys() & allowed})
+            return jsonable(row)
         except psycopg.errors.CheckViolation:
-            raise unprocessable('validation_error', 'Dados do canal inválidos.')
+            raise unprocessable('validation_error', 'Canal inválido: informe console ou jogo; nome do canal (Twitch/Kick) ou URL https (externo).')
+        except psycopg.errors.ForeignKeyViolation:
+            raise unprocessable('validation_error', 'Console ou jogo inexistente.')
 
 
 @router.delete('/channels/{chid}')
@@ -2352,6 +2364,8 @@ def put_setting(key: str, body: SettingIn, p: Principal = Depends(ADMIN)):
         raise unprocessable('validation_error', 'Tipo de valor inválido para esta configuração.')
     if key == 'booking_rate_cents_per_minute' and (type(body.value) is not int or not 0 <= body.value <= 49000):
         raise unprocessable('validation_error', 'Informe de 0 a 49000 centavos por minuto.')
+    if key == 'prep_lead_minutes' and not 1 <= body.value <= 60:
+        raise unprocessable('validation_error', 'Antecedência da preparação: use de 1 a 60 minutos.')
     if key == 'player_video_max_kbps' and not 1000 <= body.value <= 15000:
         raise unprocessable('validation_error', 'Qualidade do vídeo: use de 1000 a 15000 kbps.')
     if key == 'owner_share_bps':

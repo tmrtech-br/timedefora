@@ -3,7 +3,7 @@ import json
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request
 from pydantic import BaseModel, Field
 
 from ..config import settings
@@ -11,7 +11,7 @@ from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx
 from ..core.deps import Principal, client_ip, current_user as authenticated_user, verified_user as verified_account
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found
-from ..services import notifications, payments, scheduling, sessions, support
+from ..services import console_power, notifications, payments, scheduling, sessions, support
 from ..services.payment_providers import verify_mp_signature
 from ..services.settings_store import get_settings, require_enabled
 from .common import SupportMessageIn, jsonable
@@ -54,12 +54,16 @@ def _reservation_view(conn, r: dict) -> dict:
 
 
 @router.post('/reservations', status_code=201)
-def create_reservation(body: ReservationIn, request: Request, p: Principal = Depends(verified_user)):
+def create_reservation(body: ReservationIn, request: Request, background: BackgroundTasks,
+                       p: Principal = Depends(verified_user)):
     security.rate_limit(f'reserve:{p.user_id}', 20, 600)
     with tx() as conn:
         r = scheduling.create_reservation(p, body.game_id, body.minutes, body.mode, body.start_at, body.coupon_code,
                                           body.accept_policy, body.console_id, client_ip(request), conn)
-        return _reservation_view(conn, r)
+        out = _reservation_view(conn, r)
+    # Depois de gravar e responder: acorda o console se a sessão for em breve (parâmetro wake_on_reservation_enabled).
+    background.add_task(console_power.wake_for_reservation, r['id'])
+    return out
 
 
 @router.get('/me/reservations')

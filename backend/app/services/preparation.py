@@ -33,7 +33,11 @@ BLOCKING = ('pending_payment', 'confirmed', 'active')
 
 
 def lead(conn) -> timedelta:
-    return timedelta(minutes=max(1, int(get_settings(conn).get('setup_minutes', 2) or 0)))
+    """Quanto antes do início a preparação começa (acordar + abrir o jogo)."""
+    st = get_settings(conn)
+    if st.get('prewake_enabled', True):
+        return timedelta(minutes=max(1, int(st.get('prep_lead_minutes', 5) or 0)))
+    return timedelta(minutes=max(1, int(st.get('setup_minutes', 2) or 0)))
 
 
 def grace(conn, console_id) -> timedelta:
