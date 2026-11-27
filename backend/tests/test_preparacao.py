@@ -63,6 +63,18 @@ def test_falha_na_preparacao_nao_consome_tempo_e_avisa_equipe(world, freeze):
     assert admin.get('/admin/incidents').status_code == 200
 
 
+def test_sala_de_espera_so_libera_com_console_pronto(world, freeze):
+    _ADAPTERS['simulated'].fail_prepare.add(str(world['console']['id']))
+    user, rid = _paid(world, freeze, at(2, 8, 0))
+    worker.tick()
+    room = user.get(f'/reservations/{rid}/waiting-room').json()
+    assert room['console_ready'] is False and room['can_join'] is False and room['preparation']['status'] == 'pending'
+    _ADAPTERS['simulated'].fail_prepare.discard(str(world['console']['id']))
+    worker.tick()
+    room = user.get(f'/reservations/{rid}/waiting-room').json()
+    assert room['console_ready'] is True and room['can_join'] is True
+
+
 def test_tempo_so_conta_com_console_pronto(world, freeze):
     """Console demorou a acordar (preparação começou no horário): o fim é empurrado pelo atraso."""
     _ADAPTERS['simulated'].fail_prepare.add(str(world['console']['id']))

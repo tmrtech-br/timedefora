@@ -193,6 +193,9 @@ class ConsoleRuntime:
                 return f'Console já conectado. {f.message}'
             self._drop_pad()
             link.stop()                                            # conectado sem imagem: reinicia
+        # Conexão nova: o console pode ter hibernado e acordado no menu. O jogo aberto por uma preparação anterior
+        # não vale mais; o roteiro de abertura precisa rodar de novo.
+        self.ready_game = None
         notes: list[str] = []
         if link.kind == 'chiaki':                                  # no modo direto o registro é conferido ao conectar
             reg = link.registered(t)

@@ -66,14 +66,18 @@ export default function Params() {
   const [q, setQ] = useState('');
   const [kind, setKind] = useState<'all' | 'platforms' | 'features' | 'power' | 'rules'>('all');
   const [state, setState] = useState<'all' | 'on' | 'off'>('all');
+  const ALL_CLOSED = { platforms: true, features: true, power: true, rules: true };
   const [closed, setClosed] = useState<Record<string, boolean>>(() => {
-    try { return JSON.parse(localStorage.getItem('lp_params_closed') || '{}'); } catch { return {}; }
+    try { const saved = localStorage.getItem('lp_params_closed_v2'); return saved ? JSON.parse(saved) : ALL_CLOSED; } catch { return ALL_CLOSED; }
   });
-  function toggleSection(id: string) {
-    const next = { ...closed, [id]: !closed[id] };
+  function saveClosed(next: Record<string, boolean>) {
     setClosed(next);
-    try { localStorage.setItem('lp_params_closed', JSON.stringify(next)); } catch { /* armazenamento indisponível */ }
+    try { localStorage.setItem('lp_params_closed_v2', JSON.stringify(next)); } catch { /* armazenamento indisponível */ }
   }
+  // Com filtro ativo as seções com resultado abrem sozinhas (senão o resultado ficaria escondido).
+  const filtering = Boolean(q.trim()) || kind !== 'all' || state !== 'all';
+  const isClosed = (id: string) => !filtering && Boolean(closed[id]);
+  function toggleSection(id: string) { saveClosed({ ...closed, [id]: !isClosed(id) }); }
   const norm = (x: string) => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const textOk = (...parts: string[]) => !q.trim() || norm(parts.join(' ')).includes(norm(q.trim()));
   const stateOk = (on: boolean) => state === 'all' || (state === 'on') === on;
@@ -104,16 +108,16 @@ export default function Params() {
       {msg}
 
       <section className="card params-filters" aria-label="Filtrar parâmetros">
-        <Field label="Pesquisar"><input maxLength={60} placeholder="Nome ou descrição" value={q} onChange={(e) => setQ(e.target.value)} /></Field>
-        <Field label="Tipo"><select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
+        <label className="field">Pesquisar<input placeholder="Nome ou descrição" value={q} onChange={(e) => setQ(e.target.value.slice(0, 60))} /></label>
+        <label className="field">Tipo<select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}>
           <option value="all">Todos</option><option value="platforms">Plataformas e consoles</option><option value="features">Funções</option>
-          <option value="power">Console: ligar e hibernar</option><option value="rules">Regras de agenda e limites</option></select></Field>
-        <Field label="Situação"><select value={state} onChange={(e) => setState(e.target.value as typeof state)}>
-          <option value="all">Todos</option><option value="on">Ativados</option><option value="off">Desativados</option></select></Field>
+          <option value="power">Console: ligar e hibernar</option><option value="rules">Regras de agenda e limites</option></select></label>
+        <label className="field">Situação<select value={state} onChange={(e) => setState(e.target.value as typeof state)}>
+          <option value="all">Todos</option><option value="on">Ativados</option><option value="off">Desativados</option></select></label>
         <div className="params-filters-actions">
-          <button type="button" className="btn sm" onClick={() => { setClosed({}); try { localStorage.removeItem('lp_params_closed'); } catch { /* */ } }}>Expandir tudo</button>
-          <button type="button" className="btn sm" onClick={() => { const all = { platforms: true, features: true, power: true, rules: true }; setClosed(all); try { localStorage.setItem('lp_params_closed', JSON.stringify(all)); } catch { /* */ } }}>Recolher tudo</button>
-          {(q || kind !== 'all' || state !== 'all') && <button type="button" className="btn sm" onClick={() => { setQ(''); setKind('all'); setState('all'); }}>Limpar filtros</button>}
+          <button type="button" className="btn sm" onClick={() => saveClosed({})}>Expandir tudo</button>
+          <button type="button" className="btn sm" onClick={() => saveClosed(ALL_CLOSED)}>Recolher tudo</button>
+          {filtering && <button type="button" className="btn sm" onClick={() => { setQ(''); setKind('all'); setState('all'); }}>Limpar filtros</button>}
         </div>
       </section>
 
@@ -130,15 +134,15 @@ export default function Params() {
         const numbers = NUMBERS.filter((n) => n.key in v && state === 'all' && textOk(n.title, n.unit));
         const show = (k: typeof kind, count: number) => (kind === 'all' || kind === k) && count > 0;
         const head = (id: string, title: string, count: number) => (
-          <button type="button" className="params-section-head" aria-expanded={!closed[id]} onClick={() => toggleSection(id)}>
-            <h2>{title}</h2><span className="pill">{count}</span><span className="params-chevron" aria-hidden>{closed[id] ? '▸' : '▾'}</span>
+          <button type="button" className="params-section-head" aria-expanded={!isClosed(id)} onClick={() => toggleSection(id)}>
+            <h2>{title}</h2><span className="pill">{count}</span><span className="params-chevron" aria-hidden>{isClosed(id) ? '▸' : '▾'}</span>
           </button>);
         const nothing = !show('platforms', families.length) && !show('features', toggles.length) && !show('power', power.length) && !show('rules', numbers.length);
         return <div className="parameter-cards">
           {nothing && <section className="card"><p className="muted" style={{ margin: 0 }}>Nenhum parâmetro encontrado com esses filtros.</p></section>}
 
           {show('platforms', families.length) && <section className="card stack">{head('platforms', 'Plataformas e consoles', families.length)}
-            {!closed.platforms && <>
+            {!isClosed('platforms') && <>
               <p className="small muted" style={{ margin: 0 }}>Desligar uma plataforma tira da venda todos os consoles dela e esconde do catálogo os jogos que só existem nela. Reservas já pagas continuam valendo.</p>
               <div className="params">
                 {families.map(([fam, list]) => {
@@ -167,7 +171,7 @@ export default function Params() {
           </section>}
 
           {show('features', toggles.length) && <section className="card stack">{head('features', 'Funções', toggles.length)}
-            {!closed.features && <div className="params">
+            {!isClosed('features') && <div className="params">
               {toggles.map((t) => {
                 const raw = Boolean(v[t.key]);
                 const on = t.invert ? !raw : raw;
@@ -184,7 +188,7 @@ export default function Params() {
           </section>}
 
           {show('power', power.length) && <section className="card stack">{head('power', 'Console: ligar e hibernar', power.length)}
-            {!closed.power && <div className="params">
+            {!isClosed('power') && <div className="params">
               {power.map((t) => {
                 const on = v[t.key] !== false;
                 return (
@@ -198,7 +202,7 @@ export default function Params() {
           </section>}
 
           {show('rules', numbers.length) && <section className="card stack parameter-rules">{head('rules', 'Regras de agenda e limites', numbers.length)}
-            {!closed.rules && <div className="params">
+            {!isClosed('rules') && <div className="params">
               {numbers.map((n) => {
                 const cur = String(v[n.key]);
                 const val = nums[n.key] ?? cur;

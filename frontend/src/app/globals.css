@@ -719,7 +719,10 @@ html:has(.policy-dialog[open]) { overflow: hidden; }
 .params-filters { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.3fr) minmax(0, 1fr) auto; gap: 12px; align-items: end; }
 .params-filters-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .params-section-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; text-align: left; font: inherit; }
-.params-section-head h2 { margin: 0; flex: 1; }
+.params-section-head h2 { margin: 0; flex: 1; font-size: 18px; }
+.params-section-head:hover h2 { color: #fff; }
+.parameter-cards > .card { padding-block: 16px; }
+.params-filters .field { min-width: 0; }
 .params-section-head:focus-visible { outline: 2px solid var(--purple); outline-offset: 4px; border-radius: 6px; }
 .params-chevron { font-size: 18px; color: var(--muted); width: 18px; text-align: center; }
 @media (max-width: 900px) { .params-filters { grid-template-columns: 1fr 1fr; } .params-filters-actions { grid-column: 1 / -1; justify-content: flex-start; } }
