@@ -104,7 +104,12 @@ async function chooseConfig() {
   try {
     directory = await browser.showDirectoryPicker({ mode: 'readwrite', id: 'consoleagent-config' });
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') return;
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('A seleção foi cancelada ou o navegador bloqueou a pasta. Selecione a pasta agent, clique em Selecionar pasta na janela do Windows e, se aparecer um aviso do navegador, clique em Permitir.');
+    }
+    if (error instanceof DOMException && (error.name === 'SecurityError' || error.name === 'NotAllowedError')) {
+      throw new Error('O navegador não autorizou a pasta. Abra o painel em uma aba normal do Chrome ou Edge, no PC do ConsoleAgent, e tente novamente.');
+    }
     throw error;
   }
   try {
@@ -129,25 +134,30 @@ function ConfigTarget({ file, onFile, disabled }: {
   file: ConfigTargetFile | null; onFile: (file: ConfigTargetFile | null) => void; disabled: boolean;
 }) {
   const [feedback, setFeedback] = useState('');
+  const [selecting, setSelecting] = useState(false);
   const supported = supportsConfigPicker();
   if (!supported) return <p className="small muted">Use Chrome ou Edge para autorizar a gravação no config.json.</p>;
   return <div className="stack">
     <div className="row">
-      <button type="button" className="btn sm" disabled={disabled} onClick={async () => {
+      <button type="button" className="btn sm" disabled={disabled || selecting} onClick={async () => {
+        setSelecting(true);
+        setFeedback('');
         try {
           const selected = await chooseConfig();
           if (!selected) return;
           onFile(selected);
-          setFeedback('');
-        } catch (error) { setFeedback(error instanceof Error ? error.message : 'Não foi possível selecionar o arquivo.'); }
-      }}>{file ? 'Trocar pasta selecionada' : 'Selecionar pasta'}</button>
+        } catch (error) {
+          setFeedback(error instanceof Error ? error.message : 'Não foi possível selecionar a pasta.');
+        } finally { setSelecting(false); }
+      }}>{selecting ? 'Aguardando seleção…' : file ? 'Trocar pasta selecionada' : 'Selecionar pasta'}</button>
       <FieldHelp text={CONFIG_HELP} />
     </div>
     {file && <div role="status">
       <strong>Arquivo selecionado</strong> <code>{file.directory}/{file.handle.name}</code>
       {file.empty && <p className="small muted">O arquivo está vazio. Ao confirmar, o painel vai gerar a configuração básica com os tokens do agente.</p>}
     </div>}
-    {feedback && <p className="small" role="status">{feedback}</p>}
+    {!file && !feedback && !selecting && <p className="small muted">Nenhuma pasta autorizada. Confirme a seleção na janela do Windows.</p>}
+    {feedback && <p className="small" role="alert">{feedback}</p>}
   </div>;
 }
 
