@@ -1,5 +1,42 @@
 import { expect, test } from '@playwright/test';
 
+test('o cadastro pronto e o envio ficam verdes em etapas separadas', async ({ page }) => {
+  const prefix = '/api/owner/consoles/console';
+  let ready = false;
+  let status = 'draft';
+  let platform = 'PS4';
+  await page.route('**/api/**', (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    const reply = (json: unknown) => route.fulfill({ json });
+    if (path === '/api/me/session') return reply({ authenticated: true, user: { id: 'owner', username: 'dono', roles: ['owner'], email_verified: true } });
+    if (path === '/api/owner/terms') return reply({ accepted_at: new Date().toISOString() });
+    if (path === '/api/owner/consoles') return reply([{ id: 'console', code: 'CONSOLE', name: 'Console de teste', platform_code: platform, review_status: status }]);
+    if (path === prefix && request.method() === 'PATCH') {
+      platform = request.postDataJSON().platform_code;
+      return reply({ ok: true });
+    }
+    if (path === `${prefix}/review`) return reply({ status, pending: {}, pending_windows: [], missing: ready ? [] : ['Conclua o login Sony.'] });
+    if (path === `${prefix}/submit`) { status = 'submitted'; return reply({ status }); }
+    return reply([]);
+  });
+  await page.goto('/proprietario#cadastro');
+  await page.getByRole('button', { name: 'Editar', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Editar Console de teste' });
+  await edit.getByLabel('Plataforma').selectOption('PS5');
+  await edit.getByRole('button', { name: 'Salvar', exact: true }).click();
+  await expect(page.getByText('CONSOLE · PS5', { exact: true })).toBeVisible();
+
+  const steps = page.locator('.owner-steps').getByRole('listitem');
+  await expect(steps.nth(0)).not.toHaveClass('done');
+  ready = true;
+  await page.getByRole('button', { name: 'Atualizar status' }).click();
+  await expect(steps.nth(0)).toHaveClass('done');
+  await expect(steps.nth(1)).not.toHaveClass('done');
+  await page.getByRole('button', { name: 'Enviar para análise' }).click();
+  await expect(steps.nth(1)).toHaveClass('done');
+});
+
 test('proprietário acompanha as etapas do console, o diagnóstico e os períodos no calendário', async ({ page }) => {
   const prefix = '/api/owner/consoles/console';
   const now = new Date();

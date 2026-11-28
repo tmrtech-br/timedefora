@@ -44,6 +44,57 @@ def test_diagnostics_batch(world):
     assert results['latency']['result'] == 'not_available'
 
 
+def test_diagnostico_psn_aguarda_tentativa_e_usa_o_motivo_da_falha(world, monkeypatch):
+    from app.diagnostic_worker import process_one
+    from app.gamebridge import AdapterResult, get_adapter
+
+    api, _ = admin_api()
+    cid = world['console']['id']
+    with tx() as conn:
+        conn.execute("update console_connection_configs set network_route='internet_psn' where console_id=%s", (cid,))
+    adapter = get_adapter('simulated')
+    calls = []
+
+    def connect(_):
+        calls.append('start')
+        return AdapterResult(ok=False, simulated=True, message='Tentando conectar', data={'running': True})
+
+    def poll(_):
+        calls.append('poll')
+        return AdapterResult(ok=False, simulated=True, message='Console não respondeu à PSN')
+
+    monkeypatch.setattr(adapter, 'connect', connect)
+    monkeypatch.setattr(adapter, 'poll_connection', poll)
+    monkeypatch.setattr(adapter, 'test_video_audio', lambda _: calls.append('video'))
+    monkeypatch.setattr(adapter, 'test_controls', lambda _: calls.append('controls'))
+    path = f'/admin/consoles/{cid}/diagnostic-runs'
+    queued = api.post(path)
+    assert queued.status_code == 202
+    assert process_one()
+    results = {item['test_type']: item for item in api.get(f"{path}/{queued.json()['id']}").json()['results']}
+    assert calls == ['start', 'poll']
+    assert results['connection']['result'] == 'failed'
+    assert results['connection']['message'] == 'Console não respondeu à PSN'
+    assert results['video_audio']['result'] == results['controls']['result'] == 'not_available'
+
+
+def test_painel_de_filas_oculta_consoles_vazios_e_reservas_canceladas(world):
+    from conftest import pay, reserve
+
+    admin, _ = admin_api()
+    assert admin.get('/admin/queues').json() == []
+    player = login(make_user('jogador_fila'))
+    booking = reserve(player, world, 30)
+    assert booking.status_code == 201, booking.text
+    rid = booking.json()['id']
+    pay(player, rid)
+    queues = admin.get('/admin/queues').json()
+    assert queues[0]['queue'][0]['reservation_id'] == rid
+    with tx() as conn:
+        conn.execute("update reservations set status='cancelled' where id=%s", (rid,))
+    assert admin.get('/admin/queues').json() == []
+
+
 def _owner(username='dono_valida'):
     from conftest import login, make_user
     user = make_user(username, roles=('client', 'owner'))
@@ -87,6 +138,9 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatc
         acc = insert(conn, 'psn_accounts', {'agent_id': None, 'label': 'conta-dono', 'status': 'pending', 'owner_user_id': user['id']})
     assert api.put(f'/owner/consoles/{cid}/connection', json={'psn_account_id': str(acc['id'])}).status_code == 200
     assert api.put(f'/owner/consoles/{cid}/hours', json={'hours': [{'weekday': 1, 'opens_at': '08:00', 'closes_at': '22:00'}]}).json()['pending'] is False
+    assert api.get(f'/owner/consoles/{cid}/review').json()['missing'] == ['Conclua o login Sony em Contas PSN.']
+    with tx() as conn:
+        conn.execute("update psn_accounts set status='linked', credentials_enc=%s where id=%s", (security.encrypt('{}'), acc['id']))
     assert api.get(f'/owner/consoles/{cid}/review').json()['missing'] == [], api.get(f'/owner/consoles/{cid}/review').json()['missing']
     # sem aprovação não publica
     assert api.post(f'/owner/consoles/{cid}/publish').status_code == 409
@@ -104,6 +158,7 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatc
     assert api.post(f'/owner/consoles/{cid}/diagnostics').status_code == 409
     with tx() as conn:
         conn.execute("update games set status='draft' where id=%s", (world['game']['id'],))
+        conn.execute("update psn_accounts set status='expired', credentials_enc=null where id=%s", (acc['id'],))
     approve = f'/admin/owner-reviews/{cid}/approve'
     assert admin.post(approve, json={'agent_id': agent}).json()['code'] == 'game_pending_review'
     assert admin.patch(f"/admin/games/{world['game']['id']}", json={'status': 'published'}).status_code == 200
@@ -167,6 +222,19 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatc
     with tx() as conn:
         cfg = conn.execute('select psn_account_id, method from console_connection_configs where console_id=%s', (cid,)).fetchone()
         assert cfg == {'psn_account_id': None, 'method': 'unconfigured'}
+
+
+def test_proprietario_pode_corrigir_plataforma_e_refazer_a_conexao():
+    api, _ = _owner()
+    registered = api.post('/owner/consoles', json={'code': 'PS-EDIT', 'name': 'Console', 'platform_code': 'PS4'})
+    assert registered.status_code == 201, registered.text
+    path = f"/owner/consoles/{registered.json()['id']}"
+    assert api.put(path + '/connection-settings', json={'console_identifier': 'PS-EDIT'}).status_code == 200
+    changed = api.patch(path, json={'platform_code': 'PS5'})
+    assert changed.status_code == 200, changed.text
+    assert api.get('/owner/consoles').json()[0]['platform_code'] == 'PS5'
+    assert api.get(path + '/connection-settings').json()['pending'] is None
+    assert api.patch(path, json={'platform_code': 'PS4'}).status_code == 200
 
 
 def test_exclusoes_do_proprietario(world, freeze):

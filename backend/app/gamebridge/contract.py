@@ -90,6 +90,10 @@ class ConsoleStreamingAdapter(ABC):
     def pair_console(self, ref: ConsoleRef, code: str | None) -> AdapterResult: ...
     @abstractmethod
     def connect(self, ref: ConsoleRef) -> AdapterResult: ...
+
+    def poll_connection(self, ref: ConsoleRef) -> AdapterResult:
+        return self.connect(ref)
+
     @abstractmethod
     def start_stream(self, ref: ConsoleRef, session_id: str) -> AdapterResult: ...
     @abstractmethod

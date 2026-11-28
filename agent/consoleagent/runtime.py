@@ -160,13 +160,15 @@ class ConsoleRuntime:
                 j.message += ' ' + self._open_game(t, j, game or {})
             j.state, j.step = 'ok', 'pronto'
         except (Fail, ChiakiError, LinkError, GamepadUnavailable, ValueError, OSError) as e:
-            j.state, j.message = 'failed', f'{j.step}: {e}'
+            j.message = f'{j.step}: {e}'
             log.warning('preparação falhou (%s): %s', t.identifier or t.console_id, j.message)
             self._release_after_failure()
+            j.state = 'failed'
         except Exception as e:  # nunca derrubar o agente
-            j.state, j.message = 'failed', f'{j.step}: erro inesperado {e.__class__.__name__}: {e}'
+            j.message = f'{j.step}: erro inesperado {e.__class__.__name__}: {e}'
             log.exception('erro inesperado na preparação')
             self._release_after_failure()
+            j.state = 'failed'
 
     def _release_after_failure(self) -> None:
         """Conexão que falhou não pode ficar meio aberta: o console recusaria a próxima ("sessão em uso")."""

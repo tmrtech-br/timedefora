@@ -14,6 +14,7 @@ from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx
 from ..core.deps import Principal, verified_user
 from ..core.errors import conflict, forbidden, not_found, unprocessable
+from ..services.consoles import console_ref
 from .common import DeleteIn, jsonable
 from . import admin, psn_accounts
 
@@ -490,7 +491,7 @@ def my_payouts(p: Principal = Depends(enrolled_owner)):
 
 
 # ------------------------------------------------------------------ validação pela equipe
-def _checklist(conn, console_id) -> list[str]:
+def _checklist(conn, console_id, *, require_psn_login: bool = True) -> list[str]:
     """O que falta para enviar o console para análise."""
     c = one(conn, '''select c.*, p.code platform_code, cfg.psn_account_id from consoles c join platforms p on p.id=c.platform_id
                      left join console_connection_configs cfg on cfg.console_id=c.id where c.id=%s''', (console_id,))
@@ -499,8 +500,12 @@ def _checklist(conn, console_id) -> list[str]:
     cfg_method = one(conn, 'select method from console_connection_configs where console_id=%s', (console_id,))
     if not conn_cfg and (not cfg_method or cfg_method['method'] == 'unconfigured'):
         missing.append('Configure a conexão e a transmissão do console (Cadastro de console).')
-    if c['platform_code'] in ('PS4', 'PS5') and not (c['owner_requested_psn_account_id'] or c['psn_account_id']):
-        missing.append('Cadastre a conta PSN e associe ao console (Contas PSN).')
+    if c['platform_code'] in ('PS4', 'PS5'):
+        psn_id = c['owner_requested_psn_account_id'] or c['psn_account_id']
+        if not psn_id:
+            missing.append('Cadastre a conta PSN e associe ao console (Contas PSN).')
+        elif require_psn_login and not one(conn, "select 1 from psn_accounts where id=%s and status='linked'", (psn_id,)):
+            missing.append('Conclua o login Sony em Contas PSN.')
     if not one(conn, 'select 1 from owner_console_rates where console_id=%s', (console_id,)) and not (c['owner_pending'] or {}).get('rate'):
         missing.append('Defina a tarifa e a duração das sessões.')
     if not one(conn, """select 1 from console_game_assignments a join games g on g.id=a.game_id
@@ -621,6 +626,7 @@ def _owner_agent(conn, agent_id) -> None:
 
 class ConsoleEditIn(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=60)
+    platform_code: Literal['PS4', 'PS5'] | None = None
     model: str | None = Field(default=None, max_length=120)
     serial_number: str | None = Field(default=None, max_length=120)
     location: str | None = Field(default=None, max_length=120)
@@ -630,9 +636,37 @@ class ConsoleEditIn(BaseModel):
 
 @router.patch('/consoles/{console_id}')
 def edit_console(console_id: UUID, body: ConsoleEditIn, p: Principal = Depends(enrolled_owner)):
+    previous = None
     with tx(p.user_id) as conn:
         row = owned_console(conn, console_id, p.user_id, edit=True)
-        fields = {k: v for k, v in body.model_dump(exclude={'agent_id'}).items() if k in body.model_fields_set}
+        fields = {k: v for k, v in body.model_dump(exclude={'agent_id', 'platform_code'}).items() if k in body.model_fields_set}
+        if body.platform_code and body.platform_code != row['platform_code']:
+            if row['is_published'] or admin._future_paid(conn, console_id=console_id) or one(conn, '''
+                select 1 from game_sessions where console_id=%s and status in ('ready','active')
+            ''', (console_id,)):
+                raise conflict('platform_in_use', 'Tire o console do ar e aguarde as reservas e sessões terminarem para trocar a plataforma.')
+            if one(conn, """select 1 from console_diagnostic_runs where console_id=%s and status in ('queued','running','cancelling')""", (console_id,)):
+                raise conflict('diagnostic_in_progress', 'Aguarde ou cancele o diagnóstico antes de trocar a plataforma.')
+            platform = one(conn, 'select id from platforms where code=%s', (body.platform_code,))
+            if not platform:
+                raise unprocessable('invalid_platform', 'Plataforma indisponível.')
+            if one(conn, '''
+                select 1 from console_game_assignments a where a.console_id=%s
+                  and a.status in ('active','pending_review') and a.ends_at>%s
+                  and not exists (select 1 from game_platforms gp where gp.game_id=a.game_id and gp.platform_id=%s)
+            ''', (console_id, timeutil.now(), platform['id'])):
+                raise conflict('incompatible_games', 'Remova os períodos dos jogos incompatíveis em Jogos e preços antes de trocar a plataforma.')
+            previous = console_ref(conn, console_id)
+            fields.update(platform_id=platform['id'], status='unconfigured')
+            conn.execute("update consoles set owner_pending=owner_pending - 'connection' where id=%s", (console_id,))
+            conn.execute('''update console_connection_configs
+                            set method='unconfigured', network_route='lan', connection_status='unconfigured',
+                                psn_account_id=null, psn_device_uid=null, console_identifier=null,
+                                video_validated_at=null, audio_validated_at=null, control_validated_at=null,
+                                heartbeat_validated_at=null, validated_at=null, validated_by=null, version=version+1
+                            where console_id=%s''', (console_id,))
+            conn.execute("""update remote_play_pairings set status='revoked', revoked_at=%s
+                            where console_id=%s and status in ('pending','paired')""", (timeutil.now(), console_id))
         if fields.get('name') is not None:
             fields['name'] = fields['name'].strip()
         if 'agent_id' in body.model_fields_set and body.agent_id:
@@ -645,6 +679,7 @@ def edit_console(console_id: UUID, body: ConsoleEditIn, p: Principal = Depends(e
             conn.execute(f'update consoles set {sets}, updated_by=%s where id=%s', (*fields.values(), p.user_id, console_id))
         _changed(conn, row)
         audit_event(conn, 'owner.console_edited', 'consoles', console_id, details={'fields': sorted(fields)})
+    admin._release_agent_connection(previous)
     return {'ok': True}
 
 
@@ -808,9 +843,11 @@ def owner_run_diagnostics(console_id: UUID, p: Principal = Depends(enrolled_owne
         if row['owner_approved_at'] is None or not row['agent_id']:
             raise conflict('not_approved', 'Os testes ficam liberados depois que a equipe aprovar e vincular o agente.')
         pending = (row['owner_pending'] or {}).get('connection')
-        cfg = one(conn, 'select method from console_connection_configs where console_id=%s', (console_id,))
+        cfg = one(conn, 'select method, network_route from console_connection_configs where console_id=%s', (console_id,))
         acc = _psn_for(conn, console_id)
-        needs_psn = (pending or {}).get('network_route') == 'internet_psn'
+        needs_psn = (pending or cfg or {}).get('network_route') == 'internet_psn'
+        if pending and row['owner_review_status'] != 'approved':
+            raise conflict('configuration_pending_review', 'Envie a nova configuração para análise e aguarde a aprovação antes de testá-la.')
         if needs_psn and (not acc or acc['status'] != 'linked'):
             raise conflict('psn_login_required', 'Faça o login Sony da conta PSN do console (menu Contas PSN) antes de testar.')
         if not pending and (not cfg or cfg['method'] == 'unconfigured'):

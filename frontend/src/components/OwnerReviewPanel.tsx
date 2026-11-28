@@ -20,7 +20,7 @@ const STATUS: Record<string, string> = { draft: 'Rascunho', submitted: 'Em anál
 const RES_STATUS: Record<string, string> = { confirmed: 'Na fila', active: 'Jogando', completed: 'Concluída', no_show: 'Ausência',
   cancelled: 'Cancelada', needs_resolution: 'Em resolução', refunded: 'Reembolsada' };
 
-type DiagState = { run: { id: string; status: string; results: { test_type: string; result: string; message: string }[]; error: string | null; finished_at: string | null; can_cancel?: boolean } | null;
+type DiagState = { run: { id: string; status: string; results: { test_type: string; result: string; message: string; in_progress?: boolean; blocked_by?: string }[]; error: string | null; finished_at: string | null; can_cancel?: boolean } | null;
   validation: { validated_at: string | null; video_validated_at: string | null; audio_validated_at: string | null; control_validated_at: string | null;
     heartbeat_validated_at: string | null; connection_status: string; method: string; network_route?: string } | null };
 const TEST_LABEL: Record<string, string> = { discover: 'Encontrar o console', pair: 'Pareamento', psn_auth: 'Conta PSN', connection: 'Conexão',
@@ -35,6 +35,8 @@ function Diagnostics({ consoleId, onValidated }: { consoleId: string; onValidate
   const d = diag.data;
   const activeRun = d?.run && ['queued', 'running', 'cancelling'].includes(d.run.status) ? d.run : null;
   const v = d?.validation;
+  const tests = CONSOLE_TESTS.filter(([id]) => id !== 'psn_auth' || v?.network_route === 'internet_psn' || activeRun?.results.some((result) => result.test_type === id));
+  const currentTest = tests.find(([id]) => !activeRun?.results.some((result) => result.test_type === id))?.[0];
   // Só quando o console passa a ficar validado (não a cada renderização).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (v?.validated_at) onValidated(); }, [v?.validated_at]);
@@ -43,17 +45,19 @@ function Diagnostics({ consoleId, onValidated }: { consoleId: string; onValidate
     {msg}
     {v?.validated_at ? <Alert kind="ok">Todos os testes aprovados em {dateTime(v.validated_at)}. O console pode ser publicado.</Alert>
       : <p className="small muted" style={{ margin: 0 }}>Deixe o console ligado (ou em repouso com Remote Play ativado) e a conta PSN conectada.
-        O teste aplica a sua configuração de conexão, acorda o console e confere imagem, áudio, controles e o agente (leva 1 a 3 minutos).</p>}
+        O teste aplica a configuração, aguarda a conexão e confere imagem, áudio, controles e o agente. Pela PSN pode levar alguns minutos.</p>}
     <div><button className="btn primary" disabled={busy || !!activeRun} onClick={() => run(async () => {
       await post(path); await diag.reload();
     })}>{activeRun ? 'Testando…' : v?.validated_at ? 'Testar de novo' : 'Aplicar configuração e testar'}</button></div>
     {activeRun && <ProgressModal
-      status={activeRun.status === 'cancelling' ? 'Cancelando diagnóstico…' : activeRun.status === 'running' ? 'Executando diagnóstico…' : 'Na fila de diagnósticos.'}
+      status={activeRun.status === 'cancelling' ? 'Cancelando diagnóstico…' : activeRun.status === 'running'
+        ? currentTest === 'connection' && v?.network_route === 'internet_psn' ? 'Aguardando a conexão com o console pela PSN. Isso pode levar alguns minutos.' : 'Executando diagnóstico…'
+        : 'Na fila de diagnósticos.'}
       error={diag.error?.message}
-      tests={CONSOLE_TESTS.filter(([id]) => id !== 'psn_auth' || v?.network_route === 'internet_psn' || activeRun.results.some((result) => result.test_type === id)).map(([id, label], index) => {
+      tests={tests.map(([id, label]) => {
         const result = activeRun.results.find((item) => item.test_type === id);
-        return { id, label, state: result ? (RESULT_LABEL[result.result] ?? result.result) :
-          activeRun.status === 'running' && index === activeRun.results.length ? 'Em execução' : 'Na fila' };
+        return { id, label, state: result ? (result.blocked_by ? 'Não executado' : RESULT_LABEL[result.result] ?? result.result) :
+          activeRun.status === 'running' && id === currentTest ? 'Em execução' : 'Na fila' };
       })}
       onCancel={activeRun.can_cancel === false ? undefined : () => {
         if (busy || activeRun.status === 'cancelling') return;
@@ -63,7 +67,8 @@ function Diagnostics({ consoleId, onValidated }: { consoleId: string; onValidate
         });
       }} />}
     {d?.run && !activeRun && <ul className="small owner-tests">{d.run.results.map((t) => <li key={t.test_type} className={t.result}>
-      <b>{TEST_LABEL[t.test_type] ?? t.test_type}</b>: {RESULT_LABEL[t.result] ?? t.result}{t.result === 'failed' && t.message ? ` — ${t.message}` : ''}</li>)}
+      <b>{TEST_LABEL[t.test_type] ?? t.test_type}</b>: {t.blocked_by ? 'Não executado' : t.in_progress ? 'Conexão ainda em tentativa' : RESULT_LABEL[t.result] ?? t.result}
+      {t.result !== 'passed' && t.message ? ` — ${t.message}` : ''}</li>)}
       {d.run.status === 'cancelled' && <li>Diagnóstico cancelado.</li>}
       {d.run.error && <li className="failed">{d.run.error}</li>}</ul>}
   </div>;
@@ -79,6 +84,8 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
   const diag = useApi<DiagState>(r?.approved_at ? `/owner/consoles/${consoleId}/diagnostics` : null, 15000);
   const validated = !!diag.data?.validation?.validated_at;
   const pendingWindows = !!r?.pending_windows.length;
+  const registrationReady = r?.missing.length === 0;
+  const sentForReview = r?.status === 'submitted' || r?.status === 'approved' || r?.status === 'rejected';
   const cardStatus = r?.status === 'approved' && (!validated || !r.is_published) ? 'in_progress' : r?.status;
   const act = (path: string, ok: string) => run(async () => { await post(`/owner/consoles/${consoleId}/${path}`); review.reload(); onChange(); }, ok);
   return <section className="card stack" id="validacao">
@@ -91,9 +98,9 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
     {msg}{review.error && <Alert kind="error">{review.error.message}</Alert>}
     {r && <>
       <ol className="small owner-steps">
-        <li className={r.status !== 'draft' && r.status !== 'rejected' ? 'done' : ''}>Configure o console, a conexão, a transmissão, os jogos, o preço e os horários. Para PlayStation, faça o login Sony em <a className="link-purple" href="#psn">Contas PSN</a>.</li>
-        <li className={r.approved_at ? 'done' : r.status === 'submitted' ? 'now' : ''}>Envie para análise: a equipe confere e vincula o console e a conta PSN ao agente.</li>
-        <li className={validated ? 'done' : r.approved_at ? 'now' : ''}>Após a aprovação, clique em “Aplicar configuração e testar” para iniciar o diagnóstico.</li>
+        <li className={registrationReady ? 'done' : 'now'}>Configure o console, a conexão, a transmissão, os jogos, o preço e os horários. Para PlayStation, faça o login Sony em <a className="link-purple" href="#psn">Contas PSN</a>.</li>
+        <li className={sentForReview ? 'done' : registrationReady ? 'now' : ''}>Envie para análise: a equipe confere e vincula o console e a conta PSN ao agente.</li>
+        <li className={validated ? 'done' : r.status === 'approved' ? 'now' : ''}>Após a aprovação, clique em “Aplicar configuração e testar” para iniciar o diagnóstico.</li>
         <li className={r.is_published ? 'done' : validated ? 'now' : ''}>Com os testes aprovados, publique o console para aluguel.</li>
       </ol>
       {r.notes && r.status === 'rejected' && <div className="row">

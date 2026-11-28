@@ -75,6 +75,8 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
 
     def pair_console(self, ref, code): return self._res(self._call(ref, 'pair', {'code': code}))
     def connect(self, ref): return self._res(self._call(ref, 'connect', {'settings': ref.settings}))
+    def poll_connection(self, ref):
+        return self._res(self._call(ref, 'connect', {'settings': ref.settings, 'poll_only': True}))
     def start_stream(self, ref, session_id): return self._res(self._call(ref, 'stream/start', {'session_id': session_id}))
     def stop_stream(self, ref, session_id, standby=False):
         # standby=True: o agente pede repouso ao console (hoje só na rota PSN) e encerra a conexão.

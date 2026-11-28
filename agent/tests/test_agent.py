@@ -107,9 +107,13 @@ def test_nada_encontrado_responde_falha():
 
 def test_sem_chiaki_conectar_falha_com_motivo_real():
     c = TestClient(create_app(cfg()))
-    r = c.post('/v1/consoles/x/connect', json={'target': {'route': 'lan', 'host': '192.168.0.20', 'console_identifier': 'PS4-118'}},
+    target = {'route': 'lan', 'host': '192.168.0.20', 'console_identifier': 'PS4-118'}
+    poll = c.post('/v1/consoles/x/connect', json={'target': target, 'poll_only': True}, headers=H).json()
+    assert poll['state'] == 'stopped'
+    r = c.post('/v1/consoles/x/connect', json={'target': target},
                headers=H).json()
     assert r['ok'] is False and r['simulated'] is False and 'chiaki-ng não encontrado' in r['message']
+    assert c.post('/v1/consoles/x/connect', json={'target': target, 'poll_only': True}, headers=H).json() == r
     r = c.post('/v1/consoles/x/test/video-audio', json={}, headers=H).json()
     assert r['ok'] is False and 'não conectado' in r['message']
     r = c.post('/v1/consoles/x/input', json={'session_id': 's1', 'command': {'type': 'button', 'name': 'cross'}}, headers=H)

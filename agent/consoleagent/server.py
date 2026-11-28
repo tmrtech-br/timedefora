@@ -180,6 +180,8 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             ok, msg = r.link.pair(t, str(body.get('code') or ''))
             return _result(ok, msg, 'idle' if ok else 'unavailable')
         if action in ('connect', 'console/prepare'):
+            if action == 'connect' and body.get('poll_only') is True:
+                return _job(r.job) if r.job else _result(False, 'A tentativa de conexão não está mais disponível.', 'stopped')
             return _job(r.start_job(t, 'prepare' if action == 'console/prepare' else 'connect', body.get('game')))
         if action == 'stream/start':
             ok, msg = r.start_session(sid)

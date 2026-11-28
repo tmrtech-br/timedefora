@@ -32,7 +32,7 @@ export default function OwnerConsoles({ consoles, reload, selected, setSelected 
   const agents = useApi<Agent[]>('/owner/agents').data ?? [];
   const [form, setForm] = useState(EMPTY);
   const [editing, setEditing] = useState<OwnerConsole | null>(null);
-  const [edit, setEdit] = useState({ name: '', model: '', location: '', description: '', agent_id: '' });
+  const [edit, setEdit] = useState({ name: '', platform_code: '', model: '', location: '', description: '' });
   const { run, msg, busy } = useAction();
   const deletion = useDelete();
   const check = useCodeCheck(form.code);
@@ -71,23 +71,32 @@ export default function OwnerConsoles({ consoles, reload, selected, setSelected 
           ['No ar', (c) => (c.is_published ? 'Sim' : 'Não')],
           ['', (c) => <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
             <button className={`btn sm${selected === c.id ? ' primary' : ''}`} onClick={() => setSelected(c.id)}>{selected === c.id ? 'Selecionado' : 'Selecionar'}</button>
-            <button className="btn sm" onClick={() => { setEditing(c); setEdit({ name: c.name, model: c.model ?? '', location: c.location ?? '', description: c.description ?? '', agent_id: c.agent_id ?? '' }); }}>Editar</button>
+            <button className="btn sm" onClick={() => { setEditing(c); setEdit({ name: c.name, platform_code: c.platform_code, model: c.model ?? '', location: c.location ?? '', description: c.description ?? '' }); }}>Editar</button>
             <button className="btn sm danger" onClick={() => deletion.remove(`/owner/consoles/${c.id}`, `Excluir o console ${c.name}?`,
               (request) => run(async () => { await request(); if (selected === c.id) setSelected(''); reload(); }, 'Console excluído.'),
               'O console sai do ar e do seu portal. Não é possível excluir com reservas futuras.')}>Excluir</button>
           </div>]]} />
     </div>
-    {current && <OwnerConnection key={`conn-${current.id}`} console={current} onSaved={reload} />}
-    {current && <OwnerReviewPanel key={current.id} consoleId={current.id} onChange={reload} />}
+    {current && <OwnerConnection key={`conn-${current.id}-${current.platform_code}`} console={current} onSaved={reload} />}
+    {current && <OwnerReviewPanel key={`review-${current.id}-${current.platform_code}`} consoleId={current.id} onChange={reload} />}
     {editing && <Modal title={`Editar ${editing.name}`} onClose={() => setEditing(null)}>
       <form className="stack" onSubmit={(e) => {
         e.preventDefault();
         void run(async () => {
-          const body: Record<string, unknown> = { name: edit.name, model: edit.model, location: edit.location, description: edit.description };
-          await patch(`/owner/consoles/${editing.id}`, body); setEditing(null); reload();
+          const { platform_code, ...metadata } = edit;
+          await patch(`/owner/consoles/${editing.id}`, platform_code === editing.platform_code ? metadata : { ...metadata, platform_code });
+          setEditing(null); reload();
         }, editing.approved_at ? 'Alterações salvas. Envie para análise para a equipe validar.' : 'Console atualizado.');
       }}>
         <Field label="Nome"><input required minLength={2} maxLength={60} value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
+        <Field label="Plataforma" hint={editing.is_published ? 'Tire o console do ar antes de trocar a plataforma.' : undefined}>
+          <select value={edit.platform_code} disabled={editing.is_published || editing.review_status === 'submitted'} onChange={(e) => setEdit({ ...edit, platform_code: e.target.value })}>
+            {!['PS4', 'PS5'].includes(editing.platform_code) && <option>{editing.platform_code}</option>}
+            <option value="PS4">PlayStation 4 (PS4)</option>
+            <option value="PS5">PlayStation 5 (PS5)</option>
+          </select>
+        </Field>
+        {edit.platform_code !== editing.platform_code && <p className="small muted">A troca limpa a configuração de conexão e exige um novo diagnóstico. O aluguel pela internet via PSN está disponível para PS4.</p>}
         <Field label="Modelo"><input maxLength={120} value={edit.model} onChange={(e) => setEdit({ ...edit, model: e.target.value })} /></Field>
         <Field label="Localização"><input maxLength={120} value={edit.location} onChange={(e) => setEdit({ ...edit, location: e.target.value })} /></Field>
         <Field label="Descrição / observações"><textarea maxLength={500} value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} /></Field>

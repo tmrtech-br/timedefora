@@ -930,6 +930,7 @@ def rollback_connection(cid: uuid.UUID, change_id: uuid.UUID, p: Principal = Dep
 
 TEST_TYPES = ('discover', 'pair', 'psn_auth', 'connection', 'video_audio', 'controls', 'heartbeat', 'latency')
 CONNECT_WAIT = 60.0      # segundos que o teste manual de conexão espera o agente concluir
+PSN_DIAGNOSTIC_WAIT = 480.0  # cobre as tentativas de conexão e a espera pela primeira imagem
 
 
 class PairIn(BaseModel):
@@ -956,11 +957,15 @@ def run_diagnostic_batch(cid: uuid.UUID, body: PairIn | None, p: Principal, on_r
         if config['method'] == 'unconfigured':
             raise conflict('not_configured', 'Configure o método de conexão antes de testar.')
     results = []
+    connection_passed = False
     for test in (test_type,) if test_type else TEST_TYPES:
         _require_running_diagnostic(run_id)
         if test == 'psn_auth' and config['network_route'] != 'internet_psn':
             continue
-        if not test_type and test == 'pair' and config['method'] != 'simulated' and (
+        if not test_type and test == 'discover' and config['network_route'] == 'internet_psn':
+            result = {'test_type': test, 'result': 'not_available',
+                      'message': 'A localização do console pela PSN faz parte do teste de conexão.'}
+        elif not test_type and test == 'pair' and config['method'] != 'simulated' and (
             not body or not body.code or config['network_route'] == 'internet_psn'
         ):
             result = {'test_type': test, 'result': 'not_available',
@@ -968,8 +973,13 @@ def run_diagnostic_batch(cid: uuid.UUID, body: PairIn | None, p: Principal, on_r
         elif test == 'psn_auth' and not is_allowed(p.permissions, 'menu:contas-psn',
                                                   action_key('POST', '/admin/psn-accounts/{account_id}/test')):
             result = {'test_type': test, 'result': 'not_available', 'message': 'Ação sem permissão.'}
+        elif not test_type and test in ('video_audio', 'controls') and not connection_passed:
+            result = {'test_type': test, 'result': 'not_available',
+                      'blocked_by': 'connection', 'message': 'O teste depende de uma conexão bem-sucedida com o console.'}
         else:
             result = _run_test(cid, test, body, p, run_id=run_id)
+        if test == 'connection':
+            connection_passed = result['result'] == 'passed'
         results.append(result)
         if on_result is not None:
             on_result(result)
@@ -1111,14 +1121,16 @@ def _run_test(cid: uuid.UUID, test_type: str, body: PairIn | None, p: Principal,
                                       'message': 'O agente autenticou a conta pela PSN.' if checked['ok']
                                       else 'O agente não conseguiu autenticar a conta pela PSN.'})()
         elif test_type == 'connection':
-            # A conexão real (achar, autenticar, primeira imagem) leva de 5 a 60 s; cada chamada ao agente responde
-            # em até ~5 s com o andamento. No teste manual do painel esperamos aqui até concluir (máx. CONNECT_WAIT).
-            deadline = time_mod.monotonic() + CONNECT_WAIT
+            # Pela PSN, a tarefa em segundo plano aguarda as tentativas do agente.
+            psn_diagnostic = run_id is not None and cfg_at_start['network_route'] == 'internet_psn'
+            deadline = time_mod.monotonic() + (PSN_DIAGNOSTIC_WAIT if psn_diagnostic else CONNECT_WAIT)
             r = adapter.connect(ref)
             while not r.ok and (getattr(r, 'data', {}) or {}).get('running') and time_mod.monotonic() < deadline:
                 time_mod.sleep(2)
                 _require_running_diagnostic(run_id)
-                r = adapter.connect(ref)
+                r = adapter.poll_connection(ref) if psn_diagnostic else adapter.connect(ref)
+            if psn_diagnostic and not r.ok and (r.data or {}).get('running'):
+                raise AdapterError('connection_timeout', f'A conexão pela PSN não terminou dentro do prazo. Último estado: {r.message}')
         elif test_type == 'video_audio':
             r = adapter.test_video_audio(ref)
         elif test_type == 'controls':
@@ -1716,8 +1728,11 @@ def queues(p: Principal = Depends(OPERATOR)):
         for c in cons:
             rows = all_(conn, '''select q.position, q.status, q.estimated_start_at, q.estimated_end_at, u.username, r.code, r.mode, r.id reservation_id
                                  from queue_entries q join users u on u.id=q.user_id join reservations r on r.id=q.reservation_id
-                                 where q.console_id=%s and q.status in ('playing','next','waiting') order by q.position''', (c['id'],))
-            out.append({**jsonable(c), 'queue': jsonable(rows)})
+                                 where q.console_id=%s and q.status in ('playing','next','waiting')
+                                   and r.status in ('confirmed','active') and r.ends_at>%s
+                                 order by q.position''', (c['id'], timeutil.now()))
+            if rows:
+                out.append({**jsonable(c), 'queue': jsonable(rows)})
     return out
 
 
@@ -2507,7 +2522,7 @@ def approve_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = De
                 raise not_found()
             if c['owner_review_status'] != 'submitted':
                 raise conflict('not_submitted', 'O proprietário ainda não enviou este console para análise.')
-            missing = _checklist(conn, cid)
+            missing = _checklist(conn, cid, require_psn_login=False)
             if missing:
                 raise conflict('incomplete', 'O cadastro ainda tem pendências. ' + ' '.join(missing))
             games = all_(conn, '''select g.title, g.status, g.deleted_at
