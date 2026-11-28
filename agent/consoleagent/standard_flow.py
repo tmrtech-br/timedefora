@@ -78,7 +78,7 @@ def _wait_title(state: StateReader, sleep: Callable, clock: Callable, limit: flo
 def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: str = '', *, woke: bool = False,
               detect: bool = False, sleep: Callable = time.sleep, clock: Callable = time.monotonic,
               progress: Callable[[str], None] = lambda s: None, max_tiles: int = 5, settle: float = 45.0,
-              expected_name: str = '',
+              expected_name: str = '', start: str = 'auto',
               launch_timeout: float = 75.0, trace: Callable[[str], None] | None = None) -> FlowResult:
     """Abre `expected` (ex.: CUSA05904). Com detect=True, procura pelo nome (`expected_name`) abrindo os últimos jogos
     usados, um ícone por vez (fecha o errado e tenta o próximo), e informa o código; sem nome, aceita o 1º que abrir."""
@@ -93,8 +93,11 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
     progress('lendo o estado do console')
     p = _read(state, sleep)
     path = 'menu'
+    # start: 'auto' (pelo estado lido), 'welcome' (usuário diz: repouso/"Seja bem-vindo") ou 'menu' (já no menu do console)
+    welcome = start == 'welcome' or (start == 'auto' and (
+        (p is not None and p.online is False) or ((p is None or p.online is None) and woke)))
     # ------------------------------------------------ "Seja bem-vindo": seleciona o último perfil
-    if (p is not None and p.online is False) or ((p is None or p.online is None) and woke):
+    if welcome:
         path = 'perfil+menu'
         for attempt in (1, 2):
             progress(f'selecionando o perfil (tentativa {attempt})')
@@ -108,9 +111,8 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
                     break
             if p is not None and p.online:
                 break
-        if p is not None and p.online is False and p.source == 'psn':
-            raise FlowError('A conta continua offline na PSN depois de selecionar o perfil. Confira se o perfil do console '
-                            'está com o status "Online" (Perfil > Definir status online) e se não há outra tela aberta.')
+        if p is not None and p.online is False and p.source == 'psn' and start != 'welcome':
+            raise FlowError(_offline_hint(p))
         sleep(3)                                            # menu termina de montar
         p = _read(state, sleep) or p
 
@@ -143,6 +145,9 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
         progress('aguardando o console abrir o jogo')
         opened = _wait_title(state, sleep, clock, launch_timeout, current)
         if opened is None:
+            last = state.read()
+            if last is not None and last.online is False and last.source == 'psn':
+                raise FlowError(_offline_hint(last), seen)          # sem presença não há como confirmar o jogo
             if not retried:                                 # toque perdido pela rede: refaz a navegação uma vez
                 retried = True
                 continue
@@ -162,6 +167,13 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
     wanted = expected_name if detect else expected
     raise FlowError(f'"{wanted}" não estava entre os {max_tiles} últimos jogos do menu do console. Jogos abertos: {names}. '
                     'Abra o jogo uma vez no console para ele voltar ao início do menu, ou escolha o jogo certo na lista.', seen)
+
+
+def _offline_hint(p: Presence) -> str:
+    conta = f' ({p.account})' if p.account else ''
+    return (f'A conta PSN vinculada ao console{conta} continua offline na PSN. O perfil em uso no console precisa ser essa conta, '
+            'com o status "Online" (Perfil > Definir status online). Se o console usa outro perfil, vincule a conta desse perfil '
+            'no cadastro do console.')
 
 
 def _ready(frame_ok: Callable[[], bool], sleep: Callable, settle: float, result: FlowResult) -> FlowResult:

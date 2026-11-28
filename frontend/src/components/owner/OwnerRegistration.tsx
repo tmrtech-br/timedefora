@@ -31,7 +31,7 @@ const STEPS = [
 const [DATA, CONNECTION, USE, GAMES, PRICE, AVAILABILITY, REVIEW, TEST, DETECT] = [0, 1, 2, 3, 4, 5, 6, 7, 8] as const;
 export const EMPTY_CONSOLE = { code: '', name: '', platform_code: 'PS4', model: '', serial_number: '', location: '', description: '' };
 type ConsoleFields = typeof EMPTY_CONSOLE;
-type Review = { status: string; missing: string[]; setup: { connection: boolean; psn: boolean; games: boolean; price: boolean; availability: boolean } };
+type Review = { status: string; missing: string[]; tests_validated?: boolean; setup: { connection: boolean; psn: boolean; games: boolean; price: boolean; availability: boolean } };
 
 export function RegistrationSummary({ console: c, accounts }: { console: OwnerConsole; accounts: PsnAccount[] | null }) {
   const base = `/owner/consoles/${c.id}`;
@@ -195,7 +195,8 @@ export default function OwnerRegistration({ initial, records, accounts, draft, d
     return <nav ref={vertical ? undefined : tabsRef} className={vertical ? 'owner-wizard-rail' : 'owner-wizard-tabs'} aria-label={vertical ? 'Etapas do cadastro' : 'Progresso do cadastro'}>
       {shownSteps.map(({ title }, position) => {
         const allowed = position <= max || (position >= TEST && canTest);
-        const done = (position < max || position === REVIEW && (pending || canTest)) && position !== index;
+        const done = (position < max || position === REVIEW && (pending || canTest) || position === TEST && !!review.data?.tests_validated)
+          && position !== index;
         return <button key={title} type="button" disabled={!allowed} aria-current={position === index ? 'step' : undefined}
           className={done ? 'done' : undefined} onClick={() => move(position)}>
           <span className="owner-wizard-number">{done ? <Check size={17} aria-hidden /> : !allowed ? <LockKeyhole size={16} aria-hidden /> : position + 1}</span>

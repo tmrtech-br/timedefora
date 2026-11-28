@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { BarChart3, CircleHelp, Headphones, Landmark, LifeBuoy, ListChecks, MonitorSmartphone } from 'lucide-react';
+import { BarChart3, CircleHelp, Headphones, Landmark, LifeBuoy, MonitorSmartphone } from 'lucide-react';
 import { Alert, Field } from '@/components/ui';
 import { put } from '@/lib/api';
 import { dateTime, money } from '@/lib/format';
@@ -12,7 +12,6 @@ import { DataTable, useAction } from '@/components/admin/common';
 import OwnerDashboard from '@/components/owner/OwnerDashboard';
 import OwnerConsoles from '@/components/owner/OwnerConsoles';
 import OwnerHelp from '@/components/owner/OwnerHelp';
-import OwnerScripts from '@/components/owner/OwnerScripts';
 import SupportPanel from '@/components/SupportPanel';
 import type { OwnerConsole, PsnAccount } from '@/components/owner/shared';
 
@@ -24,7 +23,6 @@ const PAYOUT_LABEL: Record<string, string> = { scheduled: 'Agendado', waiting_de
 const MENU = [
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
   { id: 'cadastro', label: 'Cadastro', icon: MonitorSmartphone },
-  { id: 'roteiros', label: 'Roteiros', icon: ListChecks },
   { id: 'recebimento', label: 'Configurações bancárias', icon: Landmark },
   { id: 'suporte', label: 'Suporte', icon: Headphones },
   { id: 'ajuda', label: 'Ajuda', icon: CircleHelp },
@@ -42,7 +40,7 @@ export default function OwnerInventory() {
   useEffect(() => {
     const fromHash = () => {
       const h = window.location.hash.slice(1);
-      if (['psn', 'jogos', 'disponibilidade'].includes(h)) {
+      if (['psn', 'jogos', 'disponibilidade', 'roteiros'].includes(h)) {
         window.history.replaceState(null, '', '#cadastro');
         setTab('cadastro');
       } else setTab(MENU.find((item) => item.id === h)?.id ?? 'dashboard');
@@ -65,7 +63,6 @@ export default function OwnerInventory() {
       {tab === 'dashboard' && <OwnerDashboard />}
       {tab === 'cadastro' && me && <OwnerConsoles key={me.id} ownerId={me.id} consoles={consoles.data} accounts={accounts.data}
         reload={consoles.reload} reloadAccounts={accounts.reload} onSupport={openSupport} />}
-      {tab === 'roteiros' && <OwnerScripts consoles={consoles.data} />}
       {tab === 'recebimento' && <Payments />}
       {tab === 'suporte' && <Support onSupport={openSupport} />}
       {tab === 'ajuda' && <OwnerHelp onSupport={openSupport} />}

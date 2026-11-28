@@ -161,3 +161,19 @@ def test_nomes_do_console_e_do_cadastro():
     from consoleagent.standard_flow import names_match
     assert names_match('Far Cry® 5', 'Far Cry 5') and names_match('FIFA 16', 'Fifa 16')
     assert not names_match('Far Cry® 4', 'Far Cry 5') and not names_match('', 'x')
+
+
+def test_conta_vinculada_diferente_do_perfil_em_uso_orienta():
+    ps4 = FakePS4('home', appear_offline=True)            # conta vinculada nunca aparece online
+    try:
+        run(ps4, start='menu')
+        raise AssertionError('deveria falhar')
+    except FlowError as e:
+        assert 'perfil em uso no console precisa ser essa conta' in str(e)
+    assert 'cross' in ps4.presses and ps4.presses[0] == 'ps'   # com start=menu não tentou selecionar perfil
+
+
+def test_usuario_informa_que_esta_no_menu_pula_o_perfil():
+    ps4 = FakePS4('home')
+    r = run(ps4, start='menu')
+    assert r.path == 'menu' and r.title_id == 'CUSA05904'

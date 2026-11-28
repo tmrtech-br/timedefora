@@ -32,6 +32,7 @@ class Presence:
     title_id: str = ''
     title_name: str = ''
     source: str = ''             # psn | lan
+    account: str = ''            # Online ID da conta consultada (PSN)
 
 
 def parse_profile2(payload: dict) -> Presence:
@@ -42,7 +43,8 @@ def parse_profile2(payload: dict) -> Presence:
     item = next((p for p in items if p.get('npTitleId')), items[0] if items else {})
     status = item.get('onlineStatus') or profile.get('primaryOnlineStatus')
     online = None if status is None else status != 'offline'
-    return Presence(online, normalize_title(item.get('npTitleId')), str(item.get('titleName') or '')[:120], 'psn')
+    return Presence(online, normalize_title(item.get('npTitleId')), str(item.get('titleName') or '')[:120], 'psn',
+                    str(profile.get('onlineId') or '')[:32])
 
 
 class PsnPresence:
@@ -91,12 +93,13 @@ class StateReader:
 
     def read(self) -> Presence | None:
         p = self.psn.read() if self.psn else None
-        if p is not None:
+        if p is not None and (p.online or not self._lan_ok):
             return p
+        # PSN sem resposta ou conta offline (ex.: o perfil em uso no console é outra conta): a rede local informa o jogo.
         if self._lan_ok:
             try:
                 code, name = self.lan.running_app()
-                return Presence(None, normalize_title(code), name or '', 'lan')
+                return Presence(None, normalize_title(code), name or '', 'lan', p.account if p else '')
             except Exception:
                 self._lan_ok = False               # console fora da rede local: não tenta de novo nesta preparação
-        return None
+        return p

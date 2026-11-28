@@ -121,7 +121,7 @@ export default function OwnerGames({ consoles, selected, setSelected, onReviewCh
           ['Situação', (a) => a.status === 'pending_review' ? 'Período aguardando aprovação' : a.game_status === 'draft' ? 'Jogo em revisão' : 'Período ativo'],
           ['', (a) => !locked && <button className="btn sm danger" onClick={() => deletion.remove(`/owner/consoles/${current.id}/games/${a.id}`, `Excluir o período de ${a.title}?`,
             (request) => run(async () => { await request(); await games.reload(); }, 'Período excluído.'), 'Não é possível excluir um período com reservas.')}>Excluir</button>]]} />
-      {games.data.assignments.length > 0 && <p className="small muted" style={{ margin: 0 }}>Depois de vincular, reconheça cada jogo no menu <a className="link-purple" href="#roteiros">Roteiros</a>
+      {games.data.assignments.length > 0 && <p className="small muted" style={{ margin: 0 }}>Depois da aprovação e dos testes, reconheça cada jogo na aba Detectar jogo
         para o sistema abrir e confirmar o jogo sozinho a cada aluguel.</p>}
       {owned.length > 0 && <><h3 style={{ margin: '6px 0 0' }}>Meus jogos</h3>
         <DataTable rows={owned} cols={[['Jogo', (g) => g.title], ['Status', (g) => <StatusPill status={g.status ?? 'draft'} />],

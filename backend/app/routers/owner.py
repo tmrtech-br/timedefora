@@ -532,7 +532,9 @@ def review_state(console_id: UUID, p: Principal = Depends(enrolled_owner)):
         issues = _setup_issues(conn, console_id)
         hours_saved = ('hours' in c['pending'] or bool(c['pending'].get('availability_saved'))
                        or bool(one(conn, 'select 1 from console_operating_hours where console_id=%s', (console_id,))))
+        validated = one(conn, 'select validated_at from console_connection_configs where console_id=%s', (console_id,))
         return jsonable({**c, 'missing': list(issues.values()), 'pending_windows': pending_windows,
+                         'tests_validated': bool(validated and validated['validated_at']),
                          'setup': {'connection': 'connection' not in issues, 'psn': 'psn' not in issues,
                                    'games': 'games' not in issues, 'price': 'rate' not in issues, 'availability': hours_saved},
                          'agent_linked': bool(row['agent_id'])})

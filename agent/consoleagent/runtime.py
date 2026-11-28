@@ -371,7 +371,8 @@ class ConsoleRuntime:
                           woke=self.woke, detect=bool(game.get('detect')), sleep=self.d.sleep, progress=progress,
                           settle=0 if game.get('detect') else settle, trace=trace,
                           max_tiles=max(1, min(15, int(game.get('max_tiles') or 5))),
-                          expected_name=str(game.get('title') or '') if game.get('detect') else '')
+                          expected_name=str(game.get('title') or '') if game.get('detect') else '',
+                          start=str(game.get('start') or 'auto') if game.get('start') in ('auto', 'welcome', 'menu') else 'auto')
         except FlowError as e:
             j.data = {'seen': e.seen}
             raise Fail(str(e))

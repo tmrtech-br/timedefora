@@ -1,4 +1,5 @@
 """Roteiros de abertura dos jogos: menu "Roteiros" do proprietário (consoles dele) e da equipe (qualquer console)."""
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -35,7 +36,12 @@ class PinIn(BaseModel):
     pin: str = Field(pattern=r'^\d{8}$')     # PIN de 8 dígitos da tela "Adicionar dispositivo" do PS4
 
 
+class StartIn(BaseModel):
+    start: Literal['auto', 'welcome', 'menu'] = 'auto'   # como o console está agora (o usuário informa ou o sistema lê)
+
+
 class TestIn(BaseModel):
+    start: Literal['auto', 'welcome', 'menu'] = 'auto'
     steps: list[str] | None = None            # roteiro ainda não salvo (rascunho na tela); senão o salvo
     images: dict[str, dict] | None = None
 
@@ -72,7 +78,10 @@ def _list(console_id: UUID, owner_id: str | None):
                   and a.status in ('active','pending_review')))
             order by g.title''', (console_id, console_id))
         ref = console_ref(conn, console_id)
-    return jsonable({'console': console, 'games': [{**r, 'steps': r['steps'] or [], 'images': r['images'] or {}} for r in rows],
+        account = one(conn, '''select pa.online_id from console_connection_configs cc join psn_accounts pa
+                               on pa.id=coalesce(cc.psn_account_id, (select owner_requested_psn_account_id from consoles where id=%s))
+                               where cc.console_id=%s''', (console_id, console_id))
+    return jsonable({'console': console, 'psn_online_id': account['online_id'] if account else None, 'games': [{**r, 'steps': r['steps'] or [], 'images': r['images'] or {}} for r in rows],
                      'agent_ready': bool(ref.agent_endpoint and ref.method != 'unconfigured'),
                      'buttons': list(ls.BUTTONS)})
 
@@ -125,7 +134,7 @@ def _save_title(console_id: UUID, game_id: UUID, body: TitleIn, p: Principal, ow
     return {'ok': True, 'title_id': code}
 
 
-def _detect(console_id: UUID, game_id: UUID, owner_id: str | None):
+def _detect(console_id: UUID, game_id: UUID, owner_id: str | None, start: str = 'auto'):
     """Reconhecer: o agente abre o último jogo usado no console e informa o código e o nome (o usuário confirma)."""
     with tx() as conn:
         _console(conn, console_id, owner_id)
@@ -133,7 +142,7 @@ def _detect(console_id: UUID, game_id: UUID, owner_id: str | None):
         adapter, ref = _agent(conn, console_id, 'script_test')
         payload = ls.game_payload(conn, console_id, game)
     return _call(adapter.script_test, ref, {'id': str(game['id']), 'slug': f"detect-{game['slug']}", 'title': game['title'],
-                                            'detect': True, 'max_tiles': payload['max_tiles']})
+                                            'detect': True, 'max_tiles': payload['max_tiles'], 'start': start})
 
 
 def _delete(console_id: UUID, game_id: UUID, p: Principal, owner_id: str | None):
@@ -179,6 +188,7 @@ def _test(console_id: UUID, game_id: UUID, body: TestIn, owner_id: str | None):
             payload = {'id': str(game['id']), 'slug': game['slug'], 'title': game['title'], 'launch': launch}
         else:
             payload = ls.game_payload(conn, console_id, game)
+        payload['start'] = body.start
         if not payload.get('title_id') and not (payload.get('launch') or {}).get('steps'):
             raise conflict('no_script', 'Reconheça o jogo (ou cadastre os passos do roteiro) antes de testar.')
         adapter, ref = _agent(conn, console_id, 'script_test')
@@ -237,8 +247,8 @@ def owner_title(console_id: UUID, game_id: UUID, body: TitleIn, p: Principal = D
 
 
 @owner_router.post('/launch-scripts/{game_id}/detect')
-def owner_detect(console_id: UUID, game_id: UUID, p: Principal = Depends(enrolled_owner)):
-    return _detect(console_id, game_id, p.user_id)
+def owner_detect(console_id: UUID, game_id: UUID, body: StartIn | None = None, p: Principal = Depends(enrolled_owner)):
+    return _detect(console_id, game_id, p.user_id, (body or StartIn()).start)
 
 
 @owner_router.get('/launch-test')
@@ -283,8 +293,8 @@ def admin_title(console_id: UUID, game_id: UUID, body: TitleIn, p: Principal = D
 
 
 @admin_router.post('/launch-scripts/{game_id}/detect')
-def admin_detect(console_id: UUID, game_id: UUID, p: Principal = Depends(OPERATOR)):
-    return _detect(console_id, game_id, None)
+def admin_detect(console_id: UUID, game_id: UUID, body: StartIn | None = None, p: Principal = Depends(OPERATOR)):
+    return _detect(console_id, game_id, None, (body or StartIn()).start)
 
 
 @admin_router.get('/launch-test')
