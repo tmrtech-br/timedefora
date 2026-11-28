@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarPlus, Gamepad2, Headphones, Keyboard, ListOrdered, Maximize, Power, Unplug, X } from 'lucide-react';
 import ConsoleVideo, { type VideoStats } from '@/components/ConsoleVideo';
+import TouchGamepad from '@/components/TouchGamepad';
 import { sendWebRtcControl } from '@/lib/webrtc-controls';
 import { CustomizeLink, KeyLegend } from '@/components/KeyBindings';
 import RequireAuth from '@/components/RequireAuth';
@@ -102,6 +103,23 @@ function Player() {
       try { sessionStorage.setItem(`lp_input_${j.session_id}`, j.input_token); sessionStorage.setItem(`lp_conn_${j.session_id}`, j.connection_id); } catch { /* */ }
       window.location.reload();                       // reabre vídeo e controle nesta aba
     } catch { toast('error', 'Não foi possível retomar aqui. Tente de novo.'); setReclaiming(false); }
+  }
+  // Celular/tablet: controle na tela (liga sozinho em telas de toque) e "tela cheia" própria (o iPhone não deixa um
+  // <div> entrar em tela cheia de verdade).
+  const [touchMode, setTouchMode] = useState(false);
+  const [mobileFull, setMobileFull] = useState(false);
+  useEffect(() => { try { setTouchMode(window.matchMedia('(pointer: coarse)').matches); } catch { /* sem matchMedia */ } }, []);
+  function fullScreen() {
+    if (touchMode) {
+      const next = !mobileFull;
+      setMobileFull(next);
+      if (next) {
+        document.documentElement.requestFullscreen?.().catch(() => {});
+        (window.screen as unknown as { orientation?: { lock?: (o: string) => Promise<void> } }).orientation?.lock?.('landscape').catch(() => {});
+      } else if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      return;
+    }
+    area.current?.requestFullscreen?.();
   }
   const send = useCallback(async (command: InputCommand) => {
     if (!token) return;
@@ -255,13 +273,15 @@ function Player() {
         </section>
       ) : (
         <>
-          <div className={`play-area${side ? ' with-support' : ''}`} ref={area}>
+          <div className={`play-area${side ? ' with-support' : ''}${mobileFull ? ' mobile-full' : ''}`} ref={area}>
             <div className="player" ref={screen} tabIndex={0} aria-label="Tela do jogo">
               {!s.simulated && token
                 ? <ConsoleVideo sessionId={sessionId} token={token} onStats={setVstats} />
                 : <div className="sim-screen"><Gamepad2 size={64} aria-hidden /><h2>{s.simulated ? 'Stream simulado' : 'Sua partida está quase pronta…'}</h2>
                   {s.simulated && <p>Entrada: {inputStatus}</p>}
                   {!token && <p>Esta aba não tem o acesso ao controle. <button className="btn sm" onClick={() => router.push('/sessoes')}>Reconectar pela sala de espera</button></p>}</div>}
+              {touchMode && token && !s.simulated && <TouchGamepad send={send} shareOn={shareOn} />}
+              {mobileFull && <button className="tg-exit" onClick={fullScreen} aria-label="Sair da tela cheia">✕</button>}
               {bindings.mouse_look && token && vstats && (locked
                 ? <span className="mouse-hint locked" role="status">🖱️ Mouse preso no jogo — aperte <kbd>Esc</kbd> para liberar</span>
                 : <span className="mouse-hint">Clique na imagem para usar o mouse como câmera · <kbd>Esc</kbd> libera</span>)}
@@ -280,7 +300,9 @@ function Player() {
               </aside>)}
           </div>
           <div className="row">
-            <button className="btn" onClick={() => area.current?.requestFullscreen?.()}><Maximize size={16} />Tela cheia</button>
+            <button className="btn" onClick={fullScreen}><Maximize size={16} />Tela cheia</button>
+            <button className={`btn${touchMode ? ' primary' : ''}`} onClick={() => setTouchMode(!touchMode)} aria-pressed={touchMode}>
+              <Gamepad2 size={16} />{touchMode ? 'Ocultar controle na tela' : 'Controle na tela'}</button>
             <button className={`btn${side === 'controls' ? ' primary' : ''}`} onClick={() => setSide(side === 'controls' ? null : 'controls')} aria-expanded={side === 'controls'}>
               <Keyboard size={16} />{side === 'controls' ? 'Ocultar comandos' : 'Ver comandos'}</button>
             <button className={`btn${side === 'support' ? ' primary' : ''}`} onClick={() => setSide(side === 'support' ? null : 'support')} aria-expanded={side === 'support'}>

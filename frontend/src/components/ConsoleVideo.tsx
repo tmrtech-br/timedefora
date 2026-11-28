@@ -51,10 +51,16 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
         unregisterControl = registerWebRtcControls(sessionId, control);
         conn.addTransceiver('video', { direction: 'recvonly' });
         conn.addTransceiver('audio', { direction: 'recvonly' });
-        const stream = new MediaStream();
+        const tracks: MediaStreamTrack[] = [];
         conn.ontrack = (e) => {
-          stream.addTrack(e.track);
-          if (video.current && video.current.srcObject !== stream) { video.current.srcObject = stream; video.current.play().catch(() => {}); }
+          tracks.push(e.track);
+          // iPhone/iPad (Safari e Chrome do iOS usam WebKit): acrescentar a trilha de vídeo a um MediaStream que já está
+          // no <video> (ex.: o áudio chegou primeiro) NÃO atualiza a imagem — fica tela preta com som. Religa sempre
+          // um MediaStream novo com todas as trilhas recebidas.
+          const v = video.current;
+          if (!v) return;
+          v.srcObject = new MediaStream(tracks);
+          v.play().catch(() => {});
         };
         conn.onconnectionstatechange = () => {
           if (closed) return;
@@ -114,7 +120,8 @@ export default function ConsoleVideo({ sessionId, token, onStats }: { sessionId:
 
   return (
     <div className="console-video">
-      <video ref={video} autoPlay playsInline muted={muted} aria-label="Imagem do console" />
+      <video ref={video} autoPlay playsInline muted={muted} aria-label="Imagem do console"
+        onLoadedMetadata={(e) => { e.currentTarget.play().catch(() => {}); }} />
       {phase !== 'live' && (
         <div className="cv-overlay" role="status">
           {phase === 'connecting' ? <><Loader2 className="spin" size={36} aria-hidden /><p className="cv-title">Sua partida já vai começar! 🎮</p>
