@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { Alert, Field, Modal, StatusPill } from '@/components/ui';
 import { post, put } from '@/lib/api';
-import { DataTable, NewRecord, useAction } from '@/components/admin/common';
+import { DataTable, NewRecord, useAction, useDelete } from '@/components/admin/common';
 import { ConsolePicker, type OwnerConsole, type PsnAccount } from './shared';
 
 const PSN_STATUS: Record<string, string> = { pending: 'Login pendente', linked: 'Conectada', expired: 'Expirada', error: 'Com erro', disabled: 'Desativada', no_agent: 'Aguardando aprovação' };
@@ -17,12 +17,13 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
   const [login, setLogin] = useState<{ id: string; url: string }>();
   const [redirectUrl, setRedirectUrl] = useState('');
   const { busy, msg, run } = useAction();
+  const deletion = useDelete();
   const playStations = (consoles ?? []).filter((c) => ['PS4', 'PS5'].includes(c.platform_code));
   const current = consoles?.find((c) => c.id === selected);
   const linkedTo = (accountId: string) => playStations.filter((c) => (c.owner_requested_psn_account_id ?? c.psn_account_id) === accountId).map((c) => c.name).join(', ');
 
   return <section className="stack" id="psn">
-    {msg}
+    {msg}{deletion.dialog}
     <div className="card stack">
       <div className="spread"><h2 style={{ margin: 0 }}>Contas PSN</h2>
         <NewRecord title="Nova conta PSN">{(close) => <form className="stack" onSubmit={(e) => {
@@ -55,6 +56,9 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
               const r = await post<{ ok: boolean; message: string }>(`/owner/psn-accounts/${a.id}/test`);
               reloadAccounts(); if (!r.ok) throw new Error(r.message);
             }, 'Conexão com a PSN confirmada.')}>Testar</button>
+            <button className="btn sm danger" disabled={busy} onClick={() => deletion.remove(`/owner/psn-accounts/${a.id}`, `Excluir a conta ${a.label}?`,
+              (request) => run(async () => { await request(); reloadAccounts(); reloadConsoles(); }, 'Conta PSN excluída.'),
+              'O login Sony guardado no agente também é apagado. Não é possível excluir uma conta em uso por um console aprovado.')}>Excluir</button>
           </div>]]} />
     </div>
     <div className="card stack">

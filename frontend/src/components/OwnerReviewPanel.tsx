@@ -71,7 +71,9 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
         <li className={validated ? 'done' : r.approved_at ? 'now' : ''}>Faça o login Sony da conta PSN, aplique a configuração e rode os testes e o diagnóstico.</li>
         <li className={r.is_published ? 'done' : validated ? 'now' : ''}>Com os testes aprovados, publique o console para aluguel.</li>
       </ol>
-      {r.notes && r.status !== 'approved' && <Alert kind="warn">Observações da equipe: {r.notes}</Alert>}
+      {r.notes && r.status === 'rejected' && <Alert kind="error"><span><b>Motivo da recusa:</b> {r.notes}<br />
+        Corrija o que foi pedido e clique em "Enviar para análise" de novo.</span></Alert>}
+      {r.notes && !['rejected', 'approved'].includes(r.status) && <Alert kind="warn">Observações da equipe: {r.notes}</Alert>}
       {r.status === 'changes_pending' && <Alert kind="info">Você alterou um console aprovado. Ele <b>continua no ar com a versão aprovada</b>;
         as mudanças valem depois que a equipe validar. Envie para análise quando terminar.</Alert>}
       {(r.pending.rate || r.pending_windows.length > 0) && <div className="small">

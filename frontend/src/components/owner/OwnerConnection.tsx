@@ -11,8 +11,6 @@ type Settings = { method: 'remote_play_native' | 'remote_play_chiaki'; network_r
   fps: 30 | 60; bitrate_kbps: number; standby_after_session: boolean; keep_awake_minutes: number };
 const DEFAULT: Settings = { method: 'remote_play_native', network_route: 'internet_psn', console_identifier: '', internal_host: '', public_host: '',
   public_port: null, resolution: '720p', fps: 30, bitrate_kbps: 6000, standby_after_session: true, keep_awake_minutes: 15 };
-const ROUTES: Record<string, string> = { internet_psn: 'Pela internet (PSN) — o console pode estar em outro lugar', lan: 'Mesma rede do agente',
-  internet_port_forward: 'Pela internet com redirecionamento de porta' };
 
 /** Método de conexão e qualidade da transmissão propostos pelo proprietário (a equipe aplica com o agente). */
 export default function OwnerConnection({ console: c, onSaved }: { console: OwnerConsole; onSaved: () => void }) {
@@ -26,26 +24,17 @@ export default function OwnerConnection({ console: c, onSaved }: { console: Owne
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((x) => ({ ...x, [k]: v }));
   const locked = c.review_status === 'submitted';
   const isPs4 = c.platform_code === 'PS4';
-  // Rotas válidas para este console/método (PSN pelo Remote Play nativo só existe no PS4; porta redirecionada só no chiaki).
-  const routes = (['internet_psn', 'lan', 'internet_port_forward'] as const).filter((r) => r !== 'internet_port_forward' || s.method === 'remote_play_chiaki')
-    .filter((r) => r !== 'internet_psn' || isPs4 || s.method === 'remote_play_chiaki');
-  useEffect(() => { if (!routes.includes(s.network_route)) setS((x) => ({ ...x, network_route: routes[0] })); }, [routes.join(), s.network_route]);
+
   return <div className="card stack">
     <h2 style={{ margin: 0 }}>Conexão e transmissão</h2>
     <p className="small muted" style={{ margin: 0 }}>Como o agente vai se conectar ao console e a qualidade da imagem enviada ao jogador.
       A equipe aplica essa configuração ao aprovar; depois você testa e publica.</p>
     {msg}{data.data?.pending && <Alert kind="info">Configuração salva{c.approved_at ? ': clique em "Aplicar configuração e testar" em Validação e publicação.' : ' e enviada junto com a análise.'}</Alert>}
+    {!isPs4 && <Alert kind="warn">Por enquanto o aluguel pela internet (PSN) funciona só com PS4. Este console ainda não pode ser configurado.</Alert>}
+    <dl className="kv small"><dt>Conexão</dt><dd>Remote Play pela internet (PSN): o console fica no seu endereço, ligado ou em repouso, com o Remote Play ativado.</dd></dl>
     <div className="grid2">
-      <Field label="Método de conexão"><select value={s.method} disabled={locked} onChange={(e) => set('method', e.target.value as Settings['method'])}>
-        <option value="remote_play_native">Remote Play (recomendado)</option><option value="remote_play_chiaki">Remote Play via chiaki-ng</option></select></Field>
-      <Field label="Rota de rede"><select value={s.network_route} disabled={locked} onChange={(e) => set('network_route', e.target.value as Settings['network_route'])}>
-        {routes.map((r) => <option key={r} value={r}>{ROUTES[r]}</option>)}</select></Field>
-      <Field label="Identificação do console" hint="Nome do console na PSN ou o código cadastrado (ex.: PS4-JOAO-01)">
+      <Field label="Identificação do console" hint="Nome do console na PSN (Configurações › Sistema › Informações do sistema)">
         <input maxLength={80} disabled={locked} value={s.console_identifier} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
-      {s.network_route === 'lan' && <Field label="IP do console na rede" hint="Fixe o IP no roteador (ex.: 192.168.0.50)">
-        <input maxLength={120} disabled={locked} value={s.internal_host} onChange={(e) => set('internal_host', e.target.value)} /></Field>}
-      {s.network_route === 'internet_port_forward' && <Field label="IP público ou DDNS do roteador">
-        <input maxLength={253} disabled={locked} value={s.public_host} onChange={(e) => set('public_host', e.target.value)} /></Field>}
       <Field label="Resolução"><select value={s.resolution} disabled={locked} onChange={(e) => set('resolution', e.target.value as Settings['resolution'])}>
         <option value="720p">720p (recomendado)</option><option value="1080p">1080p (PS4 Pro/PS5)</option></select></Field>
       <Field label="Quadros por segundo"><select value={s.fps} disabled={locked} onChange={(e) => set('fps', Number(e.target.value) as Settings['fps'])}>
@@ -57,9 +46,10 @@ export default function OwnerConnection({ console: c, onSaved }: { console: Owne
     </div>
     <label className="check"><input type="checkbox" disabled={locked} checked={s.standby_after_session} onChange={(e) => set('standby_after_session', e.target.checked)} />
       Colocar o console em repouso quando ninguém for usar</label>
-    <div><button className="btn primary" disabled={busy || locked} onClick={() => run(async () => {
-      await put(`/owner/consoles/${c.id}/connection-settings`, { ...s, public_port: s.public_port || null, internal_host: s.internal_host || null,
-        public_host: s.public_host || null, console_identifier: s.console_identifier || null });
+    <div><button className="btn primary" disabled={busy || locked || !isPs4} onClick={() => run(async () => {
+      await put(`/owner/consoles/${c.id}/connection-settings`, { method: 'remote_play_native', network_route: 'internet_psn',
+        console_identifier: s.console_identifier || null, resolution: s.resolution, fps: s.fps, bitrate_kbps: s.bitrate_kbps,
+        standby_after_session: s.standby_after_session, keep_awake_minutes: s.keep_awake_minutes });
       data.reload(); onSaved();
     }, c.approved_at ? 'Configuração salva: envie para análise para a equipe validar.' : 'Configuração de conexão salva.')}>Salvar conexão e transmissão</button></div>
   </div>;

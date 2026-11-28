@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Alert, Field, Modal } from '@/components/ui';
+import { Alert, Field, Modal, PageHeader } from '@/components/ui';
 import { post } from '@/lib/api';
 import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
@@ -31,7 +31,8 @@ export default function OwnerPayouts() {
   const [notes, setNotes] = useState('');
   const { run, msg, busy } = useAction();
   const total = (list.data ?? []).filter((p) => p.status === 'awaiting_manual').reduce((s, p) => s + p.amount_cents, 0);
-  return (
+  return (<div className="stack">
+    <PageHeader title="Repasses a proprietários" subtitle="Parte do proprietário de cada sessão concluída sem problemas." />
     <section className="card stack">
       <div className="spread"><h2 style={{ margin: 0 }}>Repasses a pagar</h2>{total > 0 && <span className="pill amber">Total: {money(total)}</span>}</div>
       <p className="small muted" style={{ margin: 0 }}>Gerados 10 min após uma sessão concluída sem problemas. Pague pelo banco (Pix ou transferência) e marque como pago:
@@ -59,5 +60,5 @@ export default function OwnerPayouts() {
         </div>
       </Modal>}
     </section>
-  );
+  </div>);
 }

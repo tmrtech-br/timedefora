@@ -749,12 +749,10 @@ def owner_report(date_from: str | None = None, date_to: str | None = None, conso
 
 
 # ------------------------------------------------------------------ conexão/transmissão proposta + testes após aprovação
-OWNER_METHODS = ('remote_play_native', 'remote_play_chiaki')
-
-
 class ConnectionSettingsIn(BaseModel):
-    method: Literal['remote_play_native', 'remote_play_chiaki']
-    network_route: Literal['lan', 'internet_psn', 'internet_port_forward'] = 'internet_psn'
+    # Proprietário: somente Remote Play pela internet (PSN) — o console fica na casa dele, longe do agente.
+    method: Literal['remote_play_native'] = 'remote_play_native'
+    network_route: Literal['internet_psn'] = 'internet_psn'
     console_identifier: str | None = Field(default=None, max_length=80)
     internal_host: str | None = Field(default=None, max_length=120)
     public_host: str | None = Field(default=None, max_length=253)
@@ -780,17 +778,11 @@ def get_connection_settings(console_id: UUID, p: Principal = Depends(enrolled_ow
 @router.put('/consoles/{console_id}/connection-settings')
 def put_connection_settings(console_id: UUID, body: ConnectionSettingsIn, p: Principal = Depends(enrolled_owner)):
     """Proposta do proprietário: aplicada (com o agente) depois que a equipe aprovar, no botão "Aplicar e testar"."""
-    errors = {}
-    if body.network_route == 'lan' and not (body.internal_host or '').strip():
-        errors['internal_host'] = 'Informe o IP do console na rede do agente.'
-    if body.network_route == 'internet_port_forward' and (body.method != 'remote_play_chiaki' or not (body.public_host or '').strip()):
-        errors['public_host'] = 'Redirecionamento de porta: use o Remote Play (chiaki) e informe o IP público/DDNS.'
-    if errors:
-        raise unprocessable('validation_error', 'Verifique a configuração.', fields=errors)
+    body.internal_host, body.public_host, body.public_port = None, None, None
     with tx(p.user_id) as conn:
         row = owned_console(conn, console_id, p.user_id, edit=True)
-        if body.method == 'remote_play_native' and body.network_route == 'internet_psn' and row['platform_code'] != 'PS4':
-            raise unprocessable('validation_error', 'Remote Play pela PSN ainda funciona só com PS4. Para PS5 use "Mesma rede do agente".')
+        if row['platform_code'] != 'PS4':
+            raise unprocessable('validation_error', 'Por enquanto o aluguel pela internet (PSN) funciona só com PS4.')
         conn.execute('''update consoles set owner_pending = owner_pending || jsonb_build_object('connection', %s::jsonb) where id=%s''',
                      (json.dumps(body.model_dump()), console_id))
         _changed(conn, row)
@@ -844,3 +836,54 @@ def owner_diagnostics(console_id: UUID, p: Principal = Depends(enrolled_owner)):
         cfg = one(conn, '''select validated_at, video_validated_at, audio_validated_at, control_validated_at, heartbeat_validated_at,
                            connection_status, method from console_connection_configs where console_id=%s''', (console_id,))
     return jsonable({'run': run, 'validation': cfg})
+
+
+# ------------------------------------------------------------------ exclusões do proprietário
+@router.delete('/psn-accounts/{account_id}')
+def delete_psn_account(account_id: UUID, body: DeleteIn, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        row = psn_accounts._account(conn, account_id, lock=True, owner_user_id=p.user_id)
+        used = all_(conn, '''select c.name from console_connection_configs cfg join consoles c on c.id=cfg.console_id
+                             where cfg.psn_account_id=%s and c.deleted_at is null''', (account_id,))
+        if used:
+            raise conflict('account_in_use', 'Conta em uso pelo console ' + ', '.join(u['name'] for u in used)
+                           + '. Associe outra conta ao console (ou exclua o console) antes de excluir esta.')
+        conn.execute('update consoles set owner_requested_psn_account_id=null where owner_requested_psn_account_id=%s', (account_id,))
+        if row['agent_id'] is not None:
+            try:
+                psn_accounts._call_agent(conn, row, '', method='DELETE')   # apaga o login guardado no agente
+            except Exception:
+                pass                                                       # agente fora do ar: a conta some daqui mesmo assim
+        audit_event(conn, 'owner.psn_account_deleted', 'psn_accounts', account_id, reason=body.reason)
+        conn.execute('delete from psn_accounts where id=%s', (account_id,))
+    return {'ok': True}
+
+
+@router.delete('/consoles/{console_id}/games/{assignment_id}')
+def delete_game_window(console_id: UUID, assignment_id: UUID, body: DeleteIn, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        row = owned_console(conn, console_id, p.user_id, edit=True)
+        a = one(conn, "select * from console_game_assignments where id=%s and console_id=%s and status in ('active','pending_review') for update",
+                (assignment_id, console_id))
+        if not a:
+            raise not_found('Período não encontrado.')
+        if one(conn, """select 1 from reservations where assignment_id=%s and status in ('pending_payment','confirmed','active')""", (assignment_id,)):
+            raise conflict('has_reservations', 'Há reservas neste período. Aguarde elas terminarem para excluir.')
+        conn.execute("update console_game_assignments set status='cancelled', updated_by=%s where id=%s", (p.user_id, assignment_id))
+        if a['status'] == 'active':
+            _changed(conn, row)
+        audit_event(conn, 'owner.game_window_deleted', 'console_game_assignments', assignment_id, reason=body.reason)
+    return {'ok': True}
+
+
+@router.delete('/consoles/{console_id}/game-drafts/{game_id}')
+def delete_game_draft(console_id: UUID, game_id: UUID, body: DeleteIn, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        owned_console(conn, console_id, p.user_id, edit=True)
+        g = one(conn, "select id from games where id=%s and created_by=%s and status='draft' and deleted_at is null for update", (game_id, p.user_id))
+        if not g:
+            raise not_found('Só é possível excluir jogos seus ainda em revisão.')
+        conn.execute("""update console_game_assignments set status='cancelled' where game_id=%s and status in ('active','pending_review')""", (game_id,))
+        conn.execute("update games set deleted_at=%s, status='archived' where id=%s", (timeutil.now(), game_id))
+        audit_event(conn, 'owner.game_draft_deleted', 'games', game_id, reason=body.reason)
+    return {'ok': True}

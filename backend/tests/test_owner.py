@@ -68,7 +68,9 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     assert api.get('/owner/consoles/code-check', params={'code': 'x'}).json()['valid'] is False
     assert api.get('/owner/consoles/code-check', params={'code': 'PS5-01'}).json()['available'] is False
     assert api.get('/owner/consoles/code-check', params={'code': 'DONO-01'}).json()['available'] is True
-    c = api.post('/owner/consoles', json={'code': 'DONO-01', 'name': 'PS5 do dono', 'platform_code': 'PS5', 'agent_id': agent})
+    with tx() as conn:   # o jogo do cenário também roda no PS4 (rota PSN do proprietário é só PS4)
+        conn.execute("insert into game_platforms(game_id, platform_id) select %s, id from platforms where code='PS4'", (world['game']['id'],))
+    c = api.post('/owner/consoles', json={'code': 'DONO-01', 'name': 'PS4 do dono', 'platform_code': 'PS4'})
     assert c.status_code == 201, c.text
     cid = c.json()['id']
     # incompleto: não envia
@@ -79,11 +81,10 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     assert w.status_code == 201, w.text
     missing = api.get(f'/owner/consoles/{cid}/review').json()['missing']
     assert len(missing) == 2 and any('conexão' in m for m in missing) and any('PSN' in m for m in missing)
-    r = api.put(f'/owner/consoles/{cid}/connection-settings', json={'method': 'remote_play_native', 'network_route': 'lan',
-                                                                     'internal_host': '192.168.0.50', 'console_identifier': 'DONO-01'})
+    r = api.put(f'/owner/consoles/{cid}/connection-settings', json={'console_identifier': 'DONO-01', 'resolution': '720p', 'fps': 30})
     assert r.status_code == 200, r.text
     with tx() as conn:   # conta PSN conectada pelo agente escolhido (login Sony simulado no banco)
-        acc = insert(conn, 'psn_accounts', {'agent_id': agent, 'label': 'conta-dono', 'status': 'linked', 'owner_user_id': user['id']})
+        acc = insert(conn, 'psn_accounts', {'agent_id': None, 'label': 'conta-dono', 'status': 'pending', 'owner_user_id': user['id']})
     assert api.put(f'/owner/consoles/{cid}/connection', json={'psn_account_id': str(acc['id'])}).status_code == 200
     assert api.put(f'/owner/consoles/{cid}/hours', json={'hours': [{'weekday': 1, 'opens_at': '08:00', 'closes_at': '22:00'}]}).json()['pending'] is False
     assert api.get(f'/owner/consoles/{cid}/review').json()['missing'] == [], api.get(f'/owner/consoles/{cid}/review').json()['missing']
@@ -102,12 +103,17 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     # antes da aprovação não testa
     assert api.post(f'/owner/consoles/{cid}/diagnostics').status_code == 409
     assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'agent_id': agent, 'notes': 'ok'}).status_code == 200
-    # aprovado: aplica a conexão proposta (com o agente) e enfileira o diagnóstico
+    # aprovado: a conta passou a usar o agente; sem o login Sony ainda não testa
+    with tx() as conn:
+        assert str(conn.execute('select agent_id from psn_accounts where id=%s', (acc['id'],)).fetchone()['agent_id']) == agent
+    assert api.post(f'/owner/consoles/{cid}/diagnostics').json()['code'] == 'psn_login_required'
+    with tx() as conn:   # login Sony concluído (simulado no banco)
+        conn.execute("update psn_accounts set status='linked' where id=%s", (acc['id'],))
     d = api.post(f'/owner/consoles/{cid}/diagnostics')
     assert d.status_code == 202, d.text
     with tx() as conn:
         cfg = conn.execute('select method, agent_id, internal_host from console_connection_configs where console_id=%s', (cid,)).fetchone()
-    assert cfg['method'] == 'remote_play_native' and str(cfg['agent_id']) == agent and cfg['internal_host'] == '192.168.0.50'
+    assert cfg['method'] == 'remote_play_native' and str(cfg['agent_id']) == agent
     assert api.get(f'/owner/consoles/{cid}/diagnostics').json()['run']['status'] == 'queued'
     st = api.get(f'/owner/consoles/{cid}/review').json()
     assert st['status'] == 'approved' and st['approved_at'] and st['agent_linked'] is True
@@ -130,3 +136,29 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     # exclusão sem reservas futuras
     assert api.delete(f'/owner/consoles/{cid}', json={'reason': 'Vendi o console'}).status_code == 200
     assert api.get('/owner/consoles').json() == []
+
+
+def test_exclusoes_do_proprietario(world, freeze):
+    from conftest import at
+    from app.core.db import insert
+    freeze(at(2, 7, 0))
+    api, user = _owner('dono_exclui')
+    with tx() as conn:
+        conn.execute("insert into game_platforms(game_id, platform_id) select %s, id from platforms where code='PS4'", (world['game']['id'],))
+    cid = api.post('/owner/consoles', json={'code': 'EXCL-01', 'name': 'PS4 exclui', 'platform_code': 'PS4'}).json()['id']
+    # conta PSN (sem agente) associada e depois excluída
+    acc = api.post('/owner/psn-accounts', json={'label': 'conta-x', 'console_id': cid})
+    assert acc.status_code == 201, acc.text
+    assert api.delete(f"/owner/psn-accounts/{acc.json()['id']}", json={'reason': 'Conta cadastrada errada'}).status_code == 200
+    assert api.get('/owner/psn-accounts').json() == []
+    # jogo em revisão + período, depois exclusões
+    g = api.post(f'/owner/consoles/{cid}/game-drafts', json={'title': 'Jogo do dono', 'min_minutes': 10, 'max_minutes': 60, 'genres': []})
+    assert g.status_code == 201, g.text
+    w = api.post(f'/owner/consoles/{cid}/games', json={'game_id': g.json()['id'], 'starts_at': at(3, 8).isoformat(), 'ends_at': at(3, 12).isoformat()})
+    assert w.status_code == 201, w.text
+    assert api.delete(f"/owner/consoles/{cid}/games/{w.json()['id']}", json={'reason': 'Não vou mais oferecer'}).status_code == 200
+    assert api.get(f'/owner/consoles/{cid}/games').json()['assignments'] == []
+    assert api.delete(f"/owner/consoles/{cid}/game-drafts/{g.json()['id']}", json={'reason': 'Não vou mais oferecer'}).status_code == 200
+    assert api.get(f'/owner/consoles/{cid}/games').json()['drafts'] == []
+    # só PSN (PS4): rota local é recusada
+    assert api.put(f'/owner/consoles/{cid}/connection-settings', json={'network_route': 'lan'}).status_code == 422

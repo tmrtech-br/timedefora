@@ -2431,7 +2431,9 @@ def owner_reviews(p: Principal = Depends(ADMIN)):
                    c.owner_review_status status, c.owner_review_notes notes, c.owner_submitted_at submitted_at,
                    c.owner_approved_at approved_at, c.owner_pending pending,
                    coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id, ag.name agent_name,
-                   u.username owner_username, u.email owner_email, pa.label psn_label, pa.online_id psn_online_id,
+                   u.username owner_username, u.email owner_email, u.full_name owner_name, pa.label psn_label, pa.online_id psn_online_id,
+                   pa.status psn_status, cfg.method current_method, cfg.network_route current_route, cfg.resolution current_resolution,
+                   cfg.fps current_fps, cfg.bitrate_kbps current_bitrate, cfg.validated_at,
                    r.min_minutes, r.max_minutes, r.rate_unit, r.rate_cents, r.paused
             from consoles c join platforms p on p.id=c.platform_id join users u on u.id=c.owner_user_id
             left join console_connection_configs cfg on cfg.console_id=c.id
@@ -2442,7 +2444,10 @@ def owner_reviews(p: Principal = Depends(ADMIN)):
               and c.owner_review_status in ('submitted','changes_pending')
             order by (c.owner_review_status='submitted') desc, c.owner_submitted_at nulls last''')
         for c in rows:
-            c['windows'] = all_(conn, '''select a.id, a.status, a.starts_at, a.ends_at, g.title, g.status game_status, g.slug
+            c['hours'] = all_(conn, '''select weekday, to_char(opens_at,'HH24:MI') opens_at, to_char(closes_at,'HH24:MI') closes_at
+                                       from console_operating_hours where console_id=%s order by weekday, opens_at''', (c['id'],))
+            c['windows'] = all_(conn, '''select a.id, a.status, a.starts_at, a.ends_at, g.title, g.status game_status, g.slug,
+                                                g.cover_url, g.banner_url, g.short_description, g.age_rating, g.min_minutes, g.max_minutes
                                          from console_game_assignments a join games g on g.id=a.game_id
                                          where a.console_id=%s and a.status in ('active','pending_review') and a.ends_at > %s
                                          order by a.starts_at''', (c['id'], timeutil.now()))

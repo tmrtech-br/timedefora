@@ -6,7 +6,17 @@ import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { DataTable, fromLocalInput, NewRecord, useAction, useDelete } from '@/components/admin/common';
 import { EMPTY_GAME, GameRegistrationFields, gameRegistrationBody } from '@/components/admin/Games';
+import DateFilter from '@/components/DateFilter';
 import { ConsolePicker, type OwnerConsole } from './shared';
+
+/** Data (calendário padrão do sistema) + hora, no formato YYYY-MM-DDTHH:MM. */
+function DateTimePick({ label, value, min, onChange }: { label: string; value: string; min?: string; onChange: (v: string) => void }) {
+  const [date = '', time = ''] = value.split('T');
+  return <div className="owner-datetime">
+    <DateFilter label={label} value={date} min={min} onChange={(d) => onChange(`${d}T${time || '08:00'}`)} />
+    <label className="field">Hora<input type="time" step={60} value={time} disabled={!date} onChange={(e) => onChange(`${date}T${e.target.value}`)} /></label>
+  </div>;
+}
 
 type Games = { games: { id: string; title: string }[]; assignments: { id: string; title: string; starts_at: string; ends_at: string }[]; drafts: { id: string; title: string }[] };
 type Rate = { min_minutes: number; max_minutes: number; rate_unit: 'minute' | 'hour'; rate_cents: number; paused?: boolean };
@@ -59,10 +69,12 @@ export default function OwnerGames({ consoles, selected, setSelected }: { consol
   const [gameDraft, setGameDraft] = useState<Record<string, unknown>>(EMPTY_GAME);
   const [win, setWin] = useState({ game_id: '', starts_at: '', ends_at: '' });
   const { busy, msg, run } = useAction();
+  const deletion = useDelete();
   const locked = current?.review_status === 'submitted';
+  const today = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
   return <section className="stack" id="jogos">
     <div className="card"><ConsolePicker consoles={consoles} value={selected} onChange={setSelected} /></div>
-    {msg}{locked && <Alert kind="info">Console em análise: para editar, cancele o envio em Cadastro de console.</Alert>}
+    {msg}{deletion.dialog}{locked && <Alert kind="info">Console em análise: para editar, cancele o envio em Cadastro de console.</Alert>}
     {current && games.data && <div className="card stack">
       <div className="spread"><h2 style={{ margin: 0 }}>Jogos</h2>
         {!locked && <NewRecord title="Cadastrar jogo">{(close) => <form className="stack" onSubmit={(e) => {
@@ -89,13 +101,19 @@ export default function OwnerGames({ consoles, selected, setSelected }: { consol
             {games.data.drafts.length > 0 && <optgroup label="Meus jogos (em revisão)">{games.data.drafts.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</optgroup>}
             <optgroup label="Catálogo">{games.data.games.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</optgroup>
           </select></Field>
-          <Field label="Disponível de"><input type="datetime-local" required value={win.starts_at} onChange={(e) => setWin({ ...win, starts_at: e.target.value })} /></Field>
-          <Field label="Até"><input type="datetime-local" required value={win.ends_at} onChange={(e) => setWin({ ...win, ends_at: e.target.value })} /></Field>
+          <DateTimePick label="Disponível de" value={win.starts_at} min={today} onChange={(v) => setWin({ ...win, starts_at: v })} />
+          <DateTimePick label="Até" value={win.ends_at} min={win.starts_at.slice(0, 10) || today} onChange={(v) => setWin({ ...win, ends_at: v })} />
         </div>
-        <div><button className="btn" disabled={busy}>Adicionar período do jogo</button></div>
+        <div><button className="btn" disabled={busy || win.starts_at.length < 16 || win.ends_at.length < 16 || win.ends_at <= win.starts_at}>Adicionar período do jogo</button></div>
       </form>}
       <DataTable rows={games.data.assignments} empty="Nenhum período cadastrado."
-        cols={[['Jogo', (a) => a.title], ['De', (a) => dateTime(a.starts_at)], ['Até', (a) => dateTime(a.ends_at)]]} />
+        cols={[['Jogo', (a) => a.title], ['De', (a) => dateTime(a.starts_at)], ['Até', (a) => dateTime(a.ends_at)],
+          ['', (a) => !locked && <button className="btn sm danger" onClick={() => deletion.remove(`/owner/consoles/${current.id}/games/${a.id}`, `Excluir o período de ${a.title}?`,
+            (request) => run(async () => { await request(); await games.reload(); }, 'Período excluído.'), 'Não é possível excluir um período com reservas.')}>Excluir</button>]]} />
+      {games.data.drafts.length > 0 && <><h3 style={{ margin: '6px 0 0' }}>Meus jogos em revisão</h3>
+        <DataTable rows={games.data.drafts} cols={[['Jogo', (g) => g.title],
+          ['', (g) => !locked && <button className="btn sm danger" onClick={() => deletion.remove(`/owner/consoles/${current.id}/game-drafts/${g.id}`, `Excluir o jogo ${g.title}?`,
+            (request) => run(async () => { await request(); await games.reload(); }, 'Jogo excluído.'), 'Os períodos deste jogo também são removidos.')}>Excluir jogo</button>]]} /></>}
     </div>}
     {current && <div className="card stack"><h2 style={{ margin: 0 }}>Preço</h2>
       {!rate.loading && !rate.error && <Price key={current.id} consoleId={current.id} value={rate.data} locked={locked} approved={!!current.approved_at} onSaved={rate.reload} />}

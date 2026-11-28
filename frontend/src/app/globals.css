@@ -875,3 +875,11 @@ html:has(.policy-dialog[open]) { overflow: hidden; }
   .zz-item + .zz-item { margin-top: 20px; }
   .zz-link { display: none; }
 }
+/* Aprovação de consoles (admin): visualização das configurações do proprietário */
+.review-details h3 { margin: 0 0 6px; font-size: 15px; }
+.review-games { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.review-game { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; padding: 8px; border-radius: 10px; background: #15112b; border: 1px solid var(--line); }
+.review-game img, .review-noimg { width: 96px; aspect-ratio: 3/4; object-fit: cover; border-radius: 8px; background: #221a3c; }
+.review-noimg { display: grid; place-items: center; font-size: 11px; color: var(--muted); }
+.owner-datetime { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; align-items: end; }
+.owner-datetime input[type='time'] { height: 42px; }

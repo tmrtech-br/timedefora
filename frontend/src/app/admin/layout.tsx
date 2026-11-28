@@ -20,7 +20,7 @@ const SECTIONS: [string, string, string][] = [
   ['transmissoes', 'Transmissões', 'operator'], ['financeiro', 'Financeiro e relatórios', 'admin'], ['usuarios', 'Usuários e permissões', 'operator'],
   ['notificacoes', 'Notificações', 'admin'], ['suporte', 'Suporte', 'operator'], ['lgpd', 'Solicitações LGPD', 'admin'],
   ['auditoria', 'Auditoria', 'admin'], ['parametros', 'Parâmetros', 'admin'], ['configuracoes', 'Configurações avançadas e políticas', 'admin'],
-  ['aprovacoes', 'Proprietários', 'admin'],
+  ['aprovacoes', 'Aprovação de consoles', 'admin'], ['repasses', 'Repasses a proprietários', 'admin'],
 ];
 const ORDERED_SECTIONS = [...SECTIONS.slice(0, 2), ...SECTIONS.slice(2).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'))];
 const RANK: Record<string, number> = { client: 0, operator: 1, admin: 2, superadmin: 3 };
@@ -30,7 +30,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   jogos: Gamepad2, agenda: CalendarDays, agentes: Server, precos: Tags, filas: ListOrdered,
   reservas: ClipboardList, sessoes: Monitor, transmissoes: Radio, financeiro: CreditCard,
   usuarios: Users, notificacoes: Bell, suporte: Headphones, lgpd: Shield,
-  auditoria: FileCheck, parametros: SlidersHorizontal, configuracoes: Settings2, aprovacoes: UserCheck,
+  auditoria: FileCheck, parametros: SlidersHorizontal, configuracoes: Settings2, aprovacoes: UserCheck, repasses: CreditCard,
 };
 
 function Guard({ children }: { children: React.ReactNode }) {
