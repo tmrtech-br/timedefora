@@ -2,7 +2,8 @@
 
 Caminhos (o estado vem da presença PSN e/ou do DDP local, ver presence.py):
 1. Console em repouso: a conexão Remote Play acorda (~40 s) e ele para em "Seja bem-vindo" → caminho 2.
-2. "Seja bem-vindo" (conta offline na PSN): ✕ no último perfil → menu do console (foco em "Novidades").
+2. "Seja bem-vindo… pressione PS" (conta offline na PSN): PS mostra os perfis (último já selecionado) → ✕ → menu
+   do console (foco em "Novidades").
 3. Menu do console (conta online, sem jogo): → até o ícone do jogo → ✕.
 Jogo certo já aberto: só espera ficar pronto. Outro jogo aberto: PS → menu → ícone → ✕ → ✕ (confirma fechar o atual).
 No menu do PS4 o 1º ícone à direita de "Novidades" é o último jogo usado; os seguintes, os usados antes.
@@ -20,6 +21,14 @@ from .presence import Presence, StateReader, normalize_title
 
 class FlowError(Exception):
     pass
+
+
+HOLD, GAP = 0.3, 1.0     # pela PSN (internet) toques curtos e seguidos se perdem: segura 0,3 s e espera 1 s entre eles
+
+
+def _tap(pad, name: str, sleep: Callable, gap: float = GAP) -> None:
+    pad.press(name, HOLD)
+    sleep(gap)
 
 
 @dataclass
@@ -71,7 +80,8 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
         path = 'perfil+menu'
         for attempt in (1, 2):
             progress(f'selecionando o perfil (tentativa {attempt})')
-            pad.press('cross')
+            _tap(pad, 'ps', sleep, 4)                       # "pressione PS": mostra os perfis
+            _tap(pad, 'cross', sleep)
             deadline = clock() + 25
             while clock() < deadline:
                 sleep(3)
@@ -93,31 +103,35 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
 
     # ------------------------------------------------ menu do console → ícone do jogo
     first = 2 if current else 1             # outro jogo aberto ocupa o 1º ícone (último usado)
-    for tile in range(first, max_tiles + 1):
-        progress(f'abrindo o jogo pelo menu (ícone {tile})')
-        if current or tile > first or path == 'menu':
-            pad.press('ps')                                 # volta ao menu do console (com ou sem jogo aberto)
-            sleep(3)
-        for _ in range(8):                                  # foco em "Novidades" (primeiro item da fila)
-            pad.press('dpad_left')
-            sleep(0.3)
+    tile, retried = first, False
+    while tile <= max_tiles:
+        progress(f'abrindo o jogo pelo menu (ícone {tile})' + (' — nova tentativa' if retried else ''))
+        if current or tile > first or path == 'menu' or retried:
+            _tap(pad, 'ps', sleep, 3)                       # volta ao menu do console (com ou sem jogo aberto)
+        if path != 'perfil+menu' or tile > first or retried:
+            for _ in range(6):                              # foco em "Novidades" (primeiro item da fila)
+                _tap(pad, 'dpad_left', sleep, 0.8)
         for _ in range(tile):
-            pad.press('dpad_right')
-            sleep(0.6)
-        pad.press('cross')
+            _tap(pad, 'dpad_right', sleep)
+        _tap(pad, 'cross', sleep, 2.5)
         if current:
-            sleep(2.5)
-            pad.press('cross')                              # "Fechar o aplicativo atual?" → OK
+            _tap(pad, 'cross', sleep)                       # "Fechar o aplicativo atual?" → OK
         progress('aguardando o console abrir o jogo')
         opened = _wait_title(state, sleep, clock, launch_timeout, current)
         if opened is None:
-            raise FlowError(f'O console não informou nenhum jogo aberto em {int(launch_timeout)} s após selecionar o ícone {tile}.')
+            if not retried:                                 # toque perdido pela rede: refaz a navegação uma vez
+                retried = True
+                continue
+            raise FlowError(f'O console não informou nenhum jogo aberto em {int(launch_timeout)} s após selecionar o ícone {tile} '
+                            '(duas tentativas). Confira a tela do console.')
+        retried = False
         if detect or opened.title_id == expected:
             msg = f'{opened.title_name or opened.title_id} ({opened.title_id}) aberto pelo ícone {tile}.'
             result = FlowResult(opened.title_id, opened.title_name, 'outro jogo fechado' if current else path, tile, msg)
             progress('jogo aberto; aguardando carregar')
             return _ready(frame_ok, sleep, settle, result)
         current = opened.title_id                           # abriu outro jogo: tenta o próximo ícone
+        tile += 1
     raise FlowError(f'O jogo {expected} não estava entre os {max_tiles} últimos jogos usados no console. '
                     'Abra o jogo uma vez no console para ele voltar ao início do menu.')
 

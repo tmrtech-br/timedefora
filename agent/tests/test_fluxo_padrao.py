@@ -10,7 +10,7 @@ class FakePS4:
 
     def __init__(self, screen='welcome', recent=('CUSA05904', 'CUSA00411'), running='', appear_offline=False):
         self.screen, self.recent, self.running = screen, list(recent), running
-        self.appear_offline, self.focus, self.presses, self.dialog = appear_offline, 0, [], None
+        self.appear_offline, self.focus, self.presses, self.dialog, self.drop = appear_offline, 0, [], None, []
         if running:
             self.recent.remove(running) if running in self.recent else None
             self.recent.insert(0, running)
@@ -18,12 +18,18 @@ class FakePS4:
     # controle
     def press(self, name, hold=0.12):
         self.presses.append(name)
+        if self.drop and name in self.drop:              # toque perdido pela rede
+            self.drop.remove(name)
+            return
         if self.dialog:
             if name == 'cross':
                 self._launch(self.dialog)
             self.dialog = None
             return
         if self.screen == 'welcome':
+            if name == 'ps':                              # "pressione PS" → perfis
+                self.screen = 'profiles'
+        elif self.screen == 'profiles':
             if name == 'cross':
                 self.screen, self.focus = 'home', 0
         elif self.screen == 'game' and name == 'ps':
@@ -49,7 +55,7 @@ class FakePS4:
 
     # estado (presença)
     def read(self):
-        online = self.screen != 'welcome' and not self.appear_offline
+        online = self.screen not in ('welcome', 'profiles') and not self.appear_offline
         return Presence(online, self.running if online else '', 'Jogo ' + self.running if self.running else '', 'psn')
 
 
@@ -66,7 +72,8 @@ def test_caminhos_1_e_2_seleciona_o_perfil_e_abre_o_ultimo_jogo():
     ps4 = FakePS4('welcome')
     r = run(ps4)
     assert r.title_id == 'CUSA05904' and r.path == 'perfil+menu' and r.tile == 1
-    assert ps4.presses[0] == 'cross' and 'ps' not in ps4.presses
+    assert ps4.presses[:2] == ['ps', 'cross'] and ps4.presses.count('ps') == 1
+    assert 'dpad_left' not in ps4.presses                 # depois do perfil o foco já está em "Novidades"
 
 
 def test_caminho_3_no_menu_abre_o_jogo():
@@ -125,3 +132,10 @@ def test_falha_da_psn_nao_vira_offline():
     async def fetch(url):
         return 403, None
     assert PsnPresence('conta', fetch=fetch).read() is None
+
+
+def test_toque_perdido_pela_rede_refaz_a_navegacao():
+    ps4 = FakePS4('home')
+    ps4.drop = ['cross']                                  # o primeiro ✕ no ícone se perde
+    r = run(ps4)
+    assert r.title_id == 'CUSA05904' and r.tile == 1
