@@ -84,18 +84,18 @@ function Diagnostics({ consoleId, onValidated }: { consoleId: string; onValidate
 
 /** Situação da validação do console pela equipe + ações do proprietário + filas/sessões que o console teve. */
 export default function OwnerReviewPanel({ consoleId, onChange, phase, onPublished }: {
-  consoleId: string; onChange: () => void; phase: 'review' | 'test'; onPublished?: () => void;
+  consoleId: string; onChange: () => void; phase: 'review' | 'test' | 'publish'; onPublished?: () => void;
 }) {
   const review = useApi<Review>(`/owner/consoles/${consoleId}/review`, 15000);
   const { run, msg, busy } = useAction();
   const r = review.data;
-  const diag = useApi<DiagState>(phase !== 'review' && r?.approved_at ? `/owner/consoles/${consoleId}/diagnostics` : null, 15000);
+  const diag = useApi<DiagState>(phase !== 'review' && r?.approved_at ? `/owner/consoles/${consoleId}/diagnostics` : null, 15000);   // publicar exige testes ok
   const validated = !!diag.data?.validation?.validated_at;
   const pendingWindows = !!r?.pending_windows.length;
   const cardStatus = r?.status === 'approved' && (!validated || !r.is_published) ? 'in_progress' : r?.status;
   const act = (path: string, ok: string) => run(async () => { await post(`/owner/consoles/${consoleId}/${path}`); review.reload(); onChange(); }, ok);
   return <section className="card stack" id="validacao">
-    <div className="spread"><h2 style={{ margin: 0 }}>{phase === 'review' ? 'Envio para aprovação' : 'Validação e publicação'}</h2><div className="row">
+    <div className="spread"><h2 style={{ margin: 0 }}>{phase === 'review' ? 'Envio para aprovação' : phase === 'test' ? 'Testes do console' : 'Publicação'}</h2><div className="row">
       {cardStatus && <StatusPill status={cardStatus} map={STATUS} />}
       <button className="btn sm" disabled={busy} onClick={() => void run(async () => {
         await Promise.all([review.reload(), diag.reload()]); onChange();
@@ -130,14 +130,14 @@ export default function OwnerReviewPanel({ consoleId, onChange, phase, onPublish
         {phase !== 'test' && ['draft', 'rejected', 'changes_pending'].includes(r.status) && <button className="btn primary" disabled={busy || r.missing.length > 0}
           onClick={() => act('submit', 'Enviado para análise. A equipe foi avisada.')}>Enviar para análise</button>}
         {phase !== 'test' && r.status === 'submitted' && <button className="btn" disabled={busy} onClick={() => act('withdraw', 'Envio cancelado: você pode editar de novo.')}>Cancelar envio para editar</button>}
-        {phase !== 'review' && r.approved_at && !r.is_published && <button className="btn primary" disabled={busy || !validated || pendingWindows} title={pendingWindows ? 'O período do jogo aguarda aprovação' : validated ? undefined : 'Rode os testes e o diagnóstico primeiro'}
+        {phase === 'publish' && r.approved_at && !r.is_published && <button className="btn primary" disabled={busy || !validated || pendingWindows} title={pendingWindows ? 'O período do jogo aguarda aprovação' : validated ? undefined : 'Rode os testes e o diagnóstico primeiro'}
           onClick={() => run(async () => {
             await post(`/owner/consoles/${consoleId}/publish`);
             onPublished?.();
           })}>Publicar para aluguel</button>}
-        {phase !== 'review' && r.is_published && <button className="btn" disabled={busy} onClick={() => act('unpublish', 'Console fora do ar para novas reservas.')}>Tirar do ar</button>}
+        {phase === 'publish' && r.is_published && <button className="btn" disabled={busy} onClick={() => act('unpublish', 'Console fora do ar para novas reservas.')}>Tirar do ar</button>}
       </div>
-      {phase !== 'review' && r.approved_at && <Diagnostics key={consoleId} consoleId={consoleId} onValidated={() => { review.reload(); diag.reload(); onChange(); }} />}
+      {phase === 'test' && r.approved_at && <Diagnostics key={consoleId} consoleId={consoleId} onValidated={() => { review.reload(); diag.reload(); onChange(); }} />}
     </>}
   </section>;
 }

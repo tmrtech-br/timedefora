@@ -967,3 +967,7 @@ html:has(.policy-dialog[open]) { overflow: hidden; }
 .launch-snapshot-frame img { display: block; width: 100%; height: auto; border-radius: 8px; }
 .launch-snapshot-box { position: absolute; border: 2px solid var(--cyan); background: rgba(41, 214, 240, .15); pointer-events: none; }
 .launch-ocr { flex-wrap: wrap; gap: 6px; }
+.launch-log { display: grid; gap: 4px; margin: 0; padding-left: 20px; max-height: 260px; overflow-y: auto; font-size: 13px; }
+.launch-log li.current { font-weight: 600; color: var(--text); }
+.launch-evidence { margin: 0; display: grid; gap: 4px; }
+.launch-evidence img, .launch-evidence-thumb { width: 100%; max-width: 480px; border-radius: 8px; border: 1px solid var(--line); background: #000; }

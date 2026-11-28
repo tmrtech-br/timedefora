@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Camera, FlaskConical, Plus, Save, Trash2, Wand2, X } from 'lucide-react';
-import { Alert, ErrorBox, Field, Loading, StatusPill } from '@/components/ui';
+import { Alert, ErrorBox, Field, Loading, ModalShell, StatusPill } from '@/components/ui';
 import { del, get, post, put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { useAction } from '@/components/admin/common';
 
 type RefImage = { png: string; width: number };
 type GameScript = { game_id: string; title: string; slug: string; steps: string[]; images: Record<string, RefImage>; updated_at: string | null;
-  title_id: string | null; title_name: string | null; settle_seconds: number | null };
+  title_id: string | null; title_name: string | null; settle_seconds: number | null; evidence_png: string | null; detected_at: string | null };
 type ScriptList = { console: { id: string; name: string; platform_code: string }; games: GameScript[]; agent_ready: boolean; buttons: string[] };
 type AgentResult = { ok: boolean; message: string; state: string | null; data: Record<string, unknown> };
 
@@ -252,25 +252,78 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
 }
 
 /** Abertura automática de um jogo: reconhecer o código do jogo no console, confirmar e testar. */
+type Seen = { title_id: string; title_name: string };
+type JobData = { title_id?: string; title_name?: string; path?: string; tile?: number; seen?: Seen[]; screenshot?: string; step?: string };
+const PATH_LABEL: Record<string, string> = { 'perfil+menu': 'tela de boas-vindas → perfil → menu → jogo', menu: 'menu do console → jogo',
+  'já aberto': 'o jogo já estava aberto', 'outro jogo fechado': 'outro jogo estava aberto: fechou e abriu o certo' };
+
+/** Acompanhamento do Reconhecer/Testar: passos ao vivo (como o diagnóstico) e resumo no fim. */
+function OpeningProgress({ kind, title, result, log, started, busy, onConfirm, onClose }: {
+  kind: 'detect' | 'test'; title: string; result: AgentResult; log: { at: string; text: string }[]; started: number; busy: boolean;
+  onConfirm: (g: Seen) => void; onClose: () => void;
+}) {
+  const running = result.state === 'connecting';
+  const d = result.data as JobData;
+  const seconds = Math.round((Date.now() - started) / 1000);
+  const others = (d.seen ?? []).filter((g) => g.title_id !== d.title_id);
+  return <ModalShell title={kind === 'detect' ? `Reconhecer jogo — ${title}` : `Testar abertura — ${title}`}
+    closeLabel={running ? 'Fechar (continua no console)' : 'Fechar'} onClose={onClose}>
+    <div className="stack">
+      {running && <p role="status" className="small"><b>Em andamento.</b> Não mexa no console nem no controle até terminar.</p>}
+      <ol className="launch-log">{log.map((l, i) => <li key={i} className={i === log.length - 1 && running ? 'current' : undefined}>
+        <span className="muted">{l.at}</span> {l.text}</li>)}</ol>
+      {!running && <div className="stack">
+        <Alert kind={result.ok ? 'ok' : 'error'}>{result.ok ? 'Concluído.' : 'Não concluído.'} {result.message}</Alert>
+        <div className="card stack small"><strong>Resumo</strong>
+          <span>Tempo total: {seconds} s</span>
+          {d.path && <span>Caminho: {PATH_LABEL[d.path] ?? d.path}{d.tile ? ` (ícone ${d.tile} do menu)` : ''}</span>}
+          {d.title_id && <span>Jogo confirmado pelo console: <b>{d.title_name || d.title_id}</b> ({d.title_id})</span>}
+          {(d.seen?.length ?? 0) > 0 && <span>Jogos abertos no caminho: {d.seen!.map((g) => `${g.title_name || g.title_id} (${g.title_id})`).join(', ')}</span>}
+        </div>
+        {d.screenshot && <figure className="launch-evidence"><img src={`data:image/png;base64,${d.screenshot}`} alt="Tela do console com o jogo aberto" />
+          <figcaption className="small muted">Print do console — vai junto com o jogo reconhecido para a equipe conferir.</figcaption></figure>}
+        {kind === 'detect' && d.title_id && result.ok && <div className="row">
+          <span>É este o jogo “{title}”?</span>
+          <button className="btn primary sm" disabled={busy} onClick={() => onConfirm({ title_id: d.title_id!, title_name: d.title_name ?? '' })}>Sim, salvar</button>
+        </div>}
+        {kind === 'detect' && others.length > 0 && <div className="stack small">
+          <span className="muted">Outros jogos abertos{result.ok ? '' : ' (nenhum com o nome cadastrado)'} — escolha se um deles é “{title}”:</span>
+          {others.map((g) => <div className="row" key={g.title_id}><span>{g.title_name || g.title_id} ({g.title_id})</span>
+            <button className="btn sm" disabled={busy} onClick={() => onConfirm(g)}>É este</button></div>)}
+        </div>}
+      </div>}
+    </div>
+  </ModalShell>;
+}
+
 function GameOpening({ base, game, agentReady, onSaved, onAdvanced }: {
   base: string; game: GameScript; agentReady: boolean; onSaved: () => Promise<void>; onAdvanced: () => void;
 }) {
-  const [job, setJob] = useState<{ kind: 'detect' | 'test'; result: AgentResult }>();
+  const [job, setJob] = useState<{ kind: 'detect' | 'test'; result: AgentResult; started: number; log: { at: string; text: string }[] }>();
   const [code, setCode] = useState(game.title_id ?? '');
+  const [open, setOpen] = useState(false);
   const { busy, msg, run } = useAction();
   const running = job?.result.state === 'connecting';
+  const track = (r: AgentResult) => setJob((j) => {
+    if (!j) return j;
+    const text = (r.state === 'connecting' ? String((r.data as JobData).step || r.message).replace(/^"[^"]*":\s*/, '') : r.message).trim();
+    const last = j.log[j.log.length - 1]?.text;
+    const at = new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Fortaleza' });
+    return { ...j, result: r, log: text && text !== last ? [...j.log, { at, text }] : j.log };
+  });
   useEffect(() => {
     if (!running) return;
-    const timer = window.setInterval(() => {
-      get<AgentResult>(`${base}/launch-test`).then((r) => setJob((j) => j && { ...j, result: r })).catch(() => undefined);
-    }, 2500);
+    const timer = window.setInterval(() => { get<AgentResult>(`${base}/launch-test`).then(track).catch(() => undefined); }, 2000);
     return () => window.clearInterval(timer);
   }, [running, base]);
-  const found = job?.kind === 'detect' && job.result.ok ? job.result.data as { title_id?: string; title_name?: string } : null;
-  const seen = job?.kind === 'detect' && !running
-    ? ((job.result.data as { seen?: { title_id: string; title_name: string }[] }).seen ?? []).filter((g) => g.title_id !== found?.title_id) : [];
-  const saveTitle = (titleId: string, titleName: string) => run(async () => {
-    await put(`${base}/launch-scripts/${game.game_id}/title`, { title_id: titleId, title_name: titleName });
+  const start = (kind: 'detect' | 'test') => run(async () => {
+    setOpen(true);
+    setJob({ kind, result: { ok: false, message: 'Iniciando…', state: 'connecting', data: {} }, started: Date.now(), log: [] });
+    const r = await post<AgentResult>(`${base}/launch-scripts/${game.game_id}/${kind}`, kind === 'test' ? {} : undefined);
+    track(r);
+  });
+  const saveTitle = (g: Seen, fromDetection: boolean) => run(async () => {
+    await put(`${base}/launch-scripts/${game.game_id}/title`, { title_id: g.title_id, title_name: g.title_name, from_detection: fromDetection });
     setJob(undefined); await onSaved();
   }, 'Jogo reconhecido. As próximas preparações abrem e confirmam este jogo automaticamente.');
 
@@ -281,37 +334,31 @@ function GameOpening({ base, game, agentReady, onSaved, onAdvanced }: {
         : <StatusPill status="missing" map={{ missing: 'Não reconhecido' }} tone="red" />}</div>
     {msg}
     {game.title_id ? <p className="small muted" style={{ margin: 0 }}>O sistema abre <b>{game.title_name || game.title_id}</b> pelo menu do console
-      e só libera o jogador depois que o próprio console confirmar o código {game.title_id}.</p>
+      e só libera o jogador depois que o próprio console confirmar o código {game.title_id}.
+      {game.detected_at && <> Reconhecido em {new Date(game.detected_at).toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' })}.</>}</p>
       : <p className="small muted" style={{ margin: 0 }}>Antes de reconhecer: <b>abra este jogo uma vez no console</b> (ele passa a ser o primeiro do menu)
-        e deixe o perfil com o status <b>Online</b> (Perfil &gt; Definir status online). O sistema abre os últimos jogos do menu, um por vez (até 5), até achar o que tem o nome deste jogo.</p>}
-    {job && <Alert kind={job.result.ok ? 'ok' : running ? 'info' : 'error'}>{job.result.message}</Alert>}
-    {found?.title_id && <div className="row">
-      <span>Abriu <b>{found.title_name || found.title_id}</b> ({found.title_id}). É este jogo?</span>
-      <button className="btn primary sm" disabled={busy} onClick={() => void saveTitle(found.title_id!, found.title_name ?? '')}>Sim, salvar</button>
-      <button className="btn sm" onClick={() => setJob(undefined)}>Não</button>
-    </div>}
-    {seen.length > 0 && <div className="stack small">
-      <span className="muted">Outros jogos abertos pelo sistema neste console{found ? '' : ' (nenhum com o nome cadastrado)'}:</span>
-      {seen.map((g) => <div className="row" key={g.title_id}>
-        <span>{g.title_name || g.title_id} ({g.title_id})</span>
-        <button className="btn sm" disabled={busy} onClick={() => void saveTitle(g.title_id, g.title_name)}>É este</button>
-      </div>)}
-    </div>}
+        e deixe o perfil com o status <b>Online</b> (Perfil &gt; Definir status online). O sistema abre os últimos jogos do menu, um por vez,
+        até achar o que tem o nome deste jogo, e tira um print para a equipe conferir.</p>}
+    {game.evidence_png && <details className="small"><summary>Print do reconhecimento</summary>
+      <img className="launch-evidence-thumb" src={`data:image/png;base64,${game.evidence_png}`} alt={`Print do reconhecimento de ${game.title}`} /></details>}
+    {job && !running && !job.result.ok && <Alert kind="error">{job.result.message}</Alert>}
     <div className="row">
-      <button className="btn primary sm" disabled={busy || running || !agentReady} onClick={() => void run(async () => {
-        setJob({ kind: 'detect', result: await post<AgentResult>(`${base}/launch-scripts/${game.game_id}/detect`) });
-      })}>{running && job?.kind === 'detect' ? 'Reconhecendo…' : game.title_id ? 'Reconhecer de novo' : 'Reconhecer jogo'}</button>
-      {(game.title_id || game.steps.length > 0) && <button className="btn sm" disabled={busy || running || !agentReady} onClick={() => void run(async () => {
-        setJob({ kind: 'test', result: await post<AgentResult>(`${base}/launch-scripts/${game.game_id}/test`, {}) });
-      })}>{running && job?.kind === 'test' ? 'Testando…' : 'Testar abertura'}</button>}
+      <button className="btn primary sm" disabled={busy || running || !agentReady} onClick={() => void start('detect')}>
+        {running && job?.kind === 'detect' ? 'Reconhecendo…' : game.title_id ? 'Reconhecer de novo' : 'Reconhecer jogo'}</button>
+      {(game.title_id || game.steps.length > 0) && <button className="btn sm" disabled={busy || running || !agentReady} onClick={() => void start('test')}>
+        {running && job?.kind === 'test' ? 'Testando…' : 'Testar abertura'}</button>}
+      {job && <button className="btn sm" onClick={() => setOpen(true)}>{running ? 'Ver andamento' : 'Ver resumo'}</button>}
       <button className="btn sm" onClick={onAdvanced}>Roteiro avançado</button>
     </div>
     <details className="small"><summary>Informar o código manualmente</summary>
       <div className="row" style={{ marginTop: 6 }}>
         <Field label="Código do jogo (CUSA/PPSA)"><input value={code} maxLength={12} placeholder="CUSA05904"
           onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))} /></Field>
-        <button className="btn sm" disabled={busy || !/^[A-Z]{4}\d{5}(_\d{2})?$/.test(code)} onClick={() => void saveTitle(code, game.title_name ?? '')}>Salvar código</button>
+        <button className="btn sm" disabled={busy || !/^[A-Z]{4}\d{5}(_\d{2})?$/.test(code)}
+          onClick={() => void saveTitle({ title_id: code, title_name: game.title_name ?? '' }, false)}>Salvar código</button>
       </div></details>
+    {job && open && <OpeningProgress kind={job.kind} title={game.title} result={job.result} log={job.log} started={job.started} busy={busy}
+      onConfirm={(g) => void saveTitle(g, true)} onClose={() => setOpen(false)} />}
   </div>;
 }
 

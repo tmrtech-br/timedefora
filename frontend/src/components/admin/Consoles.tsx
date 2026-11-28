@@ -4,6 +4,7 @@ import switchStyles from '@/app/configuracoes/settings.module.css';
 import { CONSOLE_TESTS as TESTS, ProgressModal } from '@/components/admin/ProgressModal';
 import { useEffect, useId, useState } from 'react';
 import { Eraser } from 'lucide-react';
+import LaunchScripts from '@/components/LaunchScripts';
 import { Alert, Field, FieldHelp, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { del, get, patch, post, put } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -343,6 +344,24 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
         </div>
       </ConsoleSection>
 
+      <ConsoleWindows c={c} group={group} onChange={onChange} />
+      <ConsoleSection group={group} title="Horário de funcionamento" summary={hours.length || openingStart ? 'Configurado' : 'Sem restrição'}>
+        <div className="grid2">
+          <DateFilter label="Data inicial" max={opening.endDate} value={opening.startDate} onChange={(startDate) => setOpening({ ...opening, startDate })} />
+          <Field label="Hora inicial"><input type="time" value={opening.startTime} onChange={(e) => setOpening({ ...opening, startTime: e.target.value })} /></Field>
+          <DateFilter label="Data final" min={opening.startDate} value={opening.endDate} onChange={(endDate) => setOpening({ ...opening, endDate })} />
+          <Field label="Hora final"><input type="time" value={opening.endTime} onChange={(e) => setOpening({ ...opening, endTime: e.target.value })} /></Field>
+        </div>
+        {!openingValid && <p className="small muted">Informe as duas datas e horas, com o fim após o início, ou deixe o período todo em branco.</p>}
+          {hours.map((h, i) => <div key={i} className="row">
+            <select className="btn sm" value={h.weekday} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, weekday: Number(e.target.value) } : x))}>{DAYS.map((d, k) => <option key={k} value={k}>{d}</option>)}</select>
+            <input className="btn sm" type="time" value={h.opens_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, opens_at: e.target.value } : x))} />
+            <input className="btn sm" type="time" value={h.closes_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, closes_at: e.target.value } : x))} />
+            <button className="btn sm danger" onClick={() => setHours(hours.filter((_, j) => j !== i))}>Remover</button></div>)}
+          <div className="row"><button className="btn sm" onClick={() => setHours([...hours, { weekday: 1, opens_at: '08:00', closes_at: '22:00' }])}>Adicionar faixa</button>
+            <button className="btn sm primary" disabled={busy || !openingValid} onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/hours`, { hours, starts_at: fromLocalInput(openingStart), ends_at: fromLocalInput(openingEnd) }); onChange(); }, 'Horários salvos.')}>Salvar horários</button></div>
+          <p className="small dim">As faixas semanais e o período informado limitam a disponibilidade dos vínculos.</p>
+        </ConsoleSection>
       <ConsoleSection group={group} title="Testes e diagnóstico" summary={c.connection.validated_at ? 'Validado' : 'Pendente'}>
         
         <div className="row">Vídeo {flag(c.connection.video_validated_at)} Áudio {flag(c.connection.audio_validated_at)} Controle {flag(c.connection.control_validated_at)} Heartbeat {flag(c.connection.heartbeat_validated_at)}
@@ -407,24 +426,11 @@ export function ConsoleEditor({ c, onChange, onDelete, onboarding = false, publi
         <p className="small muted">Jogo vinculado agora: {c.current_assignment ? `${c.current_assignment.title} até ${dateTime(c.current_assignment.ends_at)}` : 'nenhum'} · Sessão ativa: {c.active_session ? 'sim' : 'não'} · Pareamento: {c.pairing?.status || '—'}</p>
       </ConsoleSection>
 
-      <ConsoleWindows c={c} group={group} onChange={onChange} />
-      <ConsoleSection group={group} title="Horário de funcionamento" summary={hours.length || openingStart ? 'Configurado' : 'Sem restrição'}>
-        <div className="grid2">
-          <DateFilter label="Data inicial" max={opening.endDate} value={opening.startDate} onChange={(startDate) => setOpening({ ...opening, startDate })} />
-          <Field label="Hora inicial"><input type="time" value={opening.startTime} onChange={(e) => setOpening({ ...opening, startTime: e.target.value })} /></Field>
-          <DateFilter label="Data final" min={opening.startDate} value={opening.endDate} onChange={(endDate) => setOpening({ ...opening, endDate })} />
-          <Field label="Hora final"><input type="time" value={opening.endTime} onChange={(e) => setOpening({ ...opening, endTime: e.target.value })} /></Field>
-        </div>
-        {!openingValid && <p className="small muted">Informe as duas datas e horas, com o fim após o início, ou deixe o período todo em branco.</p>}
-          {hours.map((h, i) => <div key={i} className="row">
-            <select className="btn sm" value={h.weekday} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, weekday: Number(e.target.value) } : x))}>{DAYS.map((d, k) => <option key={k} value={k}>{d}</option>)}</select>
-            <input className="btn sm" type="time" value={h.opens_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, opens_at: e.target.value } : x))} />
-            <input className="btn sm" type="time" value={h.closes_at.slice(0, 5)} onChange={(e) => setHours(hours.map((x, j) => j === i ? { ...x, closes_at: e.target.value } : x))} />
-            <button className="btn sm danger" onClick={() => setHours(hours.filter((_, j) => j !== i))}>Remover</button></div>)}
-          <div className="row"><button className="btn sm" onClick={() => setHours([...hours, { weekday: 1, opens_at: '08:00', closes_at: '22:00' }])}>Adicionar faixa</button>
-            <button className="btn sm primary" disabled={busy || !openingValid} onClick={() => run(async () => { await put(`/admin/consoles/${c.id}/hours`, { hours, starts_at: fromLocalInput(openingStart), ends_at: fromLocalInput(openingEnd) }); onChange(); }, 'Horários salvos.')}>Salvar horários</button></div>
-          <p className="small dim">As faixas semanais e o período informado limitam a disponibilidade dos vínculos.</p>
-        </ConsoleSection>
+      <ConsoleSection group={group} title="Detectar jogo no console" summary="Código do jogo e print do reconhecimento">
+        <p className="small muted" style={{ margin: 0 }}>O sistema abre cada jogo vinculado pelo menu do console e só libera o jogador quando o próprio console
+          confirma o código do jogo (presença PSN ou rede local). O print do reconhecimento fica salvo para conferência.</p>
+        <LaunchScripts base={`/admin/consoles/${c.id}`} />
+      </ConsoleSection>
       {!onboarding && <ConsoleSection group={group} title="Manutenção / status" summary={c.status === 'maintenance' ? 'Em manutenção' : 'Sem manutenção'}>
           
           <Field label="Justificativa"><input maxLength={500} value={statusReason} onChange={(e) => setStatusReason(e.target.value)} /></Field>

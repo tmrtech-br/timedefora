@@ -25,6 +25,7 @@ class ScriptIn(BaseModel):
 
 
 class TitleIn(BaseModel):
+    from_detection: bool = False             # confirma o jogo achado pelo "Reconhecer": o print vem direto do agente
     title_id: str = Field(pattern=r'^[A-Za-z]{4}\d{5}(_\d{2})?$')
     title_name: str = Field(default='', max_length=120)
     settle_seconds: int | None = Field(default=None, ge=0, le=300)
@@ -63,7 +64,8 @@ def _list(console_id: UUID, owner_id: str | None):
     with tx() as conn:
         console = _console(conn, console_id, owner_id)
         rows = all_(conn, '''
-            select g.id game_id, g.title, g.slug, s.steps, s.images, s.updated_at, s.title_id, s.title_name, s.settle_seconds
+            select g.id game_id, g.title, g.slug, s.steps, s.images, s.updated_at, s.title_id, s.title_name, s.settle_seconds,
+                   s.evidence_png, s.detected_at
             from games g left join game_launch_scripts s on s.game_id=g.id and s.console_id=%s
             where g.deleted_at is null and (s.id is not null or exists (
                 select 1 from console_game_assignments a where a.console_id=%s and a.game_id=g.id
@@ -90,16 +92,35 @@ def _save(console_id: UUID, game_id: UUID, body: ScriptIn, p: Principal, owner_i
     return {'ok': True, 'steps': steps}
 
 
+def _evidence(console_id: UUID, code: str) -> str | None:
+    """Print do jogo tirado pelo agente no último "Reconhecer" (só se o código bater com o confirmado)."""
+    try:
+        with tx() as conn:
+            ref = console_ref(conn, console_id)
+        adapter = get_adapter(ref.method)
+        data = (adapter.script_status(ref) or {}).get('data') or {}
+    except Exception:
+        return None
+    shot = data.get('screenshot')
+    seen = {data.get('title_id')} | {s.get('title_id') for s in data.get('seen') or [] if isinstance(s, dict)}
+    return shot if isinstance(shot, str) and len(shot) < 700_000 and code in seen else None
+
+
 def _save_title(console_id: UUID, game_id: UUID, body: TitleIn, p: Principal, owner_id: str | None):
     code = body.title_id.upper().split('_')[0]
+    shot = _evidence(console_id, code) if body.from_detection else None
     with tx(p.user_id) as conn:
         _console(conn, console_id, owner_id)
         _linked_game(conn, console_id, game_id)
-        conn.execute('''insert into game_launch_scripts(console_id, game_id, title_id, title_name, settle_seconds, updated_by, updated_at)
-                        values (%s,%s,%s,%s,%s,%s,%s) on conflict (console_id, game_id) do update
+        n = timeutil.now()
+        conn.execute('''insert into game_launch_scripts(console_id, game_id, title_id, title_name, settle_seconds, updated_by, updated_at,
+                                                        evidence_png, detected_at, detected_by)
+                        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) on conflict (console_id, game_id) do update
                         set title_id=excluded.title_id, title_name=excluded.title_name, settle_seconds=excluded.settle_seconds,
-                            updated_by=excluded.updated_by, updated_at=excluded.updated_at''',
-                     (console_id, game_id, code, body.title_name.strip()[:120] or None, body.settle_seconds, p.user_id, timeutil.now()))
+                            updated_by=excluded.updated_by, updated_at=excluded.updated_at,
+                            evidence_png=excluded.evidence_png, detected_at=excluded.detected_at, detected_by=excluded.detected_by''',
+                     (console_id, game_id, code, body.title_name.strip()[:120] or None, body.settle_seconds, p.user_id, n,
+                      shot, n if body.from_detection else None, p.user_id if body.from_detection else None))
         audit_event(conn, 'console.game_title_saved', 'consoles', console_id, details={'game_id': str(game_id), 'title_id': code})
     return {'ok': True, 'title_id': code}
 
@@ -110,8 +131,9 @@ def _detect(console_id: UUID, game_id: UUID, owner_id: str | None):
         _console(conn, console_id, owner_id)
         game = _linked_game(conn, console_id, game_id)
         adapter, ref = _agent(conn, console_id, 'script_test')
+        payload = ls.game_payload(conn, console_id, game)
     return _call(adapter.script_test, ref, {'id': str(game['id']), 'slug': f"detect-{game['slug']}", 'title': game['title'],
-                                            'detect': True})
+                                            'detect': True, 'max_tiles': payload['max_tiles']})
 
 
 def _delete(console_id: UUID, game_id: UUID, p: Principal, owner_id: str | None):

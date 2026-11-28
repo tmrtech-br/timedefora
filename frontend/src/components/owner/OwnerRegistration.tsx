@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CalendarClock, Check, CircleDollarSign, ClipboardCheck, FlaskConical, Gamepad2, Headphones, LockKeyhole, Radio, UserRoundCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarClock, Check, CircleDollarSign, ClipboardCheck, FlaskConical, Gamepad2, Headphones, LockKeyhole, Radio, ScanSearch, UserRoundCheck } from 'lucide-react';
 import { ErrorBox, Field, Loading } from '@/components/ui';
 import { toast } from '@/components/Toaster';
 import { get, patch, post } from '@/lib/api';
@@ -9,6 +9,7 @@ import { useApi } from '@/lib/hooks';
 import { dateTime, money } from '@/lib/format';
 import { useAction } from '@/components/admin/common';
 import OwnerReviewPanel from '@/components/OwnerReviewPanel';
+import LaunchScripts from '@/components/LaunchScripts';
 import OwnerConnection from './OwnerConnection';
 import OwnerPsn from './OwnerPsn';
 import OwnerGames, { OwnerPrice, type GameWindow } from './OwnerGames';
@@ -25,8 +26,9 @@ const STEPS = [
   { title: 'Disponibilidade', icon: CalendarClock },
   { title: 'Revisão', icon: ClipboardCheck },
   { title: 'Teste', icon: FlaskConical },
+  { title: 'Detectar jogo', icon: ScanSearch },
 ];
-const [DATA, CONNECTION, USE, GAMES, PRICE, AVAILABILITY, REVIEW, TEST] = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+const [DATA, CONNECTION, USE, GAMES, PRICE, AVAILABILITY, REVIEW, TEST, DETECT] = [0, 1, 2, 3, 4, 5, 6, 7, 8] as const;
 export const EMPTY_CONSOLE = { code: '', name: '', platform_code: 'PS4', model: '', serial_number: '', location: '', description: '' };
 type ConsoleFields = typeof EMPTY_CONSOLE;
 type Review = { status: string; missing: string[]; setup: { connection: boolean; psn: boolean; games: boolean; price: boolean; availability: boolean } };
@@ -125,7 +127,7 @@ export default function OwnerRegistration({ initial, records, accounts, draft, d
   const max = Math.min(REVIEW, Math.max(visited, allowedFromServer));
   const defaultStep = review.data?.status === 'submitted' || review.data?.status === 'rejected' ? REVIEW
     : canTest && (draft?.step ?? REVIEW) >= REVIEW ? TEST : draft?.step ?? allowedFromServer;
-  const index = Math.min(step ?? startAt ?? defaultStep, canTest ? TEST : max);
+  const index = Math.min(step ?? startAt ?? defaultStep, canTest ? DETECT : max);
   const config = STEPS[index];
   const EditorIcon = config.icon;
   const pending = current?.review_status === 'submitted';
@@ -188,11 +190,11 @@ export default function OwnerRegistration({ initial, records, accounts, draft, d
     } finally { setAdvancing(false); }
   }
 
-  const shownSteps = canTest ? STEPS : STEPS.slice(0, TEST);
+  const shownSteps = canTest ? STEPS : STEPS.slice(0, TEST);   // Teste e Detectar jogo só depois da aprovação
   function navigation(vertical: boolean) {
     return <nav ref={vertical ? undefined : tabsRef} className={vertical ? 'owner-wizard-rail' : 'owner-wizard-tabs'} aria-label={vertical ? 'Etapas do cadastro' : 'Progresso do cadastro'}>
       {shownSteps.map(({ title }, position) => {
-        const allowed = position <= max || (position === TEST && canTest);
+        const allowed = position <= max || (position >= TEST && canTest);
         const done = (position < max || position === REVIEW && (pending || canTest)) && position !== index;
         return <button key={title} type="button" disabled={!allowed} aria-current={position === index ? 'step' : undefined}
           className={done ? 'done' : undefined} onClick={() => move(position)}>
@@ -230,15 +232,20 @@ export default function OwnerRegistration({ initial, records, accounts, draft, d
             {current && index === AVAILABILITY && <OwnerHours {...picker} wizard onReviewChange={refresh} onAdvance={advance} />}
             {current && index === REVIEW && <><RegistrationSummary console={current} accounts={accounts} />
               <OwnerReviewPanel consoleId={current.id} phase="review" onChange={refresh} /></>}
-            {current && index === TEST && canTest && <OwnerReviewPanel consoleId={current.id} phase="test" onChange={refresh}
-              onPublished={() => { toast('ok', 'Console publicado para aluguel.'); onClose(); }} />}
+            {current && index === TEST && canTest && <OwnerReviewPanel consoleId={current.id} phase="test" onChange={refresh} />}
+            {current && index === DETECT && canTest && <>
+              <p className="small muted" style={{ margin: 0 }}>Reconheça cada jogo vinculado: o sistema abre o jogo no seu console, confirma o código pelo próprio
+                console e tira um print que vai para a equipe conferir. A publicação só é liberada com todos os jogos reconhecidos.</p>
+              <LaunchScripts base={`/owner/consoles/${current.id}`} />
+              <OwnerReviewPanel consoleId={current.id} phase="publish" onChange={refresh}
+                onPublished={() => { toast('ok', 'Console publicado para aluguel.'); onClose(); }} /></>}
           </>}
           <footer className="spread owner-wizard-footer">
             <button type="button" className="btn" onClick={() => index > 0 ? move(index - 1) : onClose()}><ArrowLeft size={16} aria-hidden /> Voltar</button>
             <div className="row">
               <button type="button" className="btn" onClick={saveDraft}>Salvar rascunho</button>
               {(index === USE || index === GAMES || index === PRICE) && <button type="button" className="btn primary" disabled={advancing} onClick={() => void validateAndAdvance()}>Avançar <ArrowRight size={16} aria-hidden /></button>}
-              {((index === CONNECTION || index === AVAILABILITY) && pending && max > index || index === REVIEW && canTest) &&
+              {((index === CONNECTION || index === AVAILABILITY) && pending && max > index || (index === REVIEW || index === TEST) && canTest) &&
                 <button type="button" className="btn primary" onClick={() => move(index + 1)}>Avançar <ArrowRight size={16} aria-hidden /></button>}
             </div>
           </footer>

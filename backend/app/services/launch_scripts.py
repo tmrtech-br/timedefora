@@ -106,7 +106,9 @@ def for_console(conn, console_id, game_id) -> dict | None:
 def game_payload(conn, console_id, game: dict) -> dict:
     """Jogo como o agente espera. Com o código do jogo reconhecido, o agente usa o fluxo padrão (menu + confirmação
     pelo console); sem ele, o roteiro do painel ou do config.json do agente."""
-    out = {'id': str(game.get('id') or ''), 'slug': game.get('slug'), 'title': game.get('title')}
+    from .settings_store import get_settings
+    out = {'id': str(game.get('id') or ''), 'slug': game.get('slug'), 'title': game.get('title'),
+           'max_tiles': int(get_settings(conn).get('game_detect_max_tiles', 5) or 5)}
     row = _row(conn, console_id, game.get('id')) if game.get('id') else None
     if row and row['title_id']:
         out['title_id'] = row['title_id']

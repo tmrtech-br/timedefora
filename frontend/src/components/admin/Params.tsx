@@ -34,6 +34,7 @@ const POWER: { key: string; title: string; desc: string }[] = [
 
 const NUMBERS: { key: string; title: string; unit: string; min: number; max: number }[] = [
   { key: 'prep_lead_minutes', title: 'Antecedência da preparação do console (com "Preparar antes do início" ligado)', unit: 'min', min: 1, max: 60 },
+  { key: 'game_detect_max_tiles', title: 'Abrir o jogo pelo menu do console: quantos ícones (últimos jogos usados) percorrer até achar o jogo', unit: 'ícones', min: 1, max: 15 },
   { key: 'booking_rate_cents_per_minute', title: 'Preço por minuto dos consoles da plataforma (0 mantém os pacotes)', unit: 'centavos', min: 0, max: 49000 },
   { key: 'hold_minutes', title: 'Tempo para pagar a reserva', unit: 'min', min: 1, max: 60 },
   { key: 'setup_minutes', title: 'Intervalo de preparação entre jogadores', unit: 'min', min: 0, max: 30 },

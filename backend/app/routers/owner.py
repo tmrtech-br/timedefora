@@ -580,6 +580,13 @@ def owner_publish(console_id: UUID, p: Principal = Depends(enrolled_owner)):
                    (console_id, timeutil.now())):
                 raise conflict('assignment_pending_review', 'A equipe precisa aprovar o período do jogo antes da publicação.')
             raise conflict('not_approved', 'Aguarde a aprovação das alterações antes de publicar o console.')
+        missing = all_(conn, '''select distinct g.title from console_game_assignments a join games g on g.id=a.game_id
+                                left join game_launch_scripts s on s.console_id=a.console_id and s.game_id=a.game_id
+                                where a.console_id=%s and a.status in ('active','pending_review') and a.ends_at>%s
+                                  and g.deleted_at is null and s.title_id is null order by g.title''', (console_id, timeutil.now()))
+        if missing:
+            raise conflict('game_not_detected', 'Detecte o jogo no console antes de publicar (aba Detectar jogo): '
+                           + ', '.join(m['title'] for m in missing) + '.')
     return admin._publish_console(console_id)
 
 

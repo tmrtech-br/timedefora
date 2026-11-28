@@ -32,7 +32,7 @@ def names_match(console_name: str, wanted: str) -> bool:
     return bool(console_name and wanted) and (contains_text(console_name, wanted) or contains_text(wanted, console_name))
 
 
-HOLD, GAP = 0.3, 1.0     # pela PSN (internet) toques curtos e seguidos se perdem: segura 0,3 s e espera 1 s entre eles
+HOLD, GAP = 0.2, 0.6     # pela PSN (internet) toques curtos demais se perdem; o "soltar" é reenviado (links.DirectPad.press)
 
 
 _trace: Callable[[str], None] = lambda label: None
@@ -133,11 +133,11 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
         steps = tile                                        # a partir de "Novidades"
         if path != 'perfil+menu' or tile > first or retried:
             for _ in range(6):                              # vai ao início da fila ("Store")
-                _tap(pad, 'dpad_left', sleep, 0.8)
+                _tap(pad, 'dpad_left', sleep, 0.45)
             steps = tile + 1                                # Store → Novidades → jogos
         for _ in range(steps):
             _tap(pad, 'dpad_right', sleep)
-        _tap(pad, 'cross', sleep, 2.5)
+        _tap(pad, 'cross', sleep, 2.0)
         if current:
             _tap(pad, 'cross', sleep)                       # "Fechar o aplicativo atual?" → OK
         progress('aguardando o console abrir o jogo')

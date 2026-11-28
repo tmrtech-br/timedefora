@@ -2416,6 +2416,8 @@ def put_setting(key: str, body: SettingIn, p: Principal = Depends(ADMIN)):
             raise unprocessable('validation_error', 'Provedor de repasse desconhecido: ' + ', '.join(PROVIDERS))
     if key == 'join_bonus_seconds' and not 0 <= body.value <= 300:
         raise unprocessable('validation_error', 'Tempo extra do jogador: use de 0 a 300 segundos.')
+    if key == 'game_detect_max_tiles' and not 1 <= body.value <= 15:
+        raise unprocessable('validation_error', 'Ícones percorridos para achar o jogo: use de 1 a 15.')
     if key == 'prep_lead_minutes' and not 1 <= body.value <= 60:
         raise unprocessable('validation_error', 'Antecedência da preparação: use de 1 a 60 minutos.')
     if key == 'player_video_max_kbps' and not 1000 <= body.value <= 15000:

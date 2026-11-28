@@ -40,6 +40,7 @@ DEFAULTS = {
     'keep_awake_for_next_enabled': True,      # não hibernar se houver reserva começando em breve (keep_awake_minutes do console)
     'prewake_enabled': True,                  # preparar (acordar + abrir o jogo) antes do início
     'prep_lead_minutes': 5,                   # quantos minutos antes do início a preparação começa
+    'game_detect_max_tiles': 5,               # abrir o jogo pelo menu: quantos ícones (últimos jogos usados) percorrer no máximo
     'wake_on_reservation_enabled': True,      # acordar o console já ao reservar (antes do pagamento), se a sessão for em breve
 }
 
