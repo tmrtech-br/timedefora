@@ -5,6 +5,8 @@ Formato dos passos (o mesmo do config.json do agente), um texto por passo:
 - "wait_text:SEGUNDOS:TEXTO", "wait_image:SEGUNDOS:IMAGEM"          — espera aparecer na tela (senão falha)
 - "press_until_text:BOTÃO:MÁX:TEXTO", "press_until_image:BOTÃO:MÁX:IMAGEM" — aperta até aparecer
 - "press_if_text:BOTÃO:TEXTO", "press_if_image:BOTÃO:IMAGEM"        — aperta só se estiver na tela
+- "boot:CUSA00000"                                                 — abre o jogo pelo código (PS4 na rede local)
+- "wait_app:SEGUNDOS:CUSA00000"                                    — o console confirma o jogo aberto (rede local)
 """
 from __future__ import annotations
 
@@ -27,6 +29,8 @@ PATTERNS = [
     re.compile(rf'^wait_(text|image):{_NUM}:(.+)$'),
     re.compile(rf'^press_until_(text|image):{_BTN}:(\d+):(.+)$'),
     re.compile(rf'^press_if_(text|image):{_BTN}:(.+)$'),
+    re.compile(r'^boot:([A-Z]{4}\d{5})$'),
+    re.compile(rf'^wait_app:{_NUM}:(.+)$'),
 ]
 
 
@@ -66,6 +70,8 @@ def validate(steps: list, images: dict) -> tuple[list[str], dict]:
             normalized = head.lower() + sep + button.lower() + sep2 + tail
         if '_image' in head.lower():
             normalized = normalized.lower()                  # nomes de imagem são sempre minúsculos
+        if head.lower() == 'boot':
+            normalized = 'boot:' + rest.strip().upper()      # código do jogo: CUSA05904
         match = next((m for p in PATTERNS if (m := p.match(normalized))), None)
         if not match:
             _step_error(i, text, 'formato não reconhecido.')

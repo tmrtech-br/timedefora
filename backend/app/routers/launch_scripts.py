@@ -24,6 +24,10 @@ class ScriptIn(BaseModel):
     images: dict[str, dict] = Field(default_factory=dict)
 
 
+class PinIn(BaseModel):
+    pin: str = Field(pattern=r'^\d{8}$')     # PIN de 8 dígitos da tela "Adicionar dispositivo" do PS4
+
+
 class TestIn(BaseModel):
     steps: list[str] | None = None            # roteiro ainda não salvo (rascunho na tela); senão o salvo
     images: dict[str, dict] | None = None
@@ -138,6 +142,14 @@ def _status(console_id: UUID, owner_id: str | None):
     return _call(adapter.script_status, ref)
 
 
+def _pair(console_id: UUID, body: PinIn, p: Principal, owner_id: str | None):
+    with tx(p.user_id) as conn:
+        _console(conn, console_id, owner_id)
+        adapter, ref = _agent(conn, console_id, 'secondscreen_pair')
+        audit_event(conn, 'console.secondscreen_pair', 'consoles', console_id)
+    return _call(adapter.secondscreen_pair, ref, body.pin)
+
+
 def _screen(console_id: UUID, owner_id: str | None):
     with tx() as conn:
         _console(conn, console_id, owner_id)
@@ -171,6 +183,11 @@ def owner_status(console_id: UUID, p: Principal = Depends(enrolled_owner)):
     return _status(console_id, p.user_id)
 
 
+@owner_router.post('/secondscreen/pair')
+def owner_pair(console_id: UUID, body: PinIn, p: Principal = Depends(enrolled_owner)):
+    return _pair(console_id, body, p, p.user_id)
+
+
 @owner_router.post('/screen')
 def owner_screen(console_id: UUID, p: Principal = Depends(enrolled_owner)):
     return _screen(console_id, p.user_id)
@@ -200,6 +217,11 @@ def admin_test(console_id: UUID, game_id: UUID, body: TestIn, p: Principal = Dep
 @admin_router.get('/launch-test')
 def admin_status(console_id: UUID, p: Principal = Depends(OPERATOR)):
     return _status(console_id, None)
+
+
+@admin_router.post('/secondscreen/pair')
+def admin_pair(console_id: UUID, body: PinIn, p: Principal = Depends(OPERATOR)):
+    return _pair(console_id, body, p, None)
 
 
 @admin_router.post('/screen')

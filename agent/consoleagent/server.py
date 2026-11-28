@@ -194,6 +194,12 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             return _job(r.job) if r.job else _result(False, 'Nenhum teste de roteiro em andamento.', 'stopped')
         if action == 'screen/snapshot':
             return _snapshot(t, r)
+        if action == 'secondscreen/pair':
+            from .runtime import Fail, System
+            try:
+                return _result(True, System(t, discover).pair(str(body.get('pin') or '')), 'idle')
+            except Fail as e:
+                return _result(False, str(e), 'error')
         if action == 'stream/start':
             ok, msg = r.start_session(sid)
             if not ok:
@@ -288,8 +294,16 @@ def _snapshot(t, r: ConsoleRuntime) -> dict:
         lines, ocr = [], str(e)
     except Exception as e:  # OCR é auxiliar: a captura vale mesmo sem ele
         lines, ocr = [], f'Falha na leitura de texto: {e}'
+    running = None
+    try:                                             # jogo aberto segundo o próprio console (só na rede local)
+        from .runtime import System
+        code, name = System(t).running_app()
+        running = {'title_id': code, 'name': name}
+    except Exception:
+        pass
     return _result(True, f.message, 'streaming', {'png': png_base64(f.image), 'width': f.image.width,
-                                                  'height': f.image.height, 'text': lines, 'ocr_error': ocr})
+                                                  'height': f.image.height, 'text': lines, 'ocr_error': ocr,
+                                                  'running_app': running})
 
 
 def _test_video_audio(r: ConsoleRuntime) -> dict:

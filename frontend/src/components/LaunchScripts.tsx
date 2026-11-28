@@ -21,9 +21,11 @@ const BUTTON_LABEL: Record<string, string> = {
 const BUTTONS = Object.keys(BUTTON_LABEL);
 
 /** Um passo do roteiro em campos editáveis (o servidor e o agente usam o texto "tipo:valor:…"). */
-type Kind = 'press' | 'wait' | 'hold' | 'wait_text' | 'wait_image' | 'press_until_text' | 'press_until_image' | 'press_if_text' | 'press_if_image';
+type Kind = 'boot' | 'wait_app' | 'press' | 'wait' | 'hold' | 'wait_text' | 'wait_image' | 'press_until_text' | 'press_until_image' | 'press_if_text' | 'press_if_image';
 type Step = { kind: Kind; button: string; seconds: string; max: string; target: string };
 const KINDS: { kind: Kind; label: string; help: string }[] = [
+  { kind: 'boot', label: 'Abrir jogo pelo código (PS4, rede local)', help: 'O próprio PS4 abre o jogo pelo código (ex.: CUSA05904), sem navegar no menu. Exige o agente registrado com PIN.' },
+  { kind: 'wait_app', label: 'Confirmar jogo aberto pelo sistema (rede local)', help: 'O console informa o jogo aberto: código CUSA ou nome. Mais confiável que imagem; se não confirmar no prazo, a preparação falha.' },
   { kind: 'press', label: 'Apertar botão', help: 'Um toque no botão.' },
   { kind: 'wait', label: 'Esperar', help: 'Pausa fixa, em segundos.' },
   { kind: 'hold', label: 'Segurar botão', help: 'Mantém o botão apertado pelos segundos informados.' },
@@ -45,6 +47,8 @@ function parse(raw: string): Step {
   const parts = raw.split(':');
   const base: Step = { kind: 'press', button: 'cross', seconds: '2', max: '15', target: '' };
   const head = parts[0];
+  if (head === 'boot') return { ...base, kind: 'boot', target: parts.slice(1).join(':') };
+  if (head === 'wait_app') return { ...base, kind: 'wait_app', seconds: parts[1] ?? '90', target: parts.slice(2).join(':') };
   if (head === 'wait') return { ...base, kind: 'wait', seconds: parts[1] ?? '2' };
   if (head === 'hold') return { ...base, kind: 'hold', button: parts[1] ?? 'cross', seconds: parts[2] ?? '1' };
   if (head === 'wait_text' || head === 'wait_image') return { ...base, kind: head, seconds: parts[1] ?? '30', target: parts.slice(2).join(':') };
@@ -56,6 +60,8 @@ function parse(raw: string): Step {
 
 function format(s: Step): string {
   switch (s.kind) {
+    case 'boot': return `boot:${s.target.trim().toUpperCase()}`;
+    case 'wait_app': return `wait_app:${s.seconds}:${s.target}`;
     case 'press': return s.button;
     case 'wait': return `wait:${s.seconds}`;
     case 'hold': return `hold:${s.button}:${s.seconds}`;
@@ -71,8 +77,16 @@ function ps4Template(): string[] {
     'press_until_image:dpad_right:20:icone-jogo', 'cross', 'wait_image:90:jogo-aberto'];
 }
 
+/** Modelo PS4 na rede local: o próprio console abre e confirma o jogo (sem imagem nem OCR). */
+function ps4SystemTemplate(code: string): string[] {
+  return ['ps', 'wait:3', `boot:${code}`, `wait_app:90:${code}`, 'wait:15'];
+}
+
+type Shot = { png: string; width: number; height: number; text: string[]; ocr_error: string | null;
+  running_app?: { title_id: string; name: string } | null };
+
 function SnapshotCropper({ shot, onCancel, onSave, onUseText }: {
-  shot: { png: string; width: number; height: number; text: string[]; ocr_error: string | null };
+  shot: Shot;
   onCancel: () => void; onSave: (name: string, image: RefImage) => void; onUseText: (text: string) => void;
 }) {
   const img = useRef<HTMLImageElement>(null);
@@ -112,6 +126,9 @@ function SnapshotCropper({ shot, onCancel, onSave, onUseText }: {
         onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'))} /></Field>
       <button className="btn primary" disabled={!box || box.w < 6 || box.h < 6 || !/^[a-z0-9][a-z0-9_-]*$/.test(name)} onClick={crop}>Salvar recorte</button>
     </div>
+    {shot.running_app !== undefined && <div className="small">
+      <strong>Jogo aberto segundo o console: </strong>{shot.running_app === null ? 'não informado (console fora da rede local do agente)'
+        : shot.running_app.title_id ? `${shot.running_app.name} (${shot.running_app.title_id})` : 'nenhum (tela inicial)'}</div>}
     <div className="stack small">
       <strong>Textos lidos na tela (OCR, apoio)</strong>
       {shot.ocr_error ? <Alert kind="warn">{shot.ocr_error}</Alert> : shot.text.length === 0 ? <span className="muted">Nenhum texto reconhecido.</span>
@@ -127,7 +144,9 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
   const [steps, setSteps] = useState<Step[]>(() => game.steps.map(parse));
   const [images, setImages] = useState<Record<string, RefImage>>(game.images);
   const [raw, setRaw] = useState<string | null>(null);
-  const [shot, setShot] = useState<{ png: string; width: number; height: number; text: string[]; ocr_error: string | null }>();
+  const [shot, setShot] = useState<Shot>();
+  const [code, setCode] = useState(() => game.steps.find((x) => x.startsWith('boot:'))?.slice(5) ?? '');
+  const [pin, setPin] = useState('');
   const [test, setTest] = useState<AgentResult>();
   const { busy, msg, run } = useAction();
   const list = raw !== null ? raw.split('\n').map((l) => l.trim()).filter(Boolean) : steps.map(format);
@@ -155,8 +174,29 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
     <p className="small muted" style={{ margin: 0 }}>O agente executa os passos em ordem ao preparar o console para cada reserva.
       Use os passos de <b>elemento</b> (recortes da tela do console) para conferir onde está: se o jogo não for confirmado, a preparação
       falha e a equipe é avisada, em vez de liberar o jogador no menu do console.</p>
+    <div className="card stack launch-system">
+      <strong>Pelo sistema do console (recomendado no PS4 na mesma rede do agente)</strong>
+      <p className="small muted" style={{ margin: 0 }}>O PS4 abre o jogo pelo código e confirma qual jogo está aberto, sem depender da imagem.
+        Para descobrir o código, abra o jogo no console e clique em “Capturar tela do console”: ele aparece aqui.</p>
+      <div className="row">
+        <Field label="Código do jogo (CUSA…)"><input value={code} maxLength={9} placeholder="CUSA05904"
+          onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} /></Field>
+        <button className="btn sm" disabled={!/^[A-Z]{4}\d{5}$/.test(code)} onClick={() => { setRaw(null); setSteps(ps4SystemTemplate(code).map(parse)); }}>
+          <Wand2 size={15} aria-hidden /> Usar modelo pelo código</button>
+      </div>
+      <div className="row">
+        <Field label="PIN do PS4 (registro único)" hint="No PS4: Configurações > Configurações de conexão do aplicativo móvel > Adicionar dispositivo.">
+          <input value={pin} inputMode="numeric" maxLength={8} placeholder="8 dígitos" onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} /></Field>
+        <button className="btn sm" disabled={busy || pin.length !== 8} onClick={() => void run(async () => {
+          const r = await post<AgentResult>(`${base}/secondscreen/pair`, { pin });
+          if (!r.ok) throw new Error(r.message);
+          setPin('');
+          return r;
+        }, 'Agente registrado no PS4.')}>Registrar agente no PS4</button>
+      </div>
+    </div>
     <div className="row">
-      <button className="btn sm" onClick={() => { setRaw(null); setSteps(ps4Template().map(parse)); }}><Wand2 size={15} aria-hidden /> Usar modelo PS4</button>
+      <button className="btn sm" onClick={() => { setRaw(null); setSteps(ps4Template().map(parse)); }}><Wand2 size={15} aria-hidden /> Usar modelo por elementos</button>
       <button className="btn sm" onClick={() => raw === null ? setRaw(steps.map(format).join('\n')) : applyRaw()}>
         {raw === null ? 'Editar como texto' : 'Voltar aos campos'}</button>
     </div>
@@ -170,7 +210,7 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
     </Field> : <ol className="launch-steps">
       {steps.map((s, i) => {
         const info = KINDS.find((k) => k.kind === s.kind)!;
-        const usesButton = !['wait', 'wait_text', 'wait_image'].includes(s.kind);
+        const usesButton = !['wait', 'wait_text', 'wait_image', 'boot', 'wait_app'].includes(s.kind);
         const isImage = s.kind.endsWith('_image');
         const isText = s.kind.endsWith('_text');
         return <li key={i} className="launch-step">
@@ -178,9 +218,13 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
             <select aria-label={`Tipo do passo ${i + 1}`} value={s.kind} onChange={(e) => update(i, { kind: e.target.value as Kind })}>
               {KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
             </select>
+            {s.kind === 'boot' && <input aria-label="Código do jogo" placeholder="CUSA05904" value={s.target} maxLength={9}
+              onChange={(e) => update(i, { target: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') })} />}
+            {s.kind === 'wait_app' && <input aria-label="Código ou nome do jogo" placeholder="CUSA05904 ou nome do jogo" value={s.target} maxLength={80}
+              onChange={(e) => update(i, { target: e.target.value })} />}
             {usesButton && <select aria-label="Botão" value={s.button} onChange={(e) => update(i, { button: e.target.value })}>
               {knownButtons.map((b) => <option key={b} value={b}>{BUTTON_LABEL[b] ?? b}</option>)}</select>}
-            {['wait', 'hold', 'wait_text', 'wait_image'].includes(s.kind) && <label className="launch-inline">
+            {['wait', 'hold', 'wait_text', 'wait_image', 'wait_app'].includes(s.kind) && <label className="launch-inline">
               <input type="number" min={0.5} max={180} step={0.5} value={s.seconds} onChange={(e) => update(i, { seconds: e.target.value })} /> s</label>}
             {s.kind.startsWith('press_until') && <label className="launch-inline">até
               <input type="number" min={1} max={60} value={s.max} onChange={(e) => update(i, { max: e.target.value })} /> toques</label>}
@@ -206,7 +250,9 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
         <button className="btn sm" disabled={busy} onClick={() => void run(async () => {
           const r = await post<AgentResult>(`${base}/screen`);
           if (!r.ok) throw new Error(r.message);
-          setShot(r.data as typeof shot & object);
+          setShot(r.data as Shot);
+          const running = (r.data as Shot).running_app;
+          if (running?.title_id && !code) setCode(running.title_id);
         })}><Camera size={15} aria-hidden /> Capturar tela do console</button></div>
       {Object.keys(images).length === 0 ? <p className="small muted" style={{ margin: 0 }}>Nenhuma. Abra o jogo no console, capture a tela e recorte um elemento do jogo para confirmar que ele abriu.</p>
         : <div className="launch-images">{Object.entries(images).map(([n, im]) => <figure key={n}>

@@ -33,7 +33,7 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
                 # qualidade pedida ao console (usada pelo Remote Play direto)
                 'resolution': s.get('resolution'), 'fps': s.get('fps'), 'codec': s.get('codec'),
                 'bitrate_kbps': s.get('bitrate_kbps'), 'psn_account_id': str(s.get('psn_account_id') or ''),
-                'psn_device_uid': s.get('psn_device_uid'), 'standby_after_session': s.get('standby_after_session', True),
+                'psn_device_uid': s.get('psn_device_uid'), 'local_host': ref.internal_host, 'standby_after_session': s.get('standby_after_session', True),
                 'keep_awake_minutes': s.get('keep_awake_minutes', 15)}
 
     def _call(self, ref: ConsoleRef, action: str, payload: dict | None = None, timeout: float | None = None) -> dict:
@@ -113,6 +113,9 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
 
     def script_status(self, ref):
         return self._call(ref, 'script/status', {'settings': ref.settings})
+
+    def secondscreen_pair(self, ref, pin):
+        return self._call(ref, 'secondscreen/pair', {'pin': pin, 'settings': ref.settings}, timeout=30.0)
 
     def screen_snapshot(self, ref):
         return self._call(ref, 'screen/snapshot', {'settings': ref.settings}, timeout=30.0)

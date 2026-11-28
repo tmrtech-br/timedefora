@@ -45,6 +45,7 @@ class Target:
     fps: int = 30
     bitrate_kbps: int = 0           # 0 = padrão do método (Remote Play pela PSN usa 6 Mbps)
     codec: str = 'h264'
+    local_host: str = ''            # IP do console na rede local (abrir/confirmar o jogo pelo sistema, mesmo na rota PSN)
 
     @property
     def direct(self) -> bool:
@@ -77,7 +78,8 @@ def target_from(cfg: AgentConfig, console_id: str, body: dict) -> Target:
                   games=dict(entry.get('games') or {}), psn_user=str(entry.get('psn_user') or ''),
                   psn_account_id=str(t.get('psn_account_id') or settings.get('psn_account_id') or ''),
                   mac=str(entry.get('mac') or ''), resolution=str(t.get('resolution') or settings.get('resolution') or '720p'),
-                  fps=fps, codec=str(t.get('codec') or settings.get('codec') or 'h264'), bitrate_kbps=max(0, bitrate))
+                  fps=fps, codec=str(t.get('codec') or settings.get('codec') or 'h264'), bitrate_kbps=max(0, bitrate),
+                  local_host=str(entry.get('host') or t.get('local_host') or (host if route in DIRECT_ROUTES else '') or '').strip())
 
 
 @dataclass
@@ -316,7 +318,7 @@ class ConsoleRuntime:
             except Exception as e:
                 raise Fail(f'Imagem de referência "{name}" inválida: {e}')
         pad = self.ensure_pad()
-        screen = Screen(self.link, refs)
+        screen = Screen(self.link, refs, System(t, self.d.discover))
 
         def progress(i: int, raw: str) -> None:
             j.step = f'abrindo "{title}" — passo {i} de {len(steps)}: {raw}'
@@ -395,11 +397,69 @@ class ConsoleRuntime:
         return ok, 'Console colocado em repouso.' if ok else 'O console não confirmou o repouso; conexão encerrada.'
 
 
+class System:
+    """O que o próprio PS4/PS5 informa na rede local: jogo aberto (descoberta UDP) e abrir jogo pelo código (Second Screen)."""
+
+    def __init__(self, t: Target, discover: Callable = discovery.discover):
+        self.t, self.discover = t, discover
+        self._host: str | None = None
+
+    def host(self) -> tuple[str, str]:
+        """(IP, ID do console) na rede local: o IP cadastrado ou, sem ele, o console com o mesmo nome na rede."""
+        if self._host:
+            return self._host, self._id
+        names = {n.lower() for n in (self.t.nickname, self.t.identifier) if n}
+        if self.t.local_host:
+            found = self.discover(self.t.local_host, self.t.platform, 3.0)
+        else:
+            found = [c for c in self.discover(None, self.t.platform, 3.0) if (c.host_name or '').lower() in names]
+        if not found:
+            raise Fail('O console não respondeu na rede local deste agente. Abrir/confirmar o jogo pelo sistema só funciona '
+                       'com o agente na mesma rede do console (informe o IP local do console no cadastro).')
+        self._host, self._id = found[0].address, found[0].host_id or found[0].address
+        return self._host, self._id
+
+    def running_app(self) -> tuple[str, str]:
+        """(código, nome) do jogo aberto agora; vazios na tela inicial."""
+        host, _ = self.host()
+        found = self.discover(host, self.t.platform, 3.0)
+        raw = found[0].raw if found else {}
+        return raw.get('running-app-titleid', ''), raw.get('running-app-name', '')
+
+    def is_running(self, wanted: str) -> bool:
+        from .vision import contains_text
+        code, name = self.running_app()
+        w = wanted.strip()
+        return bool(code) and (code.upper() == w.upper() or contains_text(name, w))
+
+    def boot(self, title_id: str) -> None:
+        if discovery.family(self.t.platform) != 'PS4':
+            raise Fail('Abrir o jogo pelo código está disponível só para PS4; no PS5 use os passos de navegação.')
+        from .secondscreen import SecondScreenError, Session, credential_for
+        host, console_id = self.host()
+        try:
+            with Session(host, credential_for(console_id)) as s:
+                s.boot(title_id)
+        except SecondScreenError as e:
+            raise Fail(str(e))
+
+    def pair(self, pin: str) -> str:
+        if discovery.family(self.t.platform) != 'PS4':
+            raise Fail('O registro de aplicativo (PIN) é usado só no PS4.')
+        from .secondscreen import SecondScreenError, Session, credential_for
+        host, console_id = self.host()
+        try:
+            Session(host, credential_for(console_id), pin=pin.strip()).open().close()
+        except SecondScreenError as e:
+            raise Fail(str(e))
+        return f'Agente registrado no console ({host}). Os passos "abrir pelo código" já podem ser usados.'
+
+
 class Screen:
     """O que está na tela agora: texto (OCR) e imagens de referência. Usado pelos passos visuais do roteiro."""
 
-    def __init__(self, link, refs: dict | None = None):
-        self.link, self.refs = link, refs or {}
+    def __init__(self, link, refs: dict | None = None, system: System | None = None):
+        self.link, self.refs, self.system = link, refs or {}, system
         self.confirmed = False                  # algum passo de espera/confirmação visual passou
         self.last_text = ''
 
@@ -446,6 +506,8 @@ def run_pad_steps(pad, steps: list, sleep=time.sleep, screen: Screen | None = No
     - "wait_text:SEGUNDOS:TEXTO" / "wait_image:SEGUNDOS:NOME" — espera aparecer na tela (senão falha)
     - "press_until_text:BOTÃO:MÁX:TEXTO" / "press_until_image:BOTÃO:MÁX:NOME" — aperta até aparecer (navegar até o jogo)
     - "press_if_text:BOTÃO:TEXTO" / "press_if_image:BOTÃO:NOME" — aperta só se estiver na tela (ex.: "Seja bem-vindo")
+    - "boot:CUSA00000" — abre o jogo pelo código (PS4 na rede local; agente registrado com PIN)
+    - "wait_app:SEGUNDOS:CUSA00000" — o próprio console confirma que o jogo (código ou nome) está aberto
     """
     for i, raw in enumerate(steps, 1):
         text = str(raw).strip()
@@ -478,6 +540,24 @@ def run_pad_steps(pad, steps: list, sleep=time.sleep, screen: Screen | None = No
                 pad.press(button.lower())
                 presses += 1
                 sleep(1.0)
+            sc.confirmed = True
+        elif s.startswith('boot:'):
+            sc = _visual(screen, text)
+            if sc.system is None:
+                raise Fail('Abrir pelo código exige o console na rede local do agente.')
+            sc.system.boot(text.split(':', 1)[1])
+        elif s.startswith('wait_app:'):
+            _, secs, target = text.split(':', 2)
+            sc = _visual(screen, text)
+            if sc.system is None:
+                raise Fail('Confirmar pelo sistema exige o console na rede local do agente.')
+            deadline = time.monotonic() + float(secs)
+            while not sc.system.is_running(target):
+                if time.monotonic() >= deadline:
+                    code, name = sc.system.running_app()
+                    now = f'{name} ({code})' if code else 'nenhum jogo (tela inicial)'
+                    raise Fail(f'O console não confirmou "{target}" aberto em {secs} s. Aberto agora: {now}.')
+                sleep(2.0)
             sc.confirmed = True
         elif s.startswith(('press_if_text:', 'press_if_image:')):
             kind = 'text' if s.startswith('press_if_text:') else 'image'

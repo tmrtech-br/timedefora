@@ -73,3 +73,26 @@ def test_pula_o_toque_quando_a_tela_nao_esta_presente():
     run_pad_steps(pad, ['press_if_text:cross:Seja bem-vindo', 'ps'], sleep=lambda s: None,
                   screen=FakeScreen(pad, ['Início']))
     assert pad.pressed == ['ps']
+
+
+class FakeInfo:
+    def __init__(self, raw):
+        self.address, self.host_id, self.host_name, self.raw = '192.168.0.9', 'ABC123', 'PS4-118', raw
+
+
+def test_sistema_confirma_o_jogo_aberto_pelo_codigo_ou_nome():
+    from consoleagent.runtime import System, Target
+    states = [{}, {}, {'running-app-titleid': 'CUSA05904', 'running-app-name': 'Far Cry® 5'}]
+    calls = []
+
+    def discover(host, platform, timeout):
+        calls.append(host)
+        return [FakeInfo(states[min(len(calls) - 1, len(states) - 1)])]
+
+    t = Target(console_id='c1', route='internet_psn', host=None, platform='PS4', identifier='PS4-118', nickname='PS4-118')
+    pad, screen = Pad(), Screen(link=None, system=System(t, discover))
+    run_pad_steps(pad, ['wait_app:30:CUSA05904'], sleep=lambda s: None, screen=screen)
+    assert screen.confirmed and calls[0] is None          # sem IP cadastrado: achou pelo nome na rede local
+    assert System(t, discover).is_running('Far Cry 5')
+    with pytest.raises(Fail, match='Aberto agora: Far Cry® 5'):
+        run_pad_steps(pad, ['wait_app:0:CUSA00001'], sleep=lambda s: None, screen=Screen(link=None, system=System(t, discover)))
