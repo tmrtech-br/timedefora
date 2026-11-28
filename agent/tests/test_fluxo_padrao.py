@@ -139,3 +139,25 @@ def test_toque_perdido_pela_rede_refaz_a_navegacao():
     ps4.drop = ['cross']                                  # o primeiro ✕ no ícone se perde
     r = run(ps4)
     assert r.title_id == 'CUSA05904' and r.tile == 1
+
+
+def test_reconhecer_pelo_nome_fecha_o_errado_e_tenta_o_proximo():
+    ps4 = FakePS4('home', recent=('CUSA00411', 'CUSA05904'))
+    r = run(ps4, expected='', detect=True, expected_name='jogo cusa05904')
+    assert r.title_id == 'CUSA05904' and r.tile == 2
+    assert [s['title_id'] for s in r.seen] == ['CUSA00411', 'CUSA05904']
+
+
+def test_reconhecer_sem_achar_o_nome_lista_os_jogos_abertos():
+    ps4 = FakePS4('home', recent=('CUSA00411', 'CUSA00001'))
+    try:
+        run(ps4, expected='', detect=True, expected_name='Far Cry 5', max_tiles=2)
+        raise AssertionError('deveria falhar')
+    except FlowError as e:
+        assert [s['title_id'] for s in e.seen] == ['CUSA00411', 'CUSA00001'] and 'Jogos abertos' in str(e)
+
+
+def test_nomes_do_console_e_do_cadastro():
+    from consoleagent.standard_flow import names_match
+    assert names_match('Far Cry® 5', 'Far Cry 5') and names_match('FIFA 16', 'Fifa 16')
+    assert not names_match('Far Cry® 4', 'Far Cry 5') and not names_match('', 'x')

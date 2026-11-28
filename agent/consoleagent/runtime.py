@@ -369,10 +369,12 @@ class ConsoleRuntime:
             settle = float(game.get('settle_seconds') or self.cfg.game_settle_seconds)
             r = open_game(self.ensure_pad(), state, lambda: self.link.frame().ok, str(game.get('title_id') or ''),
                           woke=self.woke, detect=bool(game.get('detect')), sleep=self.d.sleep, progress=progress,
-                          settle=0 if game.get('detect') else settle, trace=trace)
+                          settle=0 if game.get('detect') else settle, trace=trace,
+                          expected_name=str(game.get('title') or '') if game.get('detect') else '')
         except FlowError as e:
+            j.data = {'seen': e.seen}
             raise Fail(str(e))
-        j.data = {'title_id': r.title_id, 'title_name': r.title_name, 'path': r.path, 'tile': r.tile}
+        j.data = {'title_id': r.title_id, 'title_name': r.title_name, 'path': r.path, 'tile': r.tile, 'seen': r.seen or []}
         if not game.get('detect'):
             self.ready_game = game.get('slug')
         return f'{r.message} Caminho: {r.path}. Jogo confirmado pelo console.'

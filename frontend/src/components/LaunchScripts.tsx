@@ -267,6 +267,8 @@ function GameOpening({ base, game, agentReady, onSaved, onAdvanced }: {
     return () => window.clearInterval(timer);
   }, [running, base]);
   const found = job?.kind === 'detect' && job.result.ok ? job.result.data as { title_id?: string; title_name?: string } : null;
+  const seen = job?.kind === 'detect' && !running
+    ? ((job.result.data as { seen?: { title_id: string; title_name: string }[] }).seen ?? []).filter((g) => g.title_id !== found?.title_id) : [];
   const saveTitle = (titleId: string, titleName: string) => run(async () => {
     await put(`${base}/launch-scripts/${game.game_id}/title`, { title_id: titleId, title_name: titleName });
     setJob(undefined); await onSaved();
@@ -281,12 +283,19 @@ function GameOpening({ base, game, agentReady, onSaved, onAdvanced }: {
     {game.title_id ? <p className="small muted" style={{ margin: 0 }}>O sistema abre <b>{game.title_name || game.title_id}</b> pelo menu do console
       e só libera o jogador depois que o próprio console confirmar o código {game.title_id}.</p>
       : <p className="small muted" style={{ margin: 0 }}>Antes de reconhecer: <b>abra este jogo uma vez no console</b> (ele passa a ser o primeiro do menu)
-        e deixe o perfil com o status <b>Online</b> (Perfil &gt; Definir status online). O sistema abre o último jogo usado e mostra qual abriu.</p>}
+        e deixe o perfil com o status <b>Online</b> (Perfil &gt; Definir status online). O sistema abre os últimos jogos do menu, um por vez (até 5), até achar o que tem o nome deste jogo.</p>}
     {job && <Alert kind={job.result.ok ? 'ok' : running ? 'info' : 'error'}>{job.result.message}</Alert>}
     {found?.title_id && <div className="row">
       <span>Abriu <b>{found.title_name || found.title_id}</b> ({found.title_id}). É este jogo?</span>
       <button className="btn primary sm" disabled={busy} onClick={() => void saveTitle(found.title_id!, found.title_name ?? '')}>Sim, salvar</button>
       <button className="btn sm" onClick={() => setJob(undefined)}>Não</button>
+    </div>}
+    {seen.length > 0 && <div className="stack small">
+      <span className="muted">Outros jogos abertos pelo sistema neste console{found ? '' : ' (nenhum com o nome cadastrado)'}:</span>
+      {seen.map((g) => <div className="row" key={g.title_id}>
+        <span>{g.title_name || g.title_id} ({g.title_id})</span>
+        <button className="btn sm" disabled={busy} onClick={() => void saveTitle(g.title_id, g.title_name)}>É este</button>
+      </div>)}
     </div>}
     <div className="row">
       <button className="btn primary sm" disabled={busy || running || !agentReady} onClick={() => void run(async () => {

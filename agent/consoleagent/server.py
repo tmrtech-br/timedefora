@@ -273,7 +273,7 @@ def _job(j) -> dict:
     if j.state == 'ok':
         return _result(True, j.message, 'streaming', {'step': j.step, **(j.data or {})})
     if j.state == 'failed':
-        return _result(False, j.message, 'error', {'step': j.step})
+        return _result(False, j.message, 'error', {'step': j.step, **(j.data or {})})
     secs = int(time.monotonic() - j.started)
     return _result(False, f'Em andamento ({secs}s): {j.step}…', 'connecting', {'step': j.step, 'running': True})
 

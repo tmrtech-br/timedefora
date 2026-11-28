@@ -21,7 +21,15 @@ from .presence import Presence, StateReader, normalize_title
 
 
 class FlowError(Exception):
-    pass
+    def __init__(self, message: str, seen: list | None = None):
+        super().__init__(message)
+        self.seen = seen or []                   # jogos abertos no caminho: [{title_id, title_name}]
+
+
+def names_match(console_name: str, wanted: str) -> bool:
+    """Nome informado pelo console x nome cadastrado (ignora acentos, ®/™, maiúsculas; números precisam bater)."""
+    from .vision import contains_text
+    return bool(console_name and wanted) and (contains_text(console_name, wanted) or contains_text(wanted, console_name))
 
 
 HOLD, GAP = 0.3, 1.0     # pela PSN (internet) toques curtos e seguidos se perdem: segura 0,3 s e espera 1 s entre eles
@@ -43,6 +51,7 @@ class FlowResult:
     path: str                  # perfil+menu | menu | já aberto | outro jogo fechado
     tile: int                  # ícone usado (0 = jogo já estava aberto)
     message: str
+    seen: list | None = None   # jogos abertos no caminho (reconhecimento)
 
 
 def _read(state: StateReader, sleep: Callable, tries: int = 3) -> Presence | None:
@@ -68,9 +77,11 @@ def _wait_title(state: StateReader, sleep: Callable, clock: Callable, limit: flo
 
 def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: str = '', *, woke: bool = False,
               detect: bool = False, sleep: Callable = time.sleep, clock: Callable = time.monotonic,
-              progress: Callable[[str], None] = lambda s: None, max_tiles: int = 4, settle: float = 45.0,
+              progress: Callable[[str], None] = lambda s: None, max_tiles: int = 5, settle: float = 45.0,
+              expected_name: str = '',
               launch_timeout: float = 75.0, trace: Callable[[str], None] | None = None) -> FlowResult:
-    """Abre `expected` (ex.: CUSA05904) ou, com detect=True, o último jogo usado e informa qual abriu."""
+    """Abre `expected` (ex.: CUSA05904). Com detect=True, procura pelo nome (`expected_name`) abrindo os últimos jogos
+    usados, um ícone por vez (fecha o errado e tenta o próximo), e informa o código; sem nome, aceita o 1º que abrir."""
     global _trace
     _trace = trace or (lambda label: None)
     expected = normalize_title(expected)
@@ -110,7 +121,11 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
 
     # ------------------------------------------------ menu do console → ícone do jogo
     first = 2 if current else 1             # outro jogo aberto ocupa o 1º ícone (último usado)
-    tile, retried = first, False
+    tile, retried, seen = first, False, []
+    if current:
+        seen.append({'title_id': current, 'title_name': p.title_name if p else ''})
+        if detect and names_match(p.title_name if p else '', expected_name):
+            return _ready(frame_ok, sleep, 3, FlowResult(current, p.title_name, 'já aberto', 0, 'O jogo já estava aberto.', seen))
     while tile <= max_tiles:
         progress(f'abrindo o jogo pelo menu (ícone {tile})' + (' — nova tentativa' if retried else ''))
         if current or tile > first or path == 'menu' or retried:
@@ -132,17 +147,21 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
                 retried = True
                 continue
             raise FlowError(f'O console não informou nenhum jogo aberto em {int(launch_timeout)} s após selecionar o ícone {tile} '
-                            '(duas tentativas). Confira a tela do console.')
+                            '(duas tentativas). Confira a tela do console.', seen)
         retried = False
-        if detect or opened.title_id == expected:
+        seen.append({'title_id': opened.title_id, 'title_name': opened.title_name})
+        ok = (names_match(opened.title_name, expected_name) if expected_name else True) if detect else opened.title_id == expected
+        if ok:
             msg = f'{opened.title_name or opened.title_id} ({opened.title_id}) aberto pelo ícone {tile}.'
-            result = FlowResult(opened.title_id, opened.title_name, 'outro jogo fechado' if current else path, tile, msg)
+            result = FlowResult(opened.title_id, opened.title_name, 'outro jogo fechado' if current else path, tile, msg, seen)
             progress('jogo aberto; aguardando carregar')
             return _ready(frame_ok, sleep, settle, result)
         current = opened.title_id                           # abriu outro jogo: tenta o próximo ícone
         tile += 1
-    raise FlowError(f'O jogo {expected} não estava entre os {max_tiles} últimos jogos usados no console. '
-                    'Abra o jogo uma vez no console para ele voltar ao início do menu.')
+    names = ', '.join(f"{s['title_name'] or s['title_id']} ({s['title_id']})" for s in seen) or 'nenhum'
+    wanted = expected_name if detect else expected
+    raise FlowError(f'"{wanted}" não estava entre os {max_tiles} últimos jogos do menu do console. Jogos abertos: {names}. '
+                    'Abra o jogo uma vez no console para ele voltar ao início do menu, ou escolha o jogo certo na lista.', seen)
 
 
 def _ready(frame_ok: Callable[[], bool], sleep: Callable, settle: float, result: FlowResult) -> FlowResult:
