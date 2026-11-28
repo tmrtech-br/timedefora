@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { Gamepad2, Keyboard, Volume2 } from 'lucide-react';
 import InputTester from '@/components/InputTester';
+import RecoveryPanel from '@/components/RecoveryPanel';
 import NetworkTest from '@/components/NetworkTest';
 import { useFeatures } from '@/lib/features';
 import QueueList from '@/components/QueueList';
@@ -15,7 +16,8 @@ import { CANCEL_REQUEST_STATUS, RESERVATION_STATUS, dateTime, duration, money, t
 import type { Reservation } from '@/lib/types';
 
 type Room = Reservation & { seconds_to_start: number; can_join: boolean; allocation_policy: string;
-  console_ready?: boolean; preparation?: { status: string; message: string; started_at: string | null } };
+  console_ready?: boolean; preparation?: { status: string; message: string; started_at: string | null };
+  recovery?: { minutes: number; refund_cents: number } | null };
 
 function Room() {
   const { id } = useParams<{ id: string }>();
@@ -32,7 +34,8 @@ function Room() {
   const [joining, setJoining] = useState(false);
   useEffect(() => { if (!kbAllowed && device === 'keyboard_mouse') setDevice('gamepad'); }, [kbAllowed, device]);
   // Link de e-mail/notificação para uma reserva que já terminou: mostra o motivo na tela de sessões.
-  const ended = r && ['completed', 'no_show', 'cancelled', 'expired', 'needs_resolution', 'refunded'].includes(r.status);
+  // (falha da plataforma com remarcação/estorno disponível fica aqui para o cliente escolher)
+  const ended = r && !r.recovery && ['completed', 'no_show', 'cancelled', 'expired', 'needs_resolution', 'refunded'].includes(r.status);
   useEffect(() => { if (ended && r) router.replace(`/sessoes?encerrada=${r.id}`); }, [ended, r, router]);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!r) return <Skeleton h={300} />;
@@ -64,6 +67,7 @@ function Room() {
     <div className="stack">
       <PageHeader title="Sala de espera" subtitle={`${r.game.title} · ${r.console_name} · reserva ${r.code}`}><StatusPill status={r.status} map={RESERVATION_STATUS} /></PageHeader>
       {r.resolution_notes && <Alert kind="warn">{r.resolution_notes}</Alert>}
+      {r.recovery && <RecoveryPanel reservationId={r.id} gameTitle={r.game.title} />}
       <div className="grid2">
         <section className="card" style={{ textAlign: 'center' }}>
           {['confirmed', 'active'].includes(r.status) ? (startIn > 0 ? <>

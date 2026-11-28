@@ -246,7 +246,9 @@ function Player() {
           <h2>Sessão encerrada</h2>
           <p className="muted">{(s.end_reason && END_REASON[s.end_reason]) || 'O tempo contratado terminou.'} O controle do console foi liberado para o próximo jogador.</p>
           <div className="row" style={{ justifyContent: 'center' }}>
-            {s.slug && <Link className="btn primary" href={`/jogos/${s.slug}`}><CalendarPlus size={16} aria-hidden />Jogar de novo — nova reserva</Link>}
+            {s.end_reason === 'failure' && s.reservation_id && <Link className="btn primary" href={`/sessoes/${s.reservation_id}`}>
+              <CalendarPlus size={16} aria-hidden />Remarcar ou receber estorno</Link>}
+            {s.slug && <Link className={`btn${s.end_reason === 'failure' ? '' : ' primary'}`} href={`/jogos/${s.slug}`}><CalendarPlus size={16} aria-hidden />Jogar de novo — nova reserva</Link>}
             <Link className="btn" href="/jogos"><ListOrdered size={16} aria-hidden />Ver outros jogos</Link>
             <Link className="btn" href="/sessoes">Minhas sessões</Link>
           </div>

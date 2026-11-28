@@ -11,7 +11,7 @@ from ..core import security, timeutil
 from ..core.db import all_, audit_event, insert, one, tx
 from ..core.deps import Principal, client_ip, current_user as authenticated_user, verified_user as verified_account
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found
-from ..services import console_power, notifications, payments, scheduling, sessions, support
+from ..services import console_power, notifications, payments, recovery, scheduling, sessions, support
 from ..services.payment_providers import verify_mp_signature
 from ..services.settings_store import get_settings, require_enabled
 from .common import SupportMessageIn, jsonable
@@ -240,10 +240,44 @@ def waiting_room(rid: uuid.UUID, p: Principal = Depends(current_user)):
                             'message': (prep['last_message'] or '')[:300] if prep and not ready else '',
                             'started_at': prep['created_at'].isoformat() if prep else None}
         v['console_ready'] = ready
+        el = recovery.eligibility(conn, r)              # falha da plataforma: oferece remarcar ou estorno
+        v['recovery'] = {'minutes': el['minutes'], 'refund_cents': el['refund_cents']} if el else None
         v['can_join'] = ready and r['status'] in ('confirmed', 'active') and r['starts_at'] <= n < r['ends_at']
         v['allocation_policy'] = ('O intervalo contratado é exclusivo. Atrasos do jogador não estendem o término; '
                                   'é possível reconectar até o fim do período. Falhas da plataforma são compensadas.')
     return v
+
+
+class RescheduleIn(BaseModel):
+    game_id: uuid.UUID | None = None
+
+
+def _own_reservation(conn, rid, p) -> dict:
+    r = one(conn, 'select * from reservations where id=%s for update', (rid,))
+    if not r or str(r['user_id']) != p.user_id:
+        raise not_found('Reserva não encontrada.')
+    return r
+
+
+@router.get('/reservations/{rid}/recovery')
+def recovery_options(rid: uuid.UUID, p: Principal = Depends(verified_user)):
+    """Falha da plataforma: próximo horário do mesmo jogo, outros jogos com a mesma duração e valor do estorno."""
+    with tx() as conn:
+        return recovery.options(conn, _own_reservation(conn, rid, p))
+
+
+@router.post('/reservations/{rid}/reschedule')
+def reschedule(rid: uuid.UUID, body: RescheduleIn, p: Principal = Depends(verified_user)):
+    with tx() as conn:
+        new = recovery.reschedule(conn, p, _own_reservation(conn, rid, p), body.game_id)
+        return {'reservation_id': str(new['id']), 'code': new['code'], 'starts_at': new['starts_at'].isoformat()}
+
+
+@router.post('/reservations/{rid}/platform-refund')
+def platform_refund(rid: uuid.UUID, p: Principal = Depends(verified_user)):
+    with tx() as conn:
+        rf = recovery.refund(conn, p, _own_reservation(conn, rid, p))
+        return {'status': rf['status'], 'amount_cents': rf['amount_cents']}
 
 
 @router.post('/reservations/{rid}/join')
