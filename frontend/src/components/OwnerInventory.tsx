@@ -61,8 +61,8 @@ export default function OwnerInventory() {
       {tab === 'cadastro' && <OwnerConsoles consoles={consoles.data} reload={consoles.reload} selected={selected} setSelected={setSelected} />}
       {tab === 'psn' && <OwnerPsn consoles={consoles.data} accounts={accounts.data} reloadAccounts={accounts.reload} reloadConsoles={consoles.reload}
         selected={selected} setSelected={setSelected} />}
-      {tab === 'jogos' && <OwnerGames key={selected} consoles={consoles.data} selected={selected} setSelected={setSelected} />}
-      {tab === 'disponibilidade' && <OwnerHours key={selected} consoles={consoles.data} selected={selected} setSelected={setSelected} />}
+      {tab === 'jogos' && <OwnerGames key={selected} consoles={consoles.data} selected={selected} setSelected={setSelected} onReviewChange={consoles.reload} />}
+      {tab === 'disponibilidade' && <OwnerHours key={selected} consoles={consoles.data} selected={selected} setSelected={setSelected} onReviewChange={consoles.reload} />}
       {tab === 'recebimento' && <Payments />}
       {tab === 'suporte' && <Support />}
       {tab === 'ajuda' && <OwnerHelp />}

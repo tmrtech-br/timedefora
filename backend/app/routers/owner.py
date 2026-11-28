@@ -256,11 +256,12 @@ def games(console_id: UUID, p: Principal = Depends(enrolled_owner)):
             where a.console_id=%s and a.status in ('active','pending_review') and a.ends_at>%s order by a.starts_at
         ''', (console_id, timeutil.now()))
         drafts = all_(conn, '''
-            select g.id, g.title from games g join game_platforms gp on gp.game_id=g.id
-            where gp.platform_id=%s and g.created_by=%s and g.status='draft' and g.deleted_at is null
+            select g.id, g.title, g.status from games g join game_platforms gp on gp.game_id=g.id
+            where gp.platform_id=%s and g.created_by=%s and g.deleted_at is null
             order by g.title
         ''', (console['platform_id'], p.user_id))
-    return jsonable({'games': catalog, 'assignments': assignments, 'drafts': drafts})
+    return jsonable({'games': catalog, 'assignments': assignments,
+                     'drafts': [g for g in drafts if g['status'] == 'draft'], 'owned_games': drafts})
 
 
 class GameWindowIn(BaseModel):
@@ -502,8 +503,9 @@ def _checklist(conn, console_id) -> list[str]:
         missing.append('Cadastre a conta PSN e associe ao console (Contas PSN).')
     if not one(conn, 'select 1 from owner_console_rates where console_id=%s', (console_id,)) and not (c['owner_pending'] or {}).get('rate'):
         missing.append('Defina a tarifa e a duração das sessões.')
-    if not one(conn, """select 1 from console_game_assignments where console_id=%s and status in ('active','pending_review')
-                        and ends_at > %s""", (console_id, timeutil.now())):
+    if not one(conn, """select 1 from console_game_assignments a join games g on g.id=a.game_id
+                        where a.console_id=%s and a.status in ('active','pending_review')
+                        and a.ends_at > %s and g.deleted_at is null""", (console_id, timeutil.now())):
         missing.append('Cadastre pelo menos um jogo com período de disponibilidade.')
     return missing
 
@@ -899,13 +901,19 @@ def delete_game_window(console_id: UUID, assignment_id: UUID, body: DeleteIn, p:
 
 
 @router.delete('/consoles/{console_id}/game-drafts/{game_id}')
-def delete_game_draft(console_id: UUID, game_id: UUID, body: DeleteIn, p: Principal = Depends(enrolled_owner)):
+def delete_owner_game(console_id: UUID, game_id: UUID, body: DeleteIn, p: Principal = Depends(enrolled_owner)):
     with tx(p.user_id) as conn:
         owned_console(conn, console_id, p.user_id, edit=True)
-        g = one(conn, "select id from games where id=%s and created_by=%s and status='draft' and deleted_at is null for update", (game_id, p.user_id))
+        g = one(conn, "select id from games where id=%s and created_by=%s and deleted_at is null for update", (game_id, p.user_id))
         if not g:
-            raise not_found('Só é possível excluir jogos seus ainda em revisão.')
+            raise not_found('Só é possível excluir jogos cadastrados por você.')
+        if admin._future_paid_for_game(conn, game_id):
+            raise conflict('has_reservations', 'Há reservas deste jogo. Aguarde elas terminarem para excluir.')
+        if one(conn, """select 1 from console_game_assignments a join consoles c on c.id=a.console_id
+                        where a.game_id=%s and a.status in ('active','pending_review') and a.ends_at>%s
+                          and c.deleted_at is null and c.owner_user_id is distinct from %s""", (game_id, timeutil.now(), p.user_id)):
+            raise conflict('game_in_use', 'Este jogo está vinculado a outro proprietário ou à plataforma. Peça à equipe para revisar o vínculo.')
         conn.execute("""update console_game_assignments set status='cancelled' where game_id=%s and status in ('active','pending_review')""", (game_id,))
         conn.execute("update games set deleted_at=%s, status='archived' where id=%s", (timeutil.now(), game_id))
-        audit_event(conn, 'owner.game_draft_deleted', 'games', game_id, reason=body.reason)
+        audit_event(conn, 'owner.game_deleted', 'games', game_id, reason=body.reason)
     return {'ok': True}

@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Alert, Field } from '@/components/ui';
+import { Alert, Field, StatusPill } from '@/components/ui';
 import { patch, post, put } from '@/lib/api';
 import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
@@ -10,7 +10,8 @@ import DateTimeField, { isLocalDateTime } from '@/components/admin/DateTimeField
 import { ConsolePicker, type OwnerConsole } from './shared';
 
 export type GameWindow = { id: string; title: string; starts_at: string; ends_at: string; status: string; game_status?: string };
-type Games = { games: { id: string; title: string }[]; assignments: GameWindow[]; drafts: { id: string; title: string }[] };
+type Games = { games: { id: string; title: string }[]; assignments: GameWindow[]; drafts: { id: string; title: string; status?: string }[];
+  owned_games?: { id: string; title: string; status?: string }[] };
 type Rate = { min_minutes: number; max_minutes: number; rate_unit: 'minute' | 'hour'; rate_cents: number; paused?: boolean };
 const DEFAULT_RATE: Rate = { min_minutes: 10, max_minutes: 120, rate_unit: 'minute', rate_cents: 100 };
 
@@ -54,7 +55,9 @@ function Price({ consoleId, value, locked, approved, onSaved }: { consoleId: str
 }
 
 /** Jogos e preços: cadastrar o jogo (para revisão), vincular aos períodos do console e definir o preço. */
-export default function OwnerGames({ consoles, selected, setSelected }: { consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void }) {
+export default function OwnerGames({ consoles, selected, setSelected, onReviewChange }: {
+  consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void; onReviewChange: () => void;
+}) {
   const current = consoles?.find((c) => c.id === selected);
   const games = useApi<Games>(current ? `/owner/consoles/${current.id}/games` : null);
   const rate = useApi<Rate | null>(current ? `/owner/consoles/${current.id}/availability` : null);
@@ -63,6 +66,7 @@ export default function OwnerGames({ consoles, selected, setSelected }: { consol
   const { busy, msg, run } = useAction();
   const deletion = useDelete();
   const locked = current?.review_status === 'submitted';
+  const owned = games.data?.owned_games ?? games.data?.drafts ?? [];
   const today = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
   return <section className="stack" id="jogos">
     <div className="card"><ConsolePicker consoles={consoles} value={selected} onChange={setSelected} /></div>
@@ -84,8 +88,8 @@ export default function OwnerGames({ consoles, selected, setSelected }: { consol
         e.preventDefault();
         void run(async () => {
           await post(`/owner/consoles/${current.id}/games`, { game_id: win.game_id, starts_at: fromLocalInput(win.starts_at), ends_at: fromLocalInput(win.ends_at) });
-          setWin({ game_id: '', starts_at: '', ends_at: '' }); await games.reload();
-        }, current.approved_at ? 'Período enviado para a validação da equipe.' : 'Período adicionado.');
+          setWin({ game_id: '', starts_at: '', ends_at: '' }); await games.reload(); onReviewChange();
+        }, current.approved_at ? 'Período salvo. Envie as alterações para a equipe analisar.' : 'Período adicionado.');
       }}>
         <div className="grid3 owner-game-window">
           <Field label="Jogo"><select required value={win.game_id} onChange={(e) => setWin({ ...win, game_id: e.target.value })}>
@@ -98,13 +102,18 @@ export default function OwnerGames({ consoles, selected, setSelected }: { consol
         </div>
         <div><button className="btn" disabled={busy || !win.game_id || !isLocalDateTime(win.starts_at) || !isLocalDateTime(win.ends_at) || win.ends_at <= win.starts_at}>Adicionar período do jogo</button></div>
       </form>}
+      {!locked && current.approved_at && games.data.assignments.some((item) => item.status === 'pending_review') &&
+        <div><button className="btn primary" disabled={busy} onClick={() => void run(async () => {
+          await post(`/owner/consoles/${current.id}/submit`);
+          onReviewChange();
+        }, 'Alterações enviadas para análise.')}>Enviar alterações para análise</button></div>}
       <DataTable rows={games.data.assignments} empty="Nenhum período cadastrado."
         cols={[['Jogo', (a) => a.title.replace(/ \(aguardando validação\)$/, '')], ['De', (a) => dateTime(a.starts_at)], ['Até', (a) => dateTime(a.ends_at)],
           ['Situação', (a) => a.status === 'pending_review' ? 'Período aguardando aprovação' : a.game_status === 'draft' ? 'Jogo em revisão' : 'Período ativo'],
           ['', (a) => !locked && <button className="btn sm danger" onClick={() => deletion.remove(`/owner/consoles/${current.id}/games/${a.id}`, `Excluir o período de ${a.title}?`,
             (request) => run(async () => { await request(); await games.reload(); }, 'Período excluído.'), 'Não é possível excluir um período com reservas.')}>Excluir</button>]]} />
-      {games.data.drafts.length > 0 && <><h3 style={{ margin: '6px 0 0' }}>Meus jogos em revisão</h3>
-        <DataTable rows={games.data.drafts} cols={[['Jogo', (g) => g.title],
+      {owned.length > 0 && <><h3 style={{ margin: '6px 0 0' }}>Meus jogos</h3>
+        <DataTable rows={owned} cols={[['Jogo', (g) => g.title], ['Status', (g) => <StatusPill status={g.status ?? 'draft'} />],
           ['', (g) => !locked && <button className="btn sm danger" onClick={() => deletion.remove(`/owner/consoles/${current.id}/game-drafts/${g.id}`, `Excluir o jogo ${g.title}?`,
             (request) => run(async () => { await request(); await games.reload(); }, 'Jogo excluído.'), 'Os períodos deste jogo também são removidos.')}>Excluir jogo</button>]]} /></>}
     </div>}

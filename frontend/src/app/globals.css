@@ -260,14 +260,18 @@ html:has(.modal-shell[open]) { overflow: hidden; }
 .game-hero { display: grid; grid-template-columns: 340px 1fr; gap: 22px; }
 .game-hero img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 14px; background: #221a3c; }
 /* Página do jogo: banner/informações à esquerda e disponibilidade/fila à direita, mesma altura. */
-.game-top { display: grid; grid-template-columns: minmax(0, 2.1fr) minmax(300px, 1fr); gap: 16px; align-items: stretch; }
-.game-top .game-hero { margin: 0; grid-template-columns: minmax(200px, 300px) 1fr; }
+.game-top { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; align-items: start; }
+.game-top .game-hero { margin: 0; grid-template-columns: minmax(140px, 230px) minmax(0, 1fr); align-items: start; }
+.game-art-placeholder { display: grid; place-items: center; aspect-ratio: 16/9; border-radius: 14px; background: var(--bg2); color: var(--purple2); }
 .game-availability { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .game-availability h2 { margin: 0; }
 .game-availability .small.muted { margin: 0; }
 .game-availability-console { margin: 0; padding: 12px; background: rgba(255, 255, 255, .02); }
-.game-availability-console ul { margin: 8px 0; }
+.game-availability-notes { margin: 8px 0 0; padding: 0; list-style: none; }
+.game-queue-details { margin-top: 8px; }
+.game-queue-details summary { color: var(--purple2); cursor: pointer; font-size: 0.875rem; }
 @media (max-width: 1100px) { .game-top { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .game-top .game-hero { grid-template-columns: 1fr; } }
 /* Banner do jogo no fundo da área de informações, atrás do texto (escurecido para manter a leitura). */
 .game-hero.has-banner { position: relative; isolation: isolate; padding: 22px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line2); }
 .game-hero.has-banner::before { content: ''; position: absolute; inset: 0; z-index: -2; background: var(--game-banner) center / cover no-repeat; }
@@ -879,6 +883,7 @@ html:has(.policy-dialog[open]) { overflow: hidden; }
 .review-details h3 { margin: 0 0 6px; font-size: 15px; }
 .review-games { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
 .review-game { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; padding: 8px; border-radius: 10px; background: #15112b; border: 1px solid var(--line); }
+.review-game-link { border: 0; padding: 0; background: transparent; font: inherit; font-weight: 600; cursor: pointer; text-align: left; }
 .review-game img, .review-noimg { width: 96px; aspect-ratio: 3/4; object-fit: cover; border-radius: 8px; background: #221a3c; }
 .review-noimg { display: grid; place-items: center; font-size: 11px; color: var(--muted); }
 .owner-game-window { align-items: start; }

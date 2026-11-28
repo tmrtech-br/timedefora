@@ -33,6 +33,11 @@ function Notice({ kind, children, onDismiss }: { kind: NoticeKind; children: Rea
 export function SystemAlert({ kind, children, dismissible }: { kind: NoticeKind; children: ReactNode; dismissible: boolean }) {
   const viewport = useContext(NoticeViewport);
   const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    if (!viewport || !dismissible) return;
+    const timer = window.setTimeout(() => setDismissed(true), kind === 'ok' ? 5000 : 12000);
+    return () => window.clearTimeout(timer);
+  }, [viewport, dismissible, kind]);
   return viewport && !dismissed ? createPortal(
     <Notice kind={kind} onDismiss={dismissible ? () => setDismissed(true) : undefined}>{children}</Notice>,
     viewport,

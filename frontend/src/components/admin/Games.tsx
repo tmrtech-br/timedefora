@@ -1,13 +1,13 @@
 'use client';
 import DateFilter from '@/components/DateFilter';
 import switchStyles from '@/app/configuracoes/settings.module.css';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { patch, post } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { DataTable, MultiSelect, need, useAction, useDelete } from './common';
 
-type Game = Record<string, unknown> & { id: string; slug: string; title: string; status: string; commercial_license_status: string; platform_codes: string[]; genres: string[] };
+export type Game = Record<string, unknown> & { id: string; slug: string; title: string; status: string; commercial_license_status: string; platform_codes: string[]; genres: string[] };
 export const EMPTY_GAME = { slug: '', title: '', short_description: '', description: '', cover_url: '', banner_url: '', trailer_url: '', trailer_licensed: false, age_rating: '',
   release_date: '', requirements: '', min_minutes: 10, max_minutes: 120, featured_manual: false, image_rights_notes: '', stream_rights_allowed: false, platform_codes: ['PS5'], genres: '' };
 const LIC: Record<string, string> = { not_verified: 'Não verificada', pending: 'Pendente', authorized: 'Autorizada', denied: 'Negada' };
@@ -46,7 +46,7 @@ export function GameRegistrationFields({ f, set, owner = false }: { f: Record<st
   </>;
 }
 
-function GameSummary({ game }: { game: Game }) {
+export function GameSummary({ game }: { game: Game }) {
   const shown = (value: unknown) => value == null || value === '' ? '—' : String(value);
   const yesNo = (value: unknown) => value ? 'Sim' : 'Não';
   const date = shown(game.release_date);
@@ -74,7 +74,7 @@ function GameSummary({ game }: { game: Game }) {
 }
 
 export default function Games() {
-  const list = useApi<Game[]>('/admin/games');
+  const list = useApi<Game[]>('/admin/games', 5000);
   const [f, setF] = useState<Record<string, unknown>>(EMPTY_GAME);
   const [editing, setEditing] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
@@ -82,12 +82,21 @@ export default function Games() {
   const [lic, setLic] = useState({ status: 'pending', doc_url: '', notes: '' });
   const { run, msg, busy } = useAction();
   const deletion = useDelete();
+  const [requestedGame, setRequestedGame] = useState<string | null>(null);
   const set = (k: string, v: unknown) => setF({ ...f, [k]: v });
   function edit(g: Game) {
     setEditing(g.id);
     setFormOpen(true);
+    setLic({ status: g.commercial_license_status, doc_url: String(g.commercial_license_doc_url ?? ''), notes: String(g.commercial_license_notes ?? '') });
     setF({ ...EMPTY_GAME, ...Object.fromEntries(Object.entries(g).filter(([k]) => k in EMPTY_GAME).map(([k, v]) => [k, v ?? ''])), genres: g.genres.join(', '), platform_codes: g.platform_codes });
   }
+  useEffect(() => { setRequestedGame(new URLSearchParams(window.location.search).get('jogo')); }, []);
+  useEffect(() => {
+    if (!requestedGame || !list.data) return;
+    const game = list.data.find((item) => item.id === requestedGame);
+    if (game) edit(game);
+    setRequestedGame(null);
+  }, [requestedGame, list.data]);
   return (
     <div className="stack">
       <PageHeader title="Jogos" subtitle="Cadastro independente de consoles. Venda real exige licença comercial autorizada." />

@@ -1,8 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import DateFilter from '@/components/DateFilter';
-import { Alert } from '@/components/ui';
-import { put } from '@/lib/api';
+import { post, put } from '@/lib/api';
 import { time } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { useAction } from '@/components/admin/common';
@@ -68,7 +67,9 @@ function AvailabilityCalendar({ consoleId, rows }: { consoleId: string; rows: Da
 }
 
 /** Dias e horários da semana em que o console fica disponível para aluguel. */
-export default function OwnerHours({ consoles, selected, setSelected }: { consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void }) {
+export default function OwnerHours({ consoles, selected, setSelected, onReviewChange }: {
+  consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void; onReviewChange: () => void;
+}) {
   const current = consoles?.find((c) => c.id === selected);
   const data = useApi<{ hours: Hour[]; pending: Hour[] | null }>(current ? `/owner/consoles/${current.id}/hours` : null);
   const [rows, setRows] = useState<DayRow[]>(DAYS.map(() => ({ on: false, opens_at: '08:00', closes_at: '22:00' })));
@@ -92,8 +93,8 @@ export default function OwnerHours({ consoles, selected, setSelected }: { consol
       <h2 style={{ margin: 0 }}>Dias e horários disponíveis</h2>
       <p className="small muted" style={{ margin: 0 }}>O console só aceita reservas nesses horários (horário de Brasília), dentro dos períodos dos jogos.
         Sem nenhum dia marcado, vale o período inteiro de cada jogo.</p>
-      {data.data?.pending && <Alert kind="info">Há horários novos aguardando a validação da equipe; os anteriores continuam valendo até lá.</Alert>}
-      {locked && <Alert kind="info">Console em análise: cancele o envio em Cadastro de console para editar.</Alert>}
+      {data.data?.pending && <p className="small muted">{locked ? 'Os novos horários foram enviados para análise.' : 'Há horários salvos para enviar à análise.'} Os horários em vigor valem até a aprovação.</p>}
+      {locked && <p className="small muted">Para editar, cancele o envio em Cadastro de console.</p>}
       <div className="owner-hours">
         {rows.map((r, i) => <div key={DAYS[i]} className={`owner-hour${r.on ? ' on' : ''}`}>
           <label className="check"><input type="checkbox" checked={r.on} disabled={locked} onChange={(e) => set(i, { on: e.target.checked })} />{DAYS[i]}</label>
@@ -104,10 +105,15 @@ export default function OwnerHours({ consoles, selected, setSelected }: { consol
         </div>)}
       </div>
       <div className="row">
-        <button className="btn primary" disabled={busy || invalid || locked} onClick={() => run(async () => {
-          await put(`/owner/consoles/${current.id}/hours`, { hours: rows.flatMap((r, wd) => (r.on ? [{ weekday: wd, opens_at: r.opens_at, closes_at: r.closes_at }] : [])) });
-          data.reload();
-        }, current.approved_at ? 'Horários enviados para a validação da equipe.' : 'Horários salvos.')}>Salvar horários</button>
+        <button className="btn primary" disabled={busy || invalid || locked || data.loading} onClick={() => run(async () => {
+          const result = await put<{ pending: boolean }>(`/owner/consoles/${current.id}/hours`, { hours: rows.flatMap((r, wd) => (r.on ? [{ weekday: wd, opens_at: r.opens_at, closes_at: r.closes_at }] : [])) });
+          try {
+            if (result.pending) await post(`/owner/consoles/${current.id}/submit`);
+          } finally {
+            data.reload();
+            onReviewChange();
+          }
+        }, current.approved_at ? 'Novos horários enviados para análise.' : 'Horários salvos.')}>{current.approved_at ? 'Salvar e enviar para análise' : 'Salvar horários'}</button>
         <button className="btn" disabled={locked} onClick={() => setRows((r) => r.map((x, i) => ({ ...x, on: i >= 1 && i <= 5 })))}>Segunda a sexta</button>
         <button className="btn" disabled={locked} onClick={() => setRows((r) => r.map((x) => ({ ...x, on: true })))}>Todos os dias</button>
       </div>

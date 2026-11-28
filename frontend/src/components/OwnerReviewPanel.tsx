@@ -1,7 +1,7 @@
 'use client';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { CONSOLE_TESTS, ProgressModal } from '@/components/admin/ProgressModal';
-import { Alert, StatusPill } from '@/components/ui';
+import { Alert, Modal, StatusPill } from '@/components/ui';
 import { post } from '@/lib/api';
 import { dateTime, duration, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
@@ -75,13 +75,19 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
   const history = useApi<HistoryRow[]>(`/owner/consoles/${consoleId}/history`, 30000);
   const { run, msg, busy } = useAction();
   const r = review.data;
+  const [showNotes, setShowNotes] = useState(false);
   const diag = useApi<DiagState>(r?.approved_at ? `/owner/consoles/${consoleId}/diagnostics` : null, 15000);
   const validated = !!diag.data?.validation?.validated_at;
   const pendingWindows = !!r?.pending_windows.length;
   const cardStatus = r?.status === 'approved' && (!validated || !r.is_published) ? 'in_progress' : r?.status;
   const act = (path: string, ok: string) => run(async () => { await post(`/owner/consoles/${consoleId}/${path}`); review.reload(); onChange(); }, ok);
   return <section className="card stack" id="validacao">
-    <div className="spread"><h2 style={{ margin: 0 }}>Validação e publicação</h2>{cardStatus && <StatusPill status={cardStatus} map={STATUS} />}</div>
+    <div className="spread"><h2 style={{ margin: 0 }}>Validação e publicação</h2><div className="row">
+      {cardStatus && <StatusPill status={cardStatus} map={STATUS} />}
+      <button className="btn sm" disabled={busy} onClick={() => void run(async () => {
+        await Promise.all([review.reload(), diag.reload()]); onChange();
+      }, 'Status atualizado.')}>Atualizar status</button>
+    </div></div>
     {msg}{review.error && <Alert kind="error">{review.error.message}</Alert>}
     {r && <>
       <ol className="small owner-steps">
@@ -90,13 +96,18 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
         <li className={validated ? 'done' : r.approved_at ? 'now' : ''}>Após a aprovação, clique em “Aplicar configuração e testar” para iniciar o diagnóstico.</li>
         <li className={r.is_published ? 'done' : validated ? 'now' : ''}>Com os testes aprovados, publique o console para aluguel.</li>
       </ol>
-      {r.notes && r.status === 'rejected' && <Alert kind="error"><span><b>Motivo da recusa:</b> {r.notes}<br />
-        Corrija o que foi pedido e clique em "Enviar para análise" de novo.</span></Alert>}
-      {r.notes && !['rejected', 'approved'].includes(r.status) && <Alert kind="warn">Observações da equipe: {r.notes}</Alert>}
-      {r.status === 'changes_pending' && <Alert kind="info">{pendingWindows
+      {r.notes && r.status === 'rejected' && <div className="row">
+        <button className="btn" onClick={() => setShowNotes(true)}>Ver motivo da recusa</button>
+        {showNotes && <Modal title="Ajustes solicitados pela equipe" onClose={() => setShowNotes(false)} allowEscape>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</p>
+          <p className="small muted">Depois de corrigir, clique em “Enviar para análise”.</p>
+        </Modal>}
+      </div>}
+      {r.notes && !['rejected', 'approved'].includes(r.status) && <p className="small muted">Observações da equipe: {r.notes}</p>}
+      {r.status === 'changes_pending' && <p className="small muted">{pendingWindows
         ? 'O jogo já está vinculado. Clique em “Enviar para análise” para a equipe aprovar o período.'
-        : 'Clique em “Enviar para análise” para a equipe validar as alterações.'}</Alert>}
-      {r.status === 'submitted' && pendingWindows && <Alert kind="info">O jogo já está vinculado. Aguarde a aprovação do período pela equipe.</Alert>}
+        : 'Clique em “Enviar para análise” para a equipe validar as alterações.'}</p>}
+      {r.status === 'submitted' && pendingWindows && <p className="small muted">O jogo já está vinculado. Aguarde a aprovação do período pela equipe.</p>}
       {(r.pending.rate || r.pending_windows.length > 0) && <div className="small">
         <b>Aguardando validação:</b>
         <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
@@ -104,8 +115,8 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
             ({r.pending.rate.min_minutes} a {r.pending.rate.max_minutes} min)</li>}
           {r.pending_windows.map((w) => <li key={w.id}>{w.title}: {dateTime(w.starts_at)} – {dateTime(w.ends_at)}</li>)}
         </ul></div>}
-      {r.missing.length > 0 && ['draft', 'rejected', 'changes_pending'].includes(r.status) && <Alert kind="info">
-        Para enviar falta: <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{r.missing.map((m) => <li key={m}>{m}</li>)}</ul></Alert>}
+      {r.missing.length > 0 && ['draft', 'rejected', 'changes_pending'].includes(r.status) && <div className="small muted">
+        Pendências para enviar <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{r.missing.map((m) => <li key={m}>{m}</li>)}</ul></div>}
       <div className="row">
         {['draft', 'rejected', 'changes_pending'].includes(r.status) && <button className="btn primary" disabled={busy || r.missing.length > 0}
           onClick={() => act('submit', 'Enviado para análise. A equipe foi avisada.')}>Enviar para análise</button>}

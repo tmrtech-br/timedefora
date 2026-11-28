@@ -13,7 +13,7 @@ import psycopg
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field, StrictBool, field_validator
+from pydantic import BaseModel, Field, SecretStr, StrictBool, field_validator
 
 from ..config import settings
 from ..core import security, timeutil
@@ -356,10 +356,18 @@ def patch_agent(aid: uuid.UUID, body: dict, p: Principal = Depends(ADMIN)):
     return jsonable(row)
 
 
+class AgentDeleteIn(DeleteIn):
+    password: SecretStr = Field(min_length=1, max_length=1024)
+
+
 @router.delete('/agents/{aid}')
-def delete_agent(aid: uuid.UUID, body: DeleteIn, p: Principal = Depends(ADMIN)):
+def delete_agent(aid: uuid.UUID, body: AgentDeleteIn, p: Principal = Depends(ADMIN)):
+    security.rate_limit(f'agent_delete_password:{p.user_id}', 8, 900)
     try:
-        with tx() as conn:
+        with tx(p.user_id) as conn:
+            user = one(conn, 'select password_hash from users where id=%s', (p.user_id,))
+            if not user or not security.verify_password(user['password_hash'], body.password.get_secret_value()):
+                raise forbidden('Senha incorreta. Confirme a senha da sua conta para excluir o agente.')
             if not conn.execute('delete from console_agents where id=%s', (aid,)).rowcount:
                 raise not_found('Agente não encontrado.')
             audit_event(conn, 'agent.deleted', 'console_agents', aid, reason=body.reason)
@@ -1320,7 +1328,7 @@ def _check_platform(conn, console_id, game_id):
 def list_assignments(console_id: uuid.UUID | None = None, game_id: uuid.UUID | None = None,
                      date_from: datetime | None = None, date_to: datetime | None = None, p: Principal = Depends(OPERATOR)):
     q = '''select a.*, g.title game_title, c.name console_name from console_game_assignments a join games g on g.id=a.game_id
-           join consoles c on c.id=a.console_id where a.status='active' '''
+           join consoles c on c.id=a.console_id where a.status='active' and c.deleted_at is null and g.deleted_at is null '''
     params: list = []
     if console_id: q += ' and a.console_id=%s'; params.append(console_id)
     if game_id: q += ' and a.game_id=%s'; params.append(game_id)
@@ -1476,8 +1484,10 @@ def calendar(date_from: datetime, date_to: datetime, console_id: uuid.UUID | Non
     extra = [console_id] if console_id else []
     with tx() as conn:
         consoles = all_(conn, 'select id, code, name, status, is_published from consoles where deleted_at is null' + (' and id=%s' if console_id else '') + ' order by code', extra)
-        a = all_(conn, f"""select id, console_id, starts_at, ends_at, (select title from games where id=game_id) title, 'assignment' kind
-                           from console_game_assignments where status='active' and starts_at < %s and ends_at > %s{cf}""", [date_to, date_from, *extra])
+        a = all_(conn, f"""select a.id, a.console_id, a.starts_at, a.ends_at, g.title, 'assignment' kind
+                           from console_game_assignments a join games g on g.id=a.game_id join consoles c on c.id=a.console_id
+                           where a.status='active' and c.deleted_at is null and g.deleted_at is null
+                             and a.starts_at < %s and a.ends_at > %s{cf.replace('console_id', 'a.console_id')}""", [date_to, date_from, *extra])
         b = all_(conn, f"""select id, console_id, starts_at, ends_at, reason title, 'blackout' kind from blackout_windows
                            where status='active' and starts_at < %s and ends_at > %s{cf}""", [date_to, date_from, *extra])
         # Reservas que ocupam o console: sem holds vencidos (pagamento não feito) nem canceladas/expiradas.
@@ -2461,7 +2471,7 @@ def owner_reviews(p: Principal = Depends(ADMIN)):
         for c in rows:
             c['hours'] = all_(conn, '''select weekday, to_char(opens_at,'HH24:MI') opens_at, to_char(closes_at,'HH24:MI') closes_at
                                        from console_operating_hours where console_id=%s order by weekday, opens_at''', (c['id'],))
-            c['windows'] = all_(conn, '''select a.id, a.status, a.starts_at, a.ends_at, g.title, g.status game_status, g.slug,
+            c['windows'] = all_(conn, '''select a.id, g.id game_id, a.status, a.starts_at, a.ends_at, g.title, g.status game_status, g.slug,
                                                 g.cover_url, g.banner_url, g.short_description, g.age_rating, g.min_minutes, g.max_minutes
                                          from console_game_assignments a join games g on g.id=a.game_id
                                          where a.console_id=%s and a.status in ('active','pending_review') and a.ends_at > %s
@@ -2485,18 +2495,39 @@ def _notify_owner_review(conn, cid, approved: bool, notes: str) -> None:
 
 @router.post('/owner-reviews/{cid}/approve')
 def approve_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = Depends(SUPER)):
+    from .owner import _checklist, apply_hours
+
     try:
         with tx(p.user_id) as conn:
-            c = one(conn, '''select c.*, cfg.agent_id cfg_agent from consoles c left join console_connection_configs cfg on cfg.console_id=c.id
+            c = one(conn, '''select c.*, cfg.agent_id cfg_agent, cfg.psn_account_id cfg_psn, pf.code platform_code
+                             from consoles c join platforms pf on pf.id=c.platform_id
+                             left join console_connection_configs cfg on cfg.console_id=c.id
                              where c.id=%s and c.owner_user_id is not null and c.deleted_at is null for update of c''', (cid,))
             if not c:
                 raise not_found()
             if c['owner_review_status'] != 'submitted':
                 raise conflict('not_submitted', 'O proprietário ainda não enviou este console para análise.')
+            missing = _checklist(conn, cid)
+            if missing:
+                raise conflict('incomplete', 'O cadastro ainda tem pendências. ' + ' '.join(missing))
+            games = all_(conn, '''select g.title, g.status, g.deleted_at
+                                  from console_game_assignments a join games g on g.id=a.game_id
+                                  where a.console_id=%s and a.status in ('active','pending_review') and a.ends_at>%s
+                                  for share of g''', (cid, timeutil.now()))
+            pending_games = sorted({g['title'] for g in games if g['status'] != 'published' or g['deleted_at']})
+            if pending_games:
+                raise conflict('game_pending_review', 'Revise e publique os jogos vinculados antes de aprovar: ' + ', '.join(pending_games))
+            if c['platform_code'] in ('PS4', 'PS5'):
+                account = one(conn, 'select status, agent_id from psn_accounts where id=%s for update',
+                              (c['owner_requested_psn_account_id'] or c['cfg_psn'],))
+                if not account or account['status'] != 'linked':
+                    raise conflict('psn_login_required', 'O proprietário precisa concluir o login Sony antes da aprovação.')
             agent = body.agent_id or c['owner_onboarding_agent_id'] or c['cfg_agent']
             if not agent:
                 raise unprocessable('agent_required', 'Escolha o agente que vai controlar este console.')
             psn_accounts._agent(conn, agent)
+            if c['platform_code'] in ('PS4', 'PS5') and account['agent_id'] not in (None, agent):
+                raise conflict('psn_agent_mismatch', 'Escolha o agente já vinculado à conta PSN ou solicite a correção do vínculo.')
             if body.agent_id and c['is_published'] and str(body.agent_id) != str(c['owner_onboarding_agent_id'] or c['cfg_agent']):
                 raise conflict('console_published', 'Despublique o console antes de trocar o agente.')
             conn.execute('update consoles set owner_onboarding_agent_id=%s where id=%s', (agent, cid))
@@ -2518,7 +2549,6 @@ def approve_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = De
                          (p.user_id, cid))
             hours = (c['owner_pending'] or {}).get('hours')
             if hours is not None:
-                from .owner import apply_hours
                 apply_hours(conn, cid, hours)
             n = timeutil.now()
             conn.execute('''update consoles set owner_review_status='approved', owner_review_notes=%s, owner_reviewed_at=%s,

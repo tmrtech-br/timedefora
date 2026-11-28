@@ -1,14 +1,15 @@
 'use client';
 import Link from 'next/link';
 import { useState } from 'react';
-import { Alert, Field, PageHeader, StatusPill } from '@/components/ui';
-import { post } from '@/lib/api';
+import { Alert, Field, Modal, PageHeader, StatusPill } from '@/components/ui';
+import { patch, post } from '@/lib/api';
 import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
 import { useAction } from './common';
+import { GameSummary, type Game } from './Games';
 
-type Window = { id: string; status: string; starts_at: string; ends_at: string; title: string; game_status: string; slug: string;
+type Window = { id: string; game_id: string; status: string; starts_at: string; ends_at: string; title: string; game_status: string; slug: string;
   cover_url: string | null; banner_url: string | null; short_description: string; age_rating: string | null; min_minutes: number; max_minutes: number };
 type Conn = { method?: string; network_route?: string; console_identifier?: string | null; resolution?: string; fps?: number; bitrate_kbps?: number;
   standby_after_session?: boolean; keep_awake_minutes?: number };
@@ -29,16 +30,38 @@ const REVIEW_STATUS: Record<string, string> = { submitted: 'Em análise', change
 const rateText = (r: { min_minutes: number | null; max_minutes: number | null; rate_unit: string | null; rate_cents: number | null }) =>
   r.rate_cents == null ? '—' : `${money(r.rate_cents)} por ${r.rate_unit === 'hour' ? 'hora' : 'minuto'} · ${r.min_minutes} a ${r.max_minutes} min`;
 
+function GameReview({ id, title, onClose, onPublished }: { id: string; title: string; onClose: () => void; onPublished: () => void }) {
+  const game = useApi<Game>(`/admin/games/${id}`);
+  const { run, msg, busy } = useAction();
+  return <Modal title={`Cadastro de ${title}`} onClose={onClose} allowEscape>
+    <div className="stack">
+      {msg}
+      {game.error && <p className="small err" role="alert">{game.error.message}</p>}
+      {game.data && <><GameSummary game={game.data} />
+        {game.data.status !== 'published' && <div className="row">
+          <button className="btn primary" disabled={busy} onClick={() => run(async () => {
+            await patch(`/admin/games/${id}`, { status: 'published' });
+            await game.reload(); onPublished();
+          }, 'Jogo publicado.')}>Publicar jogo</button>
+          <Link className="btn" href={`/admin/jogos?jogo=${id}`}>Editar cadastro e licença</Link>
+        </div>}</>}
+    </div>
+  </Modal>;
+}
+
 function ReviewCard({ r, agents, onDone, superadmin }: { r: Review; agents: { id: string; name: string }[]; onDone: () => void; superadmin: boolean }) {
   const [agent, setAgent] = useState(r.agent_id || '');
   const [notes, setNotes] = useState('');
+  const [viewing, setViewing] = useState<Window | null>(null);
   const { run, msg, busy } = useAction();
   const draftGames = r.windows.filter((w) => w.game_status !== 'published');
+  const psnPending = ['PS4', 'PS5'].includes(r.platform_code) && r.psn_status !== 'linked';
   return (
     <section className="card stack">
       <div className="spread"><h2 style={{ margin: 0 }}>{r.name} <span className="small muted">({r.code} · {r.platform_code})</span></h2>
         <StatusPill status={r.status} map={REVIEW_STATUS} /></div>
       {msg}
+      {viewing && <GameReview id={viewing.game_id} title={viewing.title} onClose={() => setViewing(null)} onPublished={onDone} />}
       <dl className="kv small">
         <dt>Proprietário</dt><dd>{r.owner_name ? `${r.owner_name} · ` : ''}{r.owner_username} · {r.owner_email}</dd>
         <dt>Tipo</dt><dd>{r.approved_at ? `Alterações de console aprovado (no ar: ${r.is_published ? 'sim' : 'não'})` : 'Console novo'}</dd>
@@ -67,14 +90,14 @@ function ReviewCard({ r, agents, onDone, superadmin }: { r: Review; agents: { id
       {r.windows.length ? <div className="review-games">{r.windows.map((w) =>
         <div key={w.id} className="review-game">
           {w.cover_url ? <img src={w.cover_url} alt={`Capa de ${w.title}`} /> : <div className="review-noimg">sem capa</div>}
-          <div className="small"><b>{w.title}</b> {w.status === 'pending_review' && <span className="pill amber">novo</span>}
-            {w.game_status !== 'published' && <span className="pill red">jogo em rascunho</span>}
+          <div className="small"><button className="link-purple review-game-link" onClick={() => setViewing(w)}>{w.title}</button> {w.status === 'pending_review' && <span className="pill amber">novo</span>}
+            {w.game_status !== 'published' && <span className="pill amber">jogo pendente</span>}
             <br />{dateTime(w.starts_at)} – {dateTime(w.ends_at)}
             <br /><span className="muted">{w.short_description || 'Sem descrição'} · {w.age_rating ? `Classificação ${w.age_rating}` : 'sem classificação'} · {w.min_minutes}–{w.max_minutes} min</span>
             {w.banner_url && <><br /><a className="link-purple" href={w.banner_url} target="_blank" rel="noreferrer">Ver banner</a></>}</div>
         </div>)}</div> : <p className="small muted">Nenhum período.</p>}
-      {draftGames.length > 0 && <Alert kind="warn">Há jogo proposto pelo proprietário ainda em rascunho: revise as artes, a licença comercial e publique em{' '}
-        <Link className="link-purple" href="/admin/jogos">Jogos</Link>. Só vende depois de publicado.</Alert>}
+      {draftGames.length > 0 && <p className="small muted">Abra o cadastro dos jogos pendentes para conferir as artes e a licença e publicar.</p>}
+      {psnPending && <p className="small muted">O proprietário precisa concluir o login Sony para liberar a aprovação.</p>}
       <div className="grid2">
         <Field label="Agente que vai controlar o console" hint="A aprovação vincula o console e a conta PSN a este agente."><select value={agent} onChange={(e) => setAgent(e.target.value)} disabled={!superadmin}>
           <option value="">Selecione</option>{agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>
@@ -82,7 +105,7 @@ function ReviewCard({ r, agents, onDone, superadmin }: { r: Review; agents: { id
       </div>
       {r.status === 'changes_pending' && <p className="small muted">O proprietário ainda está editando; aprove depois que ele reenviar.</p>}
       <div className="row">
-        <button className="btn primary" disabled={busy || !superadmin || r.status !== 'submitted' || !agent}
+        <button className="btn primary" disabled={busy || !superadmin || r.status !== 'submitted' || !agent || !!draftGames.length || !r.windows.length || psnPending}
           onClick={() => run(async () => { await post(`/admin/owner-reviews/${r.id}/approve`, { agent_id: agent || null, notes }); onDone(); }, 'Console aprovado e agente vinculado.')}>
           Aprovar vínculo (agente + conta PSN)</button>
         <button className="btn danger" disabled={busy || notes.trim().length < 5}
@@ -102,6 +125,7 @@ export default function OwnerReviews() {
   return (
     <div className="stack">
       <PageHeader title="Aprovação de consoles" subtitle="O proprietário configura tudo. Aqui a equipe apenas confere, vincula o agente e aprova a conta PSN — ou recusa explicando o motivo." />
+      <div><button className="btn" onClick={() => void list.reload()}>Atualizar status</button></div>
       {list.error && <Alert kind="error">{list.error.message}</Alert>}
       {list.data?.length === 0 && <section className="card"><p className="muted" style={{ margin: 0 }}>Nenhum console aguardando análise.</p></section>}
       {list.data?.map((r) => <ReviewCard key={r.id} r={r} agents={agents} superadmin={superadmin} onDone={list.reload} />)}

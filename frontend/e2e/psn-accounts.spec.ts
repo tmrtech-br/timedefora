@@ -50,16 +50,16 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
 
   await consoleCard.getByRole('button', { name: 'Fazer login Sony' }).click();
   const dialog = page.getByRole('dialog', { name: 'Login na conta Sony' });
-  await expect(dialog.getByRole('link', { name: 'Abra o login da Sony' })).toHaveAttribute('href', loginUrl);
-  const redirectInput = dialog.getByLabel('Endereço da página após o login');
+  await expect(dialog.getByRole('link', { name: 'Abrir login Sony' })).toHaveAttribute('href', loginUrl);
+  const redirectInput = dialog.getByLabel('URL completa de retorno da Sony');
   await redirectInput.fill(redirectUrl);
   await expect(redirectInput).toHaveValue(redirectUrl);
-  await dialog.getByRole('button', { name: 'Concluir' }).click();
+  await dialog.getByRole('button', { name: 'Concluir vínculo' }).click();
   await expect(dialog.getByRole('alert')).toContainText('expirou ou já foi usado');
   await dialog.getByRole('button', { name: 'Reiniciar login Sony' }).click();
   await expect(redirectInput).toHaveValue('');
   await redirectInput.fill(redirectUrl);
-  await dialog.getByRole('button', { name: 'Concluir' }).click();
+  await dialog.getByRole('button', { name: 'Concluir vínculo' }).click();
   await expect(consoleCard.getByText('Conectada', { exact: true })).toBeVisible();
   expect(submittedRedirect).toEqual({ redirect_url: redirectUrl });
 });

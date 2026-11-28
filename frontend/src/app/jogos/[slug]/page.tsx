@@ -51,6 +51,7 @@ export default function GamePage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [fav, setFav] = useState(false);
+  const [failedArt, setFailedArt] = useState<string[]>([]);
   useEffect(() => { if (g) setFav(g.is_favorite); }, [g]);
   const now = useServerClock(g?.availability.server_time);
   const currentMinute = Math.ceil(now() / 60000) * 60000;
@@ -127,20 +128,16 @@ export default function GamePage() {
   const previewEnd = previousStart && selectedMinutes > 0
     ? new Date(Date.parse(previousStart) + selectedMinutes * 60000).toISOString() : undefined;
   const rate = total !== undefined && selectedMinutes > 0 ? total / selectedMinutes : undefined;
+  const artwork = [g.cover_url, g.banner_url].find((url) => url && !failedArt.includes(url));
+  const banner = g.banner_url && !failedArt.includes(g.banner_url) ? g.banner_url : null;
   return (
     <div className="stack">
       {g.is_demo && <Alert kind="warn">Jogo de demonstração: console e pagamento <b>simulados</b>. Exploração comercial ainda não autorizada.</Alert>}
       <div className="game-top">
-      <section className={`game-hero${g.banner_url ? ' has-banner' : ''}`}
-        style={g.banner_url ? { '--game-banner': `url(${JSON.stringify(g.banner_url)})` } as React.CSSProperties : undefined}>
-        <img
-          src={g.cover_url || g.banner_url || undefined}
-          alt={`Capa de ${g.title}`}
-          onError={(event) => {
-            const image = event.currentTarget;
-            if (g.banner_url && image.getAttribute('src') !== g.banner_url) image.src = g.banner_url;
-          }}
-        />
+      <section className={`game-hero${banner ? ' has-banner' : ''}`}
+        style={banner ? { '--game-banner': `url(${JSON.stringify(banner)})` } as React.CSSProperties : undefined}>
+        {artwork ? <img src={artwork} alt={`Capa de ${g.title}`} onError={() => setFailedArt((urls) => [...urls, artwork])} />
+          : <div className="game-art-placeholder" aria-hidden><Gamepad2 size={36} /></div>}
         <div className="stack">
           <div className="spread"><h1 style={{ margin: 0, fontSize: 32 }}>{g.title}</h1>
             <button className="btn" onClick={toggleFav} aria-pressed={fav}><Heart size={16} fill={fav ? '#c13eff' : 'none'} />{fav ? 'Favorito' : 'Favoritar'}</button></div>
@@ -150,9 +147,8 @@ export default function GamePage() {
             {g.age_rating && <span className="pill amber">Classificação {g.age_rating}</span>}
             <span className={`pill ${g.status === 'available' ? 'green' : g.status === 'unavailable' ? 'red' : 'cyan'}`}>{g.status_label}</span>
           </div>
-          <p style={{ margin: 0, color: '#ddd7ee' }}>{g.description}</p>
+          {g.description && <p style={{ margin: 0, color: '#ddd7ee' }}>{g.description}</p>}
           {g.requirements && <p className="small muted" style={{ margin: 0 }}>Requisitos de conexão: {g.requirements}</p>}
-          <p className="small muted" style={{ margin: 0 }}>Recomendado: conexão estável de 15 Mbps+, navegador atualizado no PC/notebook, teclado e mouse ou controle USB/Bluetooth.</p>
         </div>
       </section>
       <section className="card game-availability" aria-labelledby="t-disp">
@@ -162,11 +158,12 @@ export default function GamePage() {
           <div key={c.console_id} className="card game-availability-console">
             <div className="spread"><h3 style={{ margin: 0 }}><Gamepad2 size={16} aria-hidden /> {c.console_name}</h3>
               <span className="pill"><ListOrdered size={13} />{c.queue_size} na fila</span></div>
-            <ul className="small" style={{ paddingLeft: 18 }}>
+            {c.messages.length > 0 && <ul className="game-availability-notes small">
               {c.messages.map((m) => <li key={m}>{m.startsWith('Atenção') ? <b><AlertTriangle size={12} /> {m}</b> : m}</li>)}
-              {!byMinute && c.packages.map((p) => <li key={p.minutes}>{minutesLabel(p.minutes)}: {p.fits ? `início estimado ${dateTime(p.estimated_start_at)}, término máximo ${time(p.estimated_end_at)}` : 'indisponível nas janelas atuais'}</li>)}
-            </ul>
-            <QueueList items={c.queue} maxVisible={5} />
+            </ul>}
+            {c.queue.length > 0 && <details className="game-queue-details"><summary>Ver fila</summary>
+              <QueueList items={c.queue} maxVisible={5} />
+            </details>}
           </div>
         ))}
       </section>
@@ -182,11 +179,13 @@ export default function GamePage() {
               <label className="check"><input type="radio" name="booking-mode" checked={mode === 'queue'} onChange={() => setMode('queue')} /><span><b>Informar minutos</b><small>Início estimado pela fila</small></span></label>
               <fieldset className="stack booking-fields" disabled={mode !== 'queue'} aria-label="Informar minutos">
                 <Field label="Quantidade de minutos"
-                  hint={byMinute ? `De 1 a ${maximum.toLocaleString('pt-BR')} minutos.` : packageMinutes.length ? `Durações disponíveis: ${packageMinutes.join(', ')} min.` : undefined}
+                  hint={byMinute ? `De 1 a ${maximum.toLocaleString('pt-BR')} minutos.` : undefined}
                   error={mode === 'queue' && minutes && !queueMinutesValid ? 'Informe uma quantidade inteira de minutos disponível.' : undefined}>
-                  <input disabled={!byMinute && !packageMinutes.length} type="number" inputMode="numeric" min={byMinute ? 1 : packageMinutes[0]}
-                    max={byMinute ? maximum : packageMinutes.at(-1)} step={1} value={minutes}
-                    onChange={(e) => setMinutes(e.target.value)} />
+                  {byMinute ? <input type="number" inputMode="numeric" min={1} max={maximum} step={1} value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+                    : <select disabled={!packageMinutes.length} value={minutes} onChange={(e) => setMinutes(e.target.value)}>
+                      <option value="">Escolha uma duração</option>
+                      {packageMinutes.map((value) => <option key={value} value={value}>{minutesLabel(value)}</option>)}
+                    </select>}
                 </Field>
                 {mode === 'queue' && !byMinute && !packageMinutes.length && <p className="small muted">Nenhuma duração disponível para entrar na fila.</p>}
               </fieldset>

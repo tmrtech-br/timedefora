@@ -32,6 +32,16 @@ def test_console_rejeita_nome_vazio_no_cadastro_e_na_edicao(world):
     assert saved.status_code == 200 and saved.json()['name'] == 'Sala 01'
 
 
+def test_excluir_agente_exige_senha_do_administrador():
+    api, user = admin_api()
+    agent = api.post('/admin/agents', json={'name': 'Agente descartável', 'host_name': 'pc', 'is_simulated': True})
+    assert agent.status_code == 201, agent.text
+    path = f"/admin/agents/{agent.json()['id']}"
+    assert api.delete(path).status_code == 422
+    assert api.delete(path, json={'reason': 'Agente dispensado', 'password': 'senha incorreta'}).status_code == 403
+    assert api.delete(path, json={'reason': 'Agente dispensado', 'password': user['password']}).status_code == 200
+
+
 def test_jogo_rejeita_duracoes_negativas_e_invertidas(world):
     api, _ = admin_api()
     assert api.post('/admin/games', json={'slug': 'teste', 'title': 'Teste', 'min_minutes': -5}).status_code == 422

@@ -102,10 +102,19 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatc
     assert api.post(f'/owner/consoles/{cid}/submit').status_code == 200
     # antes da aprovação não testa
     assert api.post(f'/owner/consoles/{cid}/diagnostics').status_code == 409
+    with tx() as conn:
+        conn.execute("update games set status='draft' where id=%s", (world['game']['id'],))
+    approve = f'/admin/owner-reviews/{cid}/approve'
+    assert admin.post(approve, json={'agent_id': agent}).json()['code'] == 'game_pending_review'
+    assert admin.patch(f"/admin/games/{world['game']['id']}", json={'status': 'published'}).status_code == 200
+    assert admin.post(approve, json={'agent_id': agent}).json()['code'] == 'psn_login_required'
+    with tx() as conn:
+        conn.execute("update psn_accounts set status='linked', credentials_enc=%s where id=%s", (security.encrypt('{}'), acc['id']))
     assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'agent_id': agent, 'notes': 'ok'}).status_code == 200
-    # aprovado: a conta passou a usar o agente; sem o login Sony ainda não testa
+    # aprovado: a conta passou a usar o agente; se o login vencer, o diagnóstico é bloqueado
     with tx() as conn:
         assert str(conn.execute('select agent_id from psn_accounts where id=%s', (acc['id'],)).fetchone()['agent_id']) == agent
+        conn.execute("update psn_accounts set status='expired', credentials_enc=null where id=%s", (acc['id'],))
     assert api.post(f'/owner/consoles/{cid}/diagnostics').json()['code'] == 'psn_login_required'
     with tx() as conn:   # login Sony concluído (simulado no banco)
         conn.execute("update psn_accounts set status='linked' where id=%s", (acc['id'],))
@@ -144,6 +153,8 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatc
     assert api.delete(delete_psn_path).json()['code'] == 'account_in_use'
     assert api.delete(f'/owner/consoles/{cid}', json={'reason': 'Vendi o console'}).status_code == 200
     assert api.get('/owner/consoles').json() == []
+    assert cid not in {c['id'] for c in admin.get('/admin/queues').json()}
+    assert cid not in {a['console_id'] for a in admin.get('/admin/assignments').json()}
     from app.routers import psn_accounts
 
     calls = []
@@ -152,6 +163,7 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatc
     assert removed.status_code == 200, removed.text
     assert calls == ['DELETE']
     assert api.get('/owner/psn-accounts').json() == []
+    assert str(acc['id']) not in {a['id'] for a in admin.get('/admin/psn-accounts').json()}
     with tx() as conn:
         cfg = conn.execute('select psn_account_id, method from console_connection_configs where console_id=%s', (cid,)).fetchone()
         assert cfg == {'psn_account_id': None, 'method': 'unconfigured'}
@@ -162,6 +174,7 @@ def test_exclusoes_do_proprietario(world, freeze):
     from app.core.db import insert
     freeze(at(2, 7, 0))
     api, user = _owner('dono_exclui')
+    admin, _ = admin_api('chefe_exclui')
     with tx() as conn:
         conn.execute("insert into game_platforms(game_id, platform_id) select %s, id from platforms where code='PS4'", (world['game']['id'],))
     cid = api.post('/owner/consoles', json={'code': 'EXCL-01', 'name': 'PS4 exclui', 'platform_code': 'PS4'}).json()['id']
@@ -177,8 +190,12 @@ def test_exclusoes_do_proprietario(world, freeze):
     assert w.status_code == 201, w.text
     assert api.delete(f"/owner/consoles/{cid}/games/{w.json()['id']}", json={'reason': 'Não vou mais oferecer'}).status_code == 200
     assert api.get(f'/owner/consoles/{cid}/games').json()['assignments'] == []
+    agenda = admin.get('/admin/calendar', params={'date_from': at(3, 0).isoformat(), 'date_to': at(4, 0).isoformat()}).json()
+    assert w.json()['id'] not in {event['id'] for event in agenda['events']}
+    assert admin.patch(f"/admin/games/{g.json()['id']}", json={'status': 'published'}).status_code == 200
     assert api.delete(f"/owner/consoles/{cid}/game-drafts/{g.json()['id']}", json={'reason': 'Não vou mais oferecer'}).status_code == 200
     assert api.get(f'/owner/consoles/{cid}/games').json()['drafts'] == []
+    assert g.json()['id'] not in {game['id'] for game in admin.get('/admin/games').json()}
     # só PSN (PS4): rota local é recusada
     assert api.put(f'/owner/consoles/{cid}/connection-settings', json={'network_route': 'lan'}).status_code == 422
 
@@ -226,7 +243,11 @@ def test_login_sony_do_proprietario_antes_da_aprovacao(world, freeze, monkeypatc
     assert api.post(f"/owner/psn-accounts/{acc['id']}/test").json()['ok'] is True
     # Aprovação e novo login funcionam sem comunicação com o agente.
     with tx() as conn:
-        conn.execute("update consoles set owner_review_status='submitted' where id=%s", (cid,))
+        conn.execute("insert into game_platforms(game_id, platform_id) select %s, id from platforms where code='PS4'", (world['game']['id'],))
+    assert api.put(f'/owner/consoles/{cid}/connection-settings', json={'console_identifier': 'DONO-LOG'}).status_code == 200
+    assert api.put(f'/owner/consoles/{cid}/availability', json={'min_minutes': 10, 'max_minutes': 60, 'rate_unit': 'minute', 'rate_cents': 100}).status_code == 200
+    assert api.post(f'/owner/consoles/{cid}/games', json={'game_id': str(world['game']['id']), 'starts_at': at(3, 8).isoformat(), 'ends_at': at(3, 12).isoformat()}).status_code == 201
+    assert api.post(f'/owner/consoles/{cid}/submit').status_code == 200
     assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'agent_id': agent, 'notes': 'ok'}).status_code == 200
     assert api.post(f"/owner/psn-accounts/{acc['id']}/login/start").status_code == 200
     assert api.post(f"/owner/psn-accounts/{acc['id']}/login/finish", json={'redirect_url': f'{psn_oauth.REDIRECT}?code=novo'}).status_code == 200

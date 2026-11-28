@@ -1,4 +1,5 @@
 'use client';
+import SonyLoginForm from '@/components/SonyLoginForm';
 import { useState, type ReactNode } from 'react';
 import { Field, Modal, PageHeader, StatusPill } from '@/components/ui';
 import { patch, post } from '@/lib/api';
@@ -104,16 +105,12 @@ function AccountActions({ account, initialPlatform, canImport, onChange, onClose
           <button className="btn" onClick={() => setConfirmUnlink(false)}>Cancelar</button>
         </div>
       </div>}
-      {loginUrl && <section className="card stack">
-        <div><a className="btn primary" href={loginUrl} target="_blank" rel="noopener noreferrer">Abrir login Sony</a></div>
-        <Field label="URL completa de retorno da Sony"><textarea rows={3} value={redirect} onChange={(e) => setRedirect(e.target.value)} /></Field>
-        <button className="btn primary" disabled={busy || !redirect.trim()} onClick={() => execute('Concluir vínculo', async () => {
+      {loginUrl && <SonyLoginForm url={loginUrl} value={redirect} onChange={setRedirect} busy={busy}
+        onSubmit={() => execute('Concluir vínculo', async () => {
           await post(path + '/login/finish', { redirect_url: redirect.trim() });
           setLoginUrl(''); setRedirect(''); onChange();
           return 'Conta vinculada à PSN.';
-        })}>Concluir vínculo</button>
-        <span className="small muted">O link de autenticação é válido por 10 minutos.</span>
-      </section>}
+        })} />}
       {busy && <p role="status">Executando ação…</p>}
       {result && <section className="card stack psn-action-result" role={result.error ? 'alert' : 'status'}>
         <h3>{result.label}</h3><div className={result.error ? 'err' : undefined}>{result.content}</div>
@@ -125,7 +122,7 @@ function AccountActions({ account, initialPlatform, canImport, onChange, onClose
 export default function PsnAccounts({ onAccountsChanged, initialPlatform = 'all' }: {
   onAccountsChanged?: () => void; initialPlatform?: string;
 } = {}) {
-  const accounts = useApi<Account[]>('/admin/psn-accounts');
+  const accounts = useApi<Account[]>('/admin/psn-accounts', 5000);
   const options = useApi<{ chiaki_import_enabled: boolean }>('/admin/psn-accounts/options');
   const agents = useApi<Agent[]>('/admin/agents');
   const [newLabel, setNewLabel] = useState('');

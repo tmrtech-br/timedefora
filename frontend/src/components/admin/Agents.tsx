@@ -194,6 +194,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
   const [record, setRecord] = useState(agent);
   const [draft, setDraft] = useState(() => formValues(EMPTY_AGENT, agent));
   const [reason, setReason] = useState('');
+  const [password, setPassword] = useState('');
   const [summary, setSummary] = useState(initialSummary ?? '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -224,7 +225,8 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         }
         case 'delete':
           need(reason.trim(), 'Informe o motivo da exclusão.');
-          await del(base, { reason: reason.trim() });
+          need(password, 'Confirme a senha da sua conta.');
+          await del(base, { reason: reason.trim(), password });
           setDeleted(true);
           onCredentials(null);
           setSummary('Agente excluído.');
@@ -234,7 +236,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
       onChange(action === 'rotate');
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Não foi possível executar a ação.');
-    } finally { setBusy(false); }
+    } finally { setPassword(''); setBusy(false); }
   }
 
   return <Modal title="Ações do agente" onClose={() => { if (!busy) onClose(); }}>
@@ -251,6 +253,7 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         {!deleted && <form className="stack" onSubmit={(event) => { event.preventDefault(); void execute(); }}>
         <Field label="Ação"><select value={action} disabled={busy} onChange={(event) => {
           setAction(event.target.value);
+          setPassword('');
           setSummary('');
           setError('');
         }}>
@@ -259,11 +262,13 @@ function AgentActions({ agent, credentials, onCredentials, onChange, onClose, in
         </select></Field>
         {action === 'edit' && <AgentFields value={draft} onChange={setDraft} />}
         {action === 'rotate' && <p className="small muted">Ao executar, os tokens atuais serão invalidados. Copie os novos valores para o config.json e reinicie o ConsoleAgent.</p>}
-        {action === 'delete' && <Field label="Motivo da exclusão" required>
+        {action === 'delete' && <><Field label="Motivo da exclusão" required>
           <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} rows={3} />
-        </Field>}
+        </Field><Field label="Senha da sua conta" required>
+          <input type="password" autoComplete="current-password" maxLength={1024} value={password} onChange={(event) => setPassword(event.target.value)} />
+        </Field></>}
         <button className={`btn ${action === 'delete' ? 'danger' : 'primary'}`} type="submit"
-          disabled={!action || busy || (action === 'delete' && !reason.trim())}>{busy ? 'Executando…' : 'Executar'}</button>
+          disabled={!action || busy || (action === 'delete' && (!reason.trim() || !password))}>{busy ? 'Executando…' : 'Executar'}</button>
         </form>}
       </div>
       {summary && <p role="status">{summary}</p>}
