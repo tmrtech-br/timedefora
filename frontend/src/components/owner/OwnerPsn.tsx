@@ -1,7 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { Alert, Field, Modal, StatusPill } from '@/components/ui';
-import { post, put } from '@/lib/api';
+import { ApiError, post, put } from '@/lib/api';
 import { DataTable, NewRecord, useAction, useDelete } from '@/components/admin/common';
 import { ConsolePicker, type OwnerConsole, type PsnAccount } from './shared';
 
@@ -16,13 +16,14 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
   const [psnConsole, setPsnConsole] = useState('');
   const [login, setLogin] = useState<{ id: string; url: string }>();
   const [redirectUrl, setRedirectUrl] = useState('');
+  const [restartLogin, setRestartLogin] = useState(false);
   const { busy, msg, run } = useAction();
   const deletion = useDelete();
   const playStations = (consoles ?? []).filter((c) => ['PS4', 'PS5'].includes(c.platform_code));
   const current = consoles?.find((c) => c.id === selected);
   const startLogin = (a: PsnAccount) => run(async () => {
     const r = await post<{ login_url: string }>(`/owner/psn-accounts/${a.id}/login/start`);
-    setRedirectUrl(''); setLogin({ id: a.id, url: r.login_url });
+    setRedirectUrl(''); setRestartLogin(false); setLogin({ id: a.id, url: r.login_url });
   });
   const testLogin = (a: PsnAccount) => run(async () => {
     const r = await post<{ ok: boolean; message: string }>(`/owner/psn-accounts/${a.id}/test`);
@@ -96,15 +97,35 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
     {login && <Modal title="Login na conta Sony" onClose={() => { setLogin(undefined); setRedirectUrl(''); }}>
       <form className="stack" onSubmit={(e) => {
         e.preventDefault();
-        void run(async () => { await post(`/owner/psn-accounts/${login.id}/login/finish`, { redirect_url: redirectUrl }); setLogin(undefined); setRedirectUrl(''); reloadAccounts(); }, 'Conta PSN conectada.');
+        void run(async () => {
+          try {
+            await post(`/owner/psn-accounts/${login.id}/login/finish`, { redirect_url: redirectUrl.trim() });
+          } catch (error) {
+            if (error instanceof ApiError && (['psn_token_expired', 'login_expired'].includes(error.code) || /\binvalid_grant\b/.test(error.message))) {
+              setRedirectUrl('');
+              setRestartLogin(true);
+              return;
+            }
+            throw error;
+          }
+          setLogin(undefined); setRedirectUrl(''); reloadAccounts();
+        });
       }}>
         <ol className="small" style={{ margin: 0, paddingLeft: 18 }}>
           <li><a className="link-purple" href={login.url} target="_blank" rel="noreferrer">Abra o login da Sony</a> e entre com a conta PSN do console.</li>
           <li>Depois de entrar, a Sony abre uma página em branco ou de erro: copie o endereço completo dessa página.</li>
           <li>Cole o endereço abaixo e conclua.</li>
         </ol>
-        <Field label="Endereço da página após o login"><input type="url" required maxLength={8192} autoComplete="off" value={redirectUrl} onChange={(e) => setRedirectUrl(e.target.value)} /></Field>
-        <div><button className="btn primary" disabled={busy}>Concluir</button></div>
+        {restartLogin ? <>
+          <p className="small err" role="alert">O endereço da Sony expirou ou já foi usado. Inicie um novo login e cole o novo endereço de retorno.</p>
+          <div><button type="button" className="btn primary" disabled={busy} onClick={() => {
+            const account = accounts?.find((item) => item.id === login.id);
+            if (account) void startLogin(account);
+          }}>Reiniciar login Sony</button></div>
+        </> : <>
+          <Field label="Endereço da página após o login"><input type="url" required maxLength={8192} autoComplete="off" value={redirectUrl} onChange={(e) => setRedirectUrl(e.target.value)} /></Field>
+          <div><button className="btn primary" disabled={busy}>Concluir</button></div>
+        </>}
       </form></Modal>}
   </section>;
 }

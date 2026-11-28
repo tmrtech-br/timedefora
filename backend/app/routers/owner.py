@@ -250,7 +250,8 @@ def games(console_id: UUID, p: Principal = Depends(enrolled_owner)):
             where gp.platform_id=%s and g.status='published' and g.deleted_at is null order by g.title
         ''', (console['platform_id'],))
         assignments = all_(conn, '''
-            select a.id, a.starts_at, a.ends_at, a.status, g.title || case when a.status='pending_review' then ' (aguardando validação)' else '' end title
+            select a.id, a.starts_at, a.ends_at, a.status, g.status game_status,
+                   g.title || case when a.status='pending_review' then ' (aguardando validação)' else '' end title
             from console_game_assignments a join games g on g.id=a.game_id
             where a.console_id=%s and a.status in ('active','pending_review') and a.ends_at>%s order by a.starts_at
         ''', (console_id, timeutil.now()))
@@ -516,7 +517,8 @@ def review_state(console_id: UUID, p: Principal = Depends(enrolled_owner)):
                          from consoles where id=%s''', (console_id,))
         pending_windows = all_(conn, """select a.id, g.title, a.starts_at, a.ends_at from console_game_assignments a
                                        join games g on g.id=a.game_id where a.console_id=%s and a.status='pending_review'
-                                       order by a.starts_at""", (console_id,))
+                                         and a.ends_at>%s and g.deleted_at is null
+                                       order by a.starts_at""", (console_id, timeutil.now()))
         return jsonable({**c, 'missing': _checklist(conn, console_id), 'pending_windows': pending_windows,
                          'agent_linked': bool(row['agent_id'])})
 
@@ -839,11 +841,22 @@ def owner_run_diagnostics(console_id: UUID, p: Principal = Depends(enrolled_owne
 def owner_diagnostics(console_id: UUID, p: Principal = Depends(enrolled_owner)):
     with tx() as conn:
         owned_console(conn, console_id, p.user_id)
-        run = one(conn, '''select id, status, results, error, created_at, finished_at from console_diagnostic_runs
-                           where console_id=%s order by created_at desc limit 1''', (console_id,))
+        run = one(conn, '''select id, status, results, error, created_at, finished_at, requested_by=%s can_cancel
+                           from console_diagnostic_runs where console_id=%s order by created_at desc limit 1''',
+                  (p.user_id, console_id))
         cfg = one(conn, '''select validated_at, video_validated_at, audio_validated_at, control_validated_at, heartbeat_validated_at,
-                           connection_status, method from console_connection_configs where console_id=%s''', (console_id,))
+                           connection_status, method, network_route from console_connection_configs where console_id=%s''', (console_id,))
     return jsonable({'run': run, 'validation': cfg})
+
+
+@router.post('/consoles/{console_id}/diagnostics/{run_id}/cancel')
+def owner_cancel_diagnostics(console_id: UUID, run_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        owned_console(conn, console_id, p.user_id, allow_published=True)
+        if not one(conn, 'select 1 from console_diagnostic_runs where id=%s and console_id=%s and requested_by=%s',
+                   (run_id, console_id, p.user_id)):
+            raise not_found()
+        return admin.cancel_console_diagnostic(conn, console_id, run_id)
 
 
 # ------------------------------------------------------------------ exclusões do proprietário

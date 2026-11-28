@@ -6,19 +6,11 @@ import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { DataTable, fromLocalInput, NewRecord, useAction, useDelete } from '@/components/admin/common';
 import { EMPTY_GAME, GameRegistrationFields, gameRegistrationBody } from '@/components/admin/Games';
-import DateFilter from '@/components/DateFilter';
+import DateTimeField, { isLocalDateTime } from '@/components/admin/DateTimeField';
 import { ConsolePicker, type OwnerConsole } from './shared';
 
-/** Data (calendário padrão do sistema) + hora, no formato YYYY-MM-DDTHH:MM. */
-function DateTimePick({ label, value, min, onChange }: { label: string; value: string; min?: string; onChange: (v: string) => void }) {
-  const [date = '', time = ''] = value.split('T');
-  return <div className="owner-datetime">
-    <DateFilter label={label} value={date} min={min} onChange={(d) => onChange(`${d}T${time || '08:00'}`)} />
-    <label className="field">Hora<input type="time" step={60} value={time} disabled={!date} onChange={(e) => onChange(`${date}T${e.target.value}`)} /></label>
-  </div>;
-}
-
-type Games = { games: { id: string; title: string }[]; assignments: { id: string; title: string; starts_at: string; ends_at: string }[]; drafts: { id: string; title: string }[] };
+export type GameWindow = { id: string; title: string; starts_at: string; ends_at: string; status: string; game_status?: string };
+type Games = { games: { id: string; title: string }[]; assignments: GameWindow[]; drafts: { id: string; title: string }[] };
 type Rate = { min_minutes: number; max_minutes: number; rate_unit: 'minute' | 'hour'; rate_cents: number; paused?: boolean };
 const DEFAULT_RATE: Rate = { min_minutes: 10, max_minutes: 120, rate_unit: 'minute', rate_cents: 100 };
 
@@ -49,7 +41,7 @@ function Price({ consoleId, value, locked, approved, onSaved }: { consoleId: str
       }, approved ? 'Novo preço enviado para a validação da equipe (o atual continua valendo até lá).' : 'Preço salvo.');
     }}>
       <div className="grid2">
-        <Field label="Preço (R$)" hint="Valor que o jogador paga"><input required inputMode="decimal" maxLength={10} value={reais} onChange={(e) => setReais(e.target.value.replace(/[^\d,.]/g, ''))} /></Field>
+        <Field label="Preço (R$)"><input required inputMode="decimal" maxLength={10} value={reais} onChange={(e) => setReais(e.target.value.replace(/[^\d,.]/g, ''))} /></Field>
         <Field label="Cobrança"><select value={rate.rate_unit} onChange={(e) => setRate({ ...rate, rate_unit: e.target.value === 'hour' ? 'hour' : 'minute' })}>
           <option value="minute">Por minuto</option><option value="hour">Por hora</option></select></Field>
         <Field label="Sessão mínima (min)"><input required type="number" min={1} max={480} value={rate.min_minutes} onChange={(e) => setRate({ ...rate, min_minutes: Number(e.target.value) })} /></Field>
@@ -95,19 +87,20 @@ export default function OwnerGames({ consoles, selected, setSelected }: { consol
           setWin({ game_id: '', starts_at: '', ends_at: '' }); await games.reload();
         }, current.approved_at ? 'Período enviado para a validação da equipe.' : 'Período adicionado.');
       }}>
-        <div className="grid3">
+        <div className="grid3 owner-game-window">
           <Field label="Jogo"><select required value={win.game_id} onChange={(e) => setWin({ ...win, game_id: e.target.value })}>
             <option value="">Selecione</option>
             {games.data.drafts.length > 0 && <optgroup label="Meus jogos (em revisão)">{games.data.drafts.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</optgroup>}
             <optgroup label="Catálogo">{games.data.games.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</optgroup>
           </select></Field>
-          <DateTimePick label="Disponível de" value={win.starts_at} min={today} onChange={(v) => setWin({ ...win, starts_at: v })} />
-          <DateTimePick label="Até" value={win.ends_at} min={win.starts_at.slice(0, 10) || today} onChange={(v) => setWin({ ...win, ends_at: v })} />
+          <DateTimeField label="Disponível de" required value={win.starts_at} min={today} onChange={(v) => setWin({ ...win, starts_at: v })} />
+          <DateTimeField label="Até" required value={win.ends_at} min={win.starts_at || today} onChange={(v) => setWin({ ...win, ends_at: v })} />
         </div>
-        <div><button className="btn" disabled={busy || win.starts_at.length < 16 || win.ends_at.length < 16 || win.ends_at <= win.starts_at}>Adicionar período do jogo</button></div>
+        <div><button className="btn" disabled={busy || !win.game_id || !isLocalDateTime(win.starts_at) || !isLocalDateTime(win.ends_at) || win.ends_at <= win.starts_at}>Adicionar período do jogo</button></div>
       </form>}
       <DataTable rows={games.data.assignments} empty="Nenhum período cadastrado."
-        cols={[['Jogo', (a) => a.title], ['De', (a) => dateTime(a.starts_at)], ['Até', (a) => dateTime(a.ends_at)],
+        cols={[['Jogo', (a) => a.title.replace(/ \(aguardando validação\)$/, '')], ['De', (a) => dateTime(a.starts_at)], ['Até', (a) => dateTime(a.ends_at)],
+          ['Situação', (a) => a.status === 'pending_review' ? 'Período aguardando aprovação' : a.game_status === 'draft' ? 'Jogo em revisão' : 'Período ativo'],
           ['', (a) => !locked && <button className="btn sm danger" onClick={() => deletion.remove(`/owner/consoles/${current.id}/games/${a.id}`, `Excluir o período de ${a.title}?`,
             (request) => run(async () => { await request(); await games.reload(); }, 'Período excluído.'), 'Não é possível excluir um período com reservas.')}>Excluir</button>]]} />
       {games.data.drafts.length > 0 && <><h3 style={{ margin: '6px 0 0' }}>Meus jogos em revisão</h3>

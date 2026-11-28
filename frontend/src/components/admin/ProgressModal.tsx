@@ -2,12 +2,18 @@
 
 import { Alert, ModalShell } from '@/components/ui';
 
+export const CONSOLE_TESTS: [string, string][] = [
+  ['discover', 'Descobrir console'], ['pair', 'Parear'], ['psn_auth', 'Testar autenticação PSN'],
+  ['connection', 'Testar conexão'], ['video_audio', 'Testar imagem e áudio'],
+  ['controls', 'Testar controles'], ['heartbeat', 'Verificar heartbeat'], ['latency', 'Medir latência'],
+];
+
 export function ProgressModal({ tests, status, error, onCancel }: {
   tests: { id: string; label: string; state: string }[];
-  status: string; error?: string; onCancel: () => void;
+  status: string; error?: string; onCancel?: () => void;
 }) {
   const complete = tests.filter((test) => !['Na fila', 'Em execução'].includes(test.state)).length;
-  return <ModalShell title="Diagnóstico do console" closeLabel="Cancelar" onClose={onCancel}>
+  return <ModalShell title="Diagnóstico do console" closeLabel="Cancelar" showCloseButton={!!onCancel} onClose={() => onCancel?.()}>
     <div className="stack">
       <p role="status">{status}</p>
       {error && <Alert kind="error">{error}</Alert>}

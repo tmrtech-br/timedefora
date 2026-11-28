@@ -115,6 +115,9 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
         cfg = conn.execute('select method, agent_id, internal_host from console_connection_configs where console_id=%s', (cid,)).fetchone()
     assert cfg['method'] == 'remote_play_native' and str(cfg['agent_id']) == agent
     assert api.get(f'/owner/consoles/{cid}/diagnostics').json()['run']['status'] == 'queued'
+    diag_cancel = f"/owner/consoles/{cid}/diagnostics/{d.json()['id']}/cancel"
+    assert api.post(diag_cancel).json()['status'] == 'cancelled'
+    assert api.post(diag_cancel).json()['status'] == 'cancelled'
     st = api.get(f'/owner/consoles/{cid}/review').json()
     assert st['status'] == 'approved' and st['approved_at'] and st['agent_linked'] is True
     # edição de console aprovado: fica pendente (tarifa atual continua)
@@ -124,6 +127,9 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     assert w2.status_code == 201 and w2.json()['status'] == 'pending_review'
     st = api.get(f'/owner/consoles/{cid}/review').json()
     assert st['status'] == 'changes_pending' and st['pending']['rate']['rate_cents'] == 150 and len(st['pending_windows']) == 1
+    freeze(at(3, 13))
+    blocked = api.post(f'/owner/consoles/{cid}/publish')
+    assert blocked.status_code == 409 and blocked.json()['code'] == 'assignment_pending_review'
     assert api.post(f'/owner/consoles/{cid}/submit').status_code == 200
     assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'notes': ''}).status_code == 200
     assert api.get(f'/owner/consoles/{cid}/availability').json()['rate_cents'] == 150

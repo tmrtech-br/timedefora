@@ -881,5 +881,10 @@ html:has(.policy-dialog[open]) { overflow: hidden; }
 .review-game { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: start; padding: 8px; border-radius: 10px; background: #15112b; border: 1px solid var(--line); }
 .review-game img, .review-noimg { width: 96px; aspect-ratio: 3/4; object-fit: cover; border-radius: 8px; background: #221a3c; }
 .review-noimg { display: grid; place-items: center; font-size: 11px; color: var(--muted); }
-.owner-datetime { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; align-items: end; }
-.owner-datetime input[type='time'] { height: 42px; }
+.owner-game-window { align-items: start; }
+.owner-game-window .admin-datetime-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.owner-calendar { min-width: 0; }
+.owner-calendar .cal2-track { height: 29px; }
+.owner-calendar .cal2-ev.reservation { top: 3px; }
+.cal2-ev.assignment.owner-calendar-pending, .cal2-legend i.owner-calendar-pending { background: transparent; border-style: dashed; }
+.owner-calendar-empty { display: inline-block; padding: 5px 8px; color: var(--muted); }

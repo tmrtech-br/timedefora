@@ -10,6 +10,7 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
   const loginUrl = 'https://example.test/login';
   const redirectUrl = `https://remoteplay.dl.playstation.net/remoteplay/redirect?code=${'ficticio'.repeat(32)}`;
   let submittedRedirect: unknown;
+  let loginStarts = 0;
 
   await page.route('**/api/**', (route) => {
     const request = route.request();
@@ -26,9 +27,13 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
       }
       return route.fulfill({ json: consoleRow.owner_requested_psn_account_id ? [account] : [] });
     }
-    if (path === '/api/owner/psn-accounts/psn/login/start') return route.fulfill({ json: { login_url: loginUrl } });
+    if (path === '/api/owner/psn-accounts/psn/login/start') {
+      loginStarts += 1;
+      return route.fulfill({ json: { login_url: loginUrl } });
+    }
     if (path === '/api/owner/psn-accounts/psn/login/finish') {
       submittedRedirect = request.postDataJSON();
+      if (loginStarts === 1) return route.fulfill({ status: 422, json: { code: 'psn_token_expired', detail: 'A Sony recusou a autorização (invalid_grant).' } });
       account.status = 'linked';
       return route.fulfill({ json: account });
     }
@@ -49,6 +54,11 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
   const redirectInput = dialog.getByLabel('Endereço da página após o login');
   await redirectInput.fill(redirectUrl);
   await expect(redirectInput).toHaveValue(redirectUrl);
+  await dialog.getByRole('button', { name: 'Concluir' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('expirou ou já foi usado');
+  await dialog.getByRole('button', { name: 'Reiniciar login Sony' }).click();
+  await expect(redirectInput).toHaveValue('');
+  await redirectInput.fill(redirectUrl);
   await dialog.getByRole('button', { name: 'Concluir' }).click();
   await expect(consoleCard.getByText('Conectada', { exact: true })).toBeVisible();
   expect(submittedRedirect).toEqual({ redirect_url: redirectUrl });

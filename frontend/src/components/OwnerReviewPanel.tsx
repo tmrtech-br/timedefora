@@ -1,5 +1,6 @@
 'use client';
 import { useEffect } from 'react';
+import { CONSOLE_TESTS, ProgressModal } from '@/components/admin/ProgressModal';
 import { Alert, StatusPill } from '@/components/ui';
 import { post } from '@/lib/api';
 import { dateTime, duration, money } from '@/lib/format';
@@ -15,23 +16,24 @@ type Review = {
 type HistoryRow = { code: string; status: string; mode: string; minutes: number; starts_at: string; ends_at: string; total_cents: number;
   game: string; player: string; seconds_used: number | null; end_reason: string | null; first_connected_at: string | null };
 const STATUS: Record<string, string> = { draft: 'Rascunho', submitted: 'Em análise pela equipe', approved: 'Aprovado',
-  changes_pending: 'Alterações não enviadas', rejected: 'Ajustes solicitados' };
+  changes_pending: 'Alterações não enviadas', rejected: 'Ajustes solicitados', in_progress: 'Em andamento' };
 const RES_STATUS: Record<string, string> = { confirmed: 'Na fila', active: 'Jogando', completed: 'Concluída', no_show: 'Ausência',
   cancelled: 'Cancelada', needs_resolution: 'Em resolução', refunded: 'Reembolsada' };
 
-type DiagState = { run: { id: string; status: string; results: { test_type: string; result: string; message: string }[]; error: string | null; finished_at: string | null } | null;
+type DiagState = { run: { id: string; status: string; results: { test_type: string; result: string; message: string }[]; error: string | null; finished_at: string | null; can_cancel?: boolean } | null;
   validation: { validated_at: string | null; video_validated_at: string | null; audio_validated_at: string | null; control_validated_at: string | null;
-    heartbeat_validated_at: string | null; connection_status: string; method: string } | null };
+    heartbeat_validated_at: string | null; connection_status: string; method: string; network_route?: string } | null };
 const TEST_LABEL: Record<string, string> = { discover: 'Encontrar o console', pair: 'Pareamento', psn_auth: 'Conta PSN', connection: 'Conexão',
   video_audio: 'Imagem e áudio', controls: 'Controles', heartbeat: 'Agente', latency: 'Latência' };
 const RESULT_LABEL: Record<string, string> = { passed: '✓ Aprovado', failed: '✗ Falhou', not_available: '— Não se aplica' };
 
 /** Testes e diagnóstico do console (liberados depois da aprovação). A publicação só é liberada com todos aprovados. */
 function Diagnostics({ consoleId, onValidated }: { consoleId: string; onValidated: () => void }) {
-  const diag = useApi<DiagState>(`/owner/consoles/${consoleId}/diagnostics`, 5000);
+  const path = `/owner/consoles/${consoleId}/diagnostics`;
+  const diag = useApi<DiagState>(path, 1500);
   const { run, msg, busy } = useAction();
   const d = diag.data;
-  const running = !!d?.run && ['queued', 'running', 'cancelling'].includes(d.run.status);
+  const activeRun = d?.run && ['queued', 'running', 'cancelling'].includes(d.run.status) ? d.run : null;
   const v = d?.validation;
   // Só quando o console passa a ficar validado (não a cada renderização).
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -42,27 +44,44 @@ function Diagnostics({ consoleId, onValidated }: { consoleId: string; onValidate
     {v?.validated_at ? <Alert kind="ok">Todos os testes aprovados em {dateTime(v.validated_at)}. O console pode ser publicado.</Alert>
       : <p className="small muted" style={{ margin: 0 }}>Deixe o console ligado (ou em repouso com Remote Play ativado) e a conta PSN conectada.
         O teste aplica a sua configuração de conexão, acorda o console e confere imagem, áudio, controles e o agente (leva 1 a 3 minutos).</p>}
-    <div><button className="btn primary" disabled={busy || running} onClick={() => run(async () => {
-      await post(`/owner/consoles/${consoleId}/diagnostics`); diag.reload();
-    }, 'Testes iniciados. Acompanhe abaixo.')}>{running ? 'Testando…' : v?.validated_at ? 'Testar de novo' : 'Aplicar configuração e testar'}</button></div>
-    {d?.run && <ul className="small owner-tests">{d.run.results.map((t) => <li key={t.test_type} className={t.result}>
+    <div><button className="btn primary" disabled={busy || !!activeRun} onClick={() => run(async () => {
+      await post(path); await diag.reload();
+    })}>{activeRun ? 'Testando…' : v?.validated_at ? 'Testar de novo' : 'Aplicar configuração e testar'}</button></div>
+    {activeRun && <ProgressModal
+      status={activeRun.status === 'cancelling' ? 'Cancelando diagnóstico…' : activeRun.status === 'running' ? 'Executando diagnóstico…' : 'Na fila de diagnósticos.'}
+      error={diag.error?.message}
+      tests={CONSOLE_TESTS.filter(([id]) => id !== 'psn_auth' || v?.network_route === 'internet_psn' || activeRun.results.some((result) => result.test_type === id)).map(([id, label], index) => {
+        const result = activeRun.results.find((item) => item.test_type === id);
+        return { id, label, state: result ? (RESULT_LABEL[result.result] ?? result.result) :
+          activeRun.status === 'running' && index === activeRun.results.length ? 'Em execução' : 'Na fila' };
+      })}
+      onCancel={activeRun.can_cancel === false ? undefined : () => {
+        if (busy || activeRun.status === 'cancelling') return;
+        void run(async () => {
+          await post(`${path}/${activeRun.id}/cancel`);
+          await diag.reload();
+        });
+      }} />}
+    {d?.run && !activeRun && <ul className="small owner-tests">{d.run.results.map((t) => <li key={t.test_type} className={t.result}>
       <b>{TEST_LABEL[t.test_type] ?? t.test_type}</b>: {RESULT_LABEL[t.result] ?? t.result}{t.result === 'failed' && t.message ? ` — ${t.message}` : ''}</li>)}
-      {running && <li>Em andamento…</li>}
+      {d.run.status === 'cancelled' && <li>Diagnóstico cancelado.</li>}
       {d.run.error && <li className="failed">{d.run.error}</li>}</ul>}
   </div>;
 }
 
 /** Situação da validação do console pela equipe + ações do proprietário + filas/sessões que o console teve. */
 export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: string; onChange: () => void }) {
-  const review = useApi<Review>(`/owner/consoles/${consoleId}/review`);
+  const review = useApi<Review>(`/owner/consoles/${consoleId}/review`, 15000);
   const history = useApi<HistoryRow[]>(`/owner/consoles/${consoleId}/history`, 30000);
   const { run, msg, busy } = useAction();
   const r = review.data;
   const diag = useApi<DiagState>(r?.approved_at ? `/owner/consoles/${consoleId}/diagnostics` : null, 15000);
   const validated = !!diag.data?.validation?.validated_at;
+  const pendingWindows = !!r?.pending_windows.length;
+  const cardStatus = r?.status === 'approved' && (!validated || !r.is_published) ? 'in_progress' : r?.status;
   const act = (path: string, ok: string) => run(async () => { await post(`/owner/consoles/${consoleId}/${path}`); review.reload(); onChange(); }, ok);
   return <section className="card stack" id="validacao">
-    <div className="spread"><h2 style={{ margin: 0 }}>Validação e publicação</h2>{r && <StatusPill status={r.status} map={STATUS} />}</div>
+    <div className="spread"><h2 style={{ margin: 0 }}>Validação e publicação</h2>{cardStatus && <StatusPill status={cardStatus} map={STATUS} />}</div>
     {msg}{review.error && <Alert kind="error">{review.error.message}</Alert>}
     {r && <>
       <ol className="small owner-steps">
@@ -74,8 +93,10 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
       {r.notes && r.status === 'rejected' && <Alert kind="error"><span><b>Motivo da recusa:</b> {r.notes}<br />
         Corrija o que foi pedido e clique em "Enviar para análise" de novo.</span></Alert>}
       {r.notes && !['rejected', 'approved'].includes(r.status) && <Alert kind="warn">Observações da equipe: {r.notes}</Alert>}
-      {r.status === 'changes_pending' && <Alert kind="info">Você alterou um console aprovado. Ele <b>continua no ar com a versão aprovada</b>;
-        as mudanças valem depois que a equipe validar. Envie para análise quando terminar.</Alert>}
+      {r.status === 'changes_pending' && <Alert kind="info">{pendingWindows
+        ? 'O jogo já está vinculado. Clique em “Enviar para análise” para a equipe aprovar o período.'
+        : 'Clique em “Enviar para análise” para a equipe validar as alterações.'}</Alert>}
+      {r.status === 'submitted' && pendingWindows && <Alert kind="info">O jogo já está vinculado. Aguarde a aprovação do período pela equipe.</Alert>}
       {(r.pending.rate || r.pending_windows.length > 0) && <div className="small">
         <b>Aguardando validação:</b>
         <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
@@ -89,11 +110,11 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
         {['draft', 'rejected', 'changes_pending'].includes(r.status) && <button className="btn primary" disabled={busy || r.missing.length > 0}
           onClick={() => act('submit', 'Enviado para análise. A equipe foi avisada.')}>Enviar para análise</button>}
         {r.status === 'submitted' && <button className="btn" disabled={busy} onClick={() => act('withdraw', 'Envio cancelado: você pode editar de novo.')}>Cancelar envio para editar</button>}
-        {r.approved_at && !r.is_published && <button className="btn primary" disabled={busy || !validated} title={validated ? undefined : 'Rode os testes e o diagnóstico primeiro'}
+        {r.approved_at && !r.is_published && <button className="btn primary" disabled={busy || !validated || pendingWindows} title={pendingWindows ? 'O período do jogo aguarda aprovação' : validated ? undefined : 'Rode os testes e o diagnóstico primeiro'}
           onClick={() => act('publish', 'Console publicado para aluguel.')}>Publicar para aluguel</button>}
         {r.is_published && <button className="btn" disabled={busy} onClick={() => act('unpublish', 'Console fora do ar para novas reservas.')}>Tirar do ar</button>}
       </div>
-      {r.approved_at && <Diagnostics consoleId={consoleId} onValidated={() => { review.reload(); onChange(); }} />}
+      {r.approved_at && <Diagnostics key={consoleId} consoleId={consoleId} onValidated={() => { review.reload(); diag.reload(); onChange(); }} />}
     </>}
     <h3 style={{ margin: '8px 0 0' }}>Filas e sessões deste console</h3>
     <DataTable limit={8} rows={history.data} error={history.error?.message} empty="Este console ainda não teve reservas."

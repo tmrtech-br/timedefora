@@ -1017,18 +1017,22 @@ def diagnostic_run(cid: uuid.UUID, run_id: uuid.UUID, p: Principal = Depends(ADM
 @router.post('/consoles/{cid}/diagnostic-runs/{run_id}/cancel')
 def cancel_diagnostic_run(cid: uuid.UUID, run_id: uuid.UUID, p: Principal = Depends(ADMIN)):
     with tx(p.user_id) as conn:
+        return cancel_console_diagnostic(conn, cid, run_id)
+
+
+def cancel_console_diagnostic(conn, cid, run_id):
+    row = one(conn, '''
+        select id, status from console_diagnostic_runs where id=%s and console_id=%s for update
+    ''', (run_id, cid))
+    if not row:
+        raise not_found()
+    if row['status'] in ('queued', 'running'):
+        queued = row['status'] == 'queued'
         row = one(conn, '''
-            select id, status from console_diagnostic_runs where id=%s and console_id=%s for update
-        ''', (run_id, cid))
-        if not row:
-            raise not_found()
-        if row['status'] in ('queued', 'running'):
-            queued = row['status'] == 'queued'
-            row = one(conn, '''
-                update console_diagnostic_runs set status=%s, pairing_code_enc=null, finished_at=%s
-                where id=%s returning id, status
-            ''', ('cancelled' if queued else 'cancelling', timeutil.now() if queued else None, run_id))
-            audit_event(conn, 'console.diagnostics_cancelled', 'console_diagnostic_runs', run_id)
+            update console_diagnostic_runs set status=%s, pairing_code_enc=null, finished_at=%s
+            where id=%s returning id, status
+        ''', ('cancelled' if queued else 'cancelling', timeutil.now() if queued else None, run_id))
+        audit_event(conn, 'console.diagnostics_cancelled', 'console_diagnostic_runs', run_id)
     return jsonable(row)
 
 
@@ -1235,7 +1239,18 @@ def _publish_console(cid: uuid.UUID, require_assignment: bool = False):
                   and g.deleted_at is null and g.status='published'
                 for share of a, g
             ''', (cid, timeutil.now())):
-                raise conflict('assignment_required', 'Vincule um jogo publicado a uma janela futura antes de publicar.')
+                window = one(conn, '''
+                    select a.status, g.status game_status from console_game_assignments a
+                    join games g on g.id=a.game_id
+                    where a.console_id=%s and a.status in ('active','pending_review')
+                      and a.ends_at>%s and g.deleted_at is null and g.status in ('published','draft')
+                    order by (g.status='published') desc, a.starts_at limit 1
+                ''', (cid, timeutil.now()))
+                if window and window['game_status'] == 'published':
+                    raise conflict('assignment_pending_review', 'O jogo já está vinculado. A equipe precisa aprovar o período antes da publicação.')
+                if window and window['game_status'] == 'draft':
+                    raise conflict('game_pending_review', 'O jogo vinculado ainda está em revisão. Aguarde a publicação do jogo pela equipe.')
+                raise conflict('assignment_required', 'Vincule um jogo publicado a um período que ainda não terminou.')
             conn.execute('update consoles set is_published=true where id=%s', (cid,))
             audit_event(conn, 'console.published', 'consoles', cid)
             return _console_view(conn, one(conn, 'select * from consoles where id=%s', (cid,)))

@@ -1,7 +1,7 @@
 'use client';
 import DateFilter from '@/components/DateFilter';
 import switchStyles from '@/app/configuracoes/settings.module.css';
-import { ProgressModal } from '@/components/admin/ProgressModal';
+import { CONSOLE_TESTS as TESTS, ProgressModal } from '@/components/admin/ProgressModal';
 import { useEffect, useId, useState } from 'react';
 import { Eraser } from 'lucide-react';
 import { Alert, Field, FieldHelp, Modal, PageHeader, StatusPill } from '@/components/ui';
@@ -32,8 +32,6 @@ const ROUTE_HINT: Record<string, string> = {
   internet_port_forward: 'O agente conecta pelo IP público do roteador do console. Exige redirecionar as portas do Remote Play no roteador.',
 };
 
-const TESTS: [string, string][] = [['discover', 'Descobrir console'], ['pair', 'Parear'], ['psn_auth', 'Testar autenticação PSN'], ['connection', 'Testar conexão'], ['video_audio', 'Testar imagem e áudio'],
-  ['controls', 'Testar controles'], ['heartbeat', 'Verificar heartbeat'], ['latency', 'Medir latência']];
 const TEST_DETAILS: Record<string, [string, string]> = {
   discover: ['Localiza o console pela rota configurada.', 'Console desligado ou identificação incorreta.'],
   pair: ['Registra o agente para uso remoto.', 'Código expirado ou uso remoto desativado no console.'],
