@@ -103,6 +103,7 @@ class Job:
     step: str = 'iniciando'
     message: str = ''
     started: float = field(default_factory=time.monotonic)
+    data: dict = field(default_factory=dict)        # ex.: jogo reconhecido (title ID, nome)
 
 
 class ConsoleRuntime:
@@ -112,6 +113,7 @@ class ConsoleRuntime:
         self.session_id: str | None = None
         self.job: Job | None = None
         self.ready_game: str | None = None       # jogo aberto pela última preparação bem-sucedida
+        self.woke = False                        # esta preparação acordou o console (rede local)
         self._lock = threading.RLock()
 
     @property
@@ -202,6 +204,7 @@ class ConsoleRuntime:
         # Conexão nova: o console pode ter hibernado e acordado no menu. O jogo aberto por uma preparação anterior
         # não vale mais; o roteiro de abertura precisa rodar de novo.
         self.ready_game = None
+        self.woke = False
         notes: list[str] = []
         if link.kind == 'chiaki':                                  # no modo direto o registro é conferido ao conectar
             reg = link.registered(t)
@@ -294,12 +297,15 @@ class ConsoleRuntime:
             found = self.d.discover(t.host, t.platform, self.cfg.discovery_timeout_seconds)
             if found and found[0].state == 'ligado':
                 self.d.sleep(5)                                  # o Remote Play sobe alguns segundos depois
+                self.woke = True
                 return 'Console acordado.'
         raise Fail('O console não ligou após o comando de acordar (confira "Ativar ligar o console pela rede" e a chave de registro).')
 
     def _open_game(self, t: Target, j: Job, game: dict) -> str:
         slug, title = game.get('slug'), game.get('title') or game.get('slug') or 'jogo'
         launch = game.get('launch') if isinstance(game.get('launch'), dict) else {}
+        if game.get('title_id') or game.get('detect'):
+            return self._standard_open(t, j, game, title)
         # Roteiro do painel (proprietário/equipe) tem prioridade; senão o do config.json deste agente.
         steps = list(launch.get('steps') or []) or (t.games.get(slug) if slug else None)
         source = 'do painel' if launch.get('steps') else 'do agente'
@@ -332,6 +338,28 @@ class ConsoleRuntime:
         self.ready_game = slug
         checked = ' Jogo confirmado na tela.' if screen.confirmed else ' (roteiro sem confirmação visual do jogo)'
         return f'Roteiro de abertura de "{title}" executado ({len(steps)} passos, roteiro {source}).{checked}'
+
+    def _standard_open(self, t: Target, j: Job, game: dict, title: str) -> str:
+        """Fluxo padrão (sem roteiro): estado pela presença PSN e/ou DDP, perfil → menu → ícone do jogo → confirmação."""
+        from .presence import PsnPresence, StateReader
+        from .standard_flow import FlowError, open_game
+        lan = System(t, self.d.discover) if (t.local_host or t.direct) else None
+        state = StateReader(PsnPresence(t.psn_account_id) if t.psn_account_id else None, lan)
+
+        def progress(step: str) -> None:
+            j.step = f'"{title}": {step}'
+
+        try:
+            settle = float(game.get('settle_seconds') or self.cfg.game_settle_seconds)
+            r = open_game(self.ensure_pad(), state, lambda: self.link.frame().ok, str(game.get('title_id') or ''),
+                          woke=self.woke, detect=bool(game.get('detect')), sleep=self.d.sleep, progress=progress,
+                          settle=0 if game.get('detect') else settle)
+        except FlowError as e:
+            raise Fail(str(e))
+        j.data = {'title_id': r.title_id, 'title_name': r.title_name, 'path': r.path, 'tile': r.tile}
+        if not game.get('detect'):
+            self.ready_game = game.get('slug')
+        return f'{r.message} Caminho: {r.path}. Jogo confirmado pelo console.'
 
     # ------------------------------------------------------------ sessão do jogador
     def start_session(self, session_id: str) -> tuple[bool, str]:

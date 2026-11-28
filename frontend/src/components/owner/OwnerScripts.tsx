@@ -10,8 +10,9 @@ export default function OwnerScripts({ consoles }: { consoles: OwnerConsole[] | 
   return <section className="stack" id="roteiros">
     <div className="card stack">
       <ConsolePicker consoles={consoles} value={id} onChange={setSelected} />
-      <p className="small muted" style={{ margin: 0 }}>Cada jogo vinculado precisa de um roteiro: são os botões que o sistema aperta para abrir o jogo
-        quando um jogador aluga o console. Sem roteiro, o console não é liberado para o aluguel daquele jogo.</p>
+      <p className="small muted" style={{ margin: 0 }}>Cada jogo vinculado precisa ser <b>reconhecido</b> uma vez: o sistema aprende o código do jogo
+        no seu console e, a cada aluguel, abre o jogo pelo menu e só libera o jogador depois que o console confirmar que é o jogo certo.
+        Mantenha o perfil do console com o status <b>Online</b>.</p>
     </div>
     {id && <LaunchScripts key={id} base={`/owner/consoles/${id}`} />}
   </section>;

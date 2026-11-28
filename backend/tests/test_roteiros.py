@@ -40,3 +40,19 @@ def test_roteiro_do_console_do_proprietario(world):
     assert api.delete(f'{base}/{gid}').status_code == 200
     with tx() as conn:
         assert 'launch' not in launch_scripts.game_payload(conn, cid, {'id': gid, 'slug': 'x', 'title': 'X'})
+
+
+def test_jogo_reconhecido_usa_o_fluxo_padrao(world):
+    api, user = _owner('dono_reconhece')
+    cid, gid = str(world['console']['id']), str(world['game']['id'])
+    with tx() as conn:
+        conn.execute('update consoles set owner_user_id=%s where id=%s', (user['id'], cid))
+    base = f'/owner/consoles/{cid}/launch-scripts/{gid}'
+    assert api.put(base + '/title', json={'title_id': 'far cry'}).status_code == 422
+    assert api.put(base + '/title', json={'title_id': 'cusa05904_00', 'title_name': 'Far Cry 5'}).json()['title_id'] == 'CUSA05904'
+    assert api.put(base, json={'steps': ['ps'], 'images': {}}).status_code == 200      # roteiro salvo não apaga o código
+    with tx() as conn:
+        payload = launch_scripts.game_payload(conn, cid, {'id': gid, 'slug': 'x', 'title': 'X'})
+    assert payload['title_id'] == 'CUSA05904' and 'launch' not in payload
+    listed = api.get(f'/owner/consoles/{cid}/launch-scripts').json()['games'][0]
+    assert listed['title_id'] == 'CUSA05904' and listed['title_name'] == 'Far Cry 5'

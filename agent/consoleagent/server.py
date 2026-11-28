@@ -271,7 +271,7 @@ def _health(cfg: AgentConfig, r: ConsoleRuntime) -> dict:
 
 def _job(j) -> dict:
     if j.state == 'ok':
-        return _result(True, j.message, 'streaming', {'step': j.step})
+        return _result(True, j.message, 'streaming', {'step': j.step, **(j.data or {})})
     if j.state == 'failed':
         return _result(False, j.message, 'error', {'step': j.step})
     secs = int(time.monotonic() - j.started)

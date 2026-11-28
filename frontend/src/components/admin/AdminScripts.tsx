@@ -11,7 +11,7 @@ export default function AdminScripts() {
   const consoles = useApi<ConsoleRow[]>('/admin/consoles');
   const [id, setId] = useState('');
   return <div className="stack">
-    <PageHeader title="Roteiros de abertura" subtitle="Botões e conferências de tela que o agente executa para abrir cada jogo." />
+    <PageHeader title="Roteiros de abertura" subtitle="Jogo reconhecido (abertura e confirmação automáticas pelo console) ou roteiro avançado por jogo." />
     <div className="card"><Field label="Console"><select value={id} onChange={(e) => setId(e.target.value)}>
       <option value="">Selecione o console</option>
       {(consoles.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.code} · {c.name} · {c.platform_code}{c.owner_user_id ? ' · proprietário' : ''}</option>)}

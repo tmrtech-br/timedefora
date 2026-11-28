@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Camera, FlaskConical, Plus, Save, Trash2, Wand2, X } from 'lucide-react';
 import { Alert, ErrorBox, Field, Loading, StatusPill } from '@/components/ui';
 import { del, get, post, put } from '@/lib/api';
-import { dateTime } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { useAction } from '@/components/admin/common';
 
 type RefImage = { png: string; width: number };
-type GameScript = { game_id: string; title: string; slug: string; steps: string[]; images: Record<string, RefImage>; updated_at: string | null };
+type GameScript = { game_id: string; title: string; slug: string; steps: string[]; images: Record<string, RefImage>; updated_at: string | null;
+  title_id: string | null; title_name: string | null; settle_seconds: number | null };
 type ScriptList = { console: { id: string; name: string; platform_code: string }; games: GameScript[]; agent_ready: boolean; buttons: string[] };
 type AgentResult = { ok: boolean; message: string; state: string | null; data: Record<string, unknown> };
 
@@ -24,7 +24,6 @@ const BUTTONS = Object.keys(BUTTON_LABEL);
 type Kind = 'boot' | 'wait_app' | 'press' | 'wait' | 'hold' | 'wait_text' | 'wait_image' | 'press_until_text' | 'press_until_image' | 'press_if_text' | 'press_if_image';
 type Step = { kind: Kind; button: string; seconds: string; max: string; target: string };
 const KINDS: { kind: Kind; label: string; help: string }[] = [
-  { kind: 'boot', label: 'Abrir jogo pelo código (PS4, rede local)', help: 'O próprio PS4 abre o jogo pelo código (ex.: CUSA05904), sem navegar no menu. Exige o agente registrado com PIN.' },
   { kind: 'wait_app', label: 'Confirmar jogo aberto pelo sistema (rede local)', help: 'O console informa o jogo aberto: código CUSA ou nome. Mais confiável que imagem; se não confirmar no prazo, a preparação falha.' },
   { kind: 'press', label: 'Apertar botão', help: 'Um toque no botão.' },
   { kind: 'wait', label: 'Esperar', help: 'Pausa fixa, em segundos.' },
@@ -75,11 +74,6 @@ function format(s: Step): string {
 function ps4Template(): string[] {
   return ['ps', 'wait:4', 'press_if_image:cross:boas-vindas', 'wait:5', 'ps', 'wait:3',
     'press_until_image:dpad_right:20:icone-jogo', 'cross', 'wait_image:90:jogo-aberto'];
-}
-
-/** Modelo PS4 na rede local: o próprio console abre e confirma o jogo (sem imagem nem OCR). */
-function ps4SystemTemplate(code: string): string[] {
-  return ['ps', 'wait:3', `boot:${code}`, `wait_app:90:${code}`, 'wait:15'];
 }
 
 type Shot = { png: string; width: number; height: number; text: string[]; ocr_error: string | null;
@@ -145,8 +139,7 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
   const [images, setImages] = useState<Record<string, RefImage>>(game.images);
   const [raw, setRaw] = useState<string | null>(null);
   const [shot, setShot] = useState<Shot>();
-  const [code, setCode] = useState(() => game.steps.find((x) => x.startsWith('boot:'))?.slice(5) ?? '');
-  const [pin, setPin] = useState('');
+
   const [test, setTest] = useState<AgentResult>();
   const { busy, msg, run } = useAction();
   const list = raw !== null ? raw.split('\n').map((l) => l.trim()).filter(Boolean) : steps.map(format);
@@ -168,33 +161,12 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
   const body = () => ({ steps: list, images });
 
   return <div className="card stack launch-editor">
-    <div className="spread"><h3 style={{ margin: 0 }}>Roteiro de “{game.title}”</h3>
+    <div className="spread"><h3 style={{ margin: 0 }}>Roteiro avançado de “{game.title}”</h3>
       <button className="btn sm" onClick={onClose}><X size={15} aria-hidden /> Fechar</button></div>
     {msg}
-    <p className="small muted" style={{ margin: 0 }}>O agente executa os passos em ordem ao preparar o console para cada reserva.
-      Use os passos de <b>elemento</b> (recortes da tela do console) para conferir onde está: se o jogo não for confirmado, a preparação
-      falha e a equipe é avisada, em vez de liberar o jogador no menu do console.</p>
-    <div className="card stack launch-system">
-      <strong>Pelo sistema do console (recomendado no PS4 na mesma rede do agente)</strong>
-      <p className="small muted" style={{ margin: 0 }}>O PS4 abre o jogo pelo código e confirma qual jogo está aberto, sem depender da imagem.
-        Para descobrir o código, abra o jogo no console e clique em “Capturar tela do console”: ele aparece aqui.</p>
-      <div className="row">
-        <Field label="Código do jogo (CUSA…)"><input value={code} maxLength={9} placeholder="CUSA05904"
-          onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))} /></Field>
-        <button className="btn sm" disabled={!/^[A-Z]{4}\d{5}$/.test(code)} onClick={() => { setRaw(null); setSteps(ps4SystemTemplate(code).map(parse)); }}>
-          <Wand2 size={15} aria-hidden /> Usar modelo pelo código</button>
-      </div>
-      <div className="row">
-        <Field label="PIN do PS4 (registro único)" hint="No PS4: Configurações > Configurações de conexão do aplicativo móvel > Adicionar dispositivo.">
-          <input value={pin} inputMode="numeric" maxLength={8} placeholder="8 dígitos" onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))} /></Field>
-        <button className="btn sm" disabled={busy || pin.length !== 8} onClick={() => void run(async () => {
-          const r = await post<AgentResult>(`${base}/secondscreen/pair`, { pin });
-          if (!r.ok) throw new Error(r.message);
-          setPin('');
-          return r;
-        }, 'Agente registrado no PS4.')}>Registrar agente no PS4</button>
-      </div>
-    </div>
+    <p className="small muted" style={{ margin: 0 }}>Só para jogos com abertura especial. Com o jogo reconhecido, o sistema abre e confirma o jogo
+      sozinho e este roteiro não é usado. Sem o jogo reconhecido, o agente executa estes passos em ordem; use os de <b>elemento</b>
+      (recortes da tela) para conferir onde está.</p>
     <div className="row">
       <button className="btn sm" onClick={() => { setRaw(null); setSteps(ps4Template().map(parse)); }}><Wand2 size={15} aria-hidden /> Usar modelo por elementos</button>
       <button className="btn sm" onClick={() => raw === null ? setRaw(steps.map(format).join('\n')) : applyRaw()}>
@@ -251,8 +223,7 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
           const r = await post<AgentResult>(`${base}/screen`);
           if (!r.ok) throw new Error(r.message);
           setShot(r.data as Shot);
-          const running = (r.data as Shot).running_app;
-          if (running?.title_id && !code) setCode(running.title_id);
+
         })}><Camera size={15} aria-hidden /> Capturar tela do console</button></div>
       {Object.keys(images).length === 0 ? <p className="small muted" style={{ margin: 0 }}>Nenhuma. Abra o jogo no console, capture a tela e recorte um elemento do jogo para confirmar que ele abriu.</p>
         : <div className="launch-images">{Object.entries(images).map(([n, im]) => <figure key={n}>
@@ -280,7 +251,62 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
   </div>;
 }
 
-/** Roteiros de abertura dos jogos de um console (proprietário: base /owner/consoles/ID; equipe: /admin/consoles/ID). */
+/** Abertura automática de um jogo: reconhecer o código do jogo no console, confirmar e testar. */
+function GameOpening({ base, game, agentReady, onSaved, onAdvanced }: {
+  base: string; game: GameScript; agentReady: boolean; onSaved: () => Promise<void>; onAdvanced: () => void;
+}) {
+  const [job, setJob] = useState<{ kind: 'detect' | 'test'; result: AgentResult }>();
+  const [code, setCode] = useState(game.title_id ?? '');
+  const { busy, msg, run } = useAction();
+  const running = job?.result.state === 'connecting';
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => {
+      get<AgentResult>(`${base}/launch-test`).then((r) => setJob((j) => j && { ...j, result: r })).catch(() => undefined);
+    }, 2500);
+    return () => window.clearInterval(timer);
+  }, [running, base]);
+  const found = job?.kind === 'detect' && job.result.ok ? job.result.data as { title_id?: string; title_name?: string } : null;
+  const saveTitle = (titleId: string, titleName: string) => run(async () => {
+    await put(`${base}/launch-scripts/${game.game_id}/title`, { title_id: titleId, title_name: titleName });
+    setJob(undefined); await onSaved();
+  }, 'Jogo reconhecido. As próximas preparações abrem e confirmam este jogo automaticamente.');
+
+  return <div className="card stack launch-opening">
+    <div className="spread"><strong>{game.title}</strong>
+      {game.title_id ? <StatusPill status="ok" map={{ ok: `Reconhecido · ${game.title_id}` }} tone="green" />
+        : game.steps.length ? <StatusPill status="s" map={{ s: `Roteiro · ${game.steps.length} passos` }} tone="amber" />
+        : <StatusPill status="missing" map={{ missing: 'Não reconhecido' }} tone="red" />}</div>
+    {msg}
+    {game.title_id ? <p className="small muted" style={{ margin: 0 }}>O sistema abre <b>{game.title_name || game.title_id}</b> pelo menu do console
+      e só libera o jogador depois que o próprio console confirmar o código {game.title_id}.</p>
+      : <p className="small muted" style={{ margin: 0 }}>Antes de reconhecer: <b>abra este jogo uma vez no console</b> (ele passa a ser o primeiro do menu)
+        e deixe o perfil com o status <b>Online</b> (Perfil &gt; Definir status online). O sistema abre o último jogo usado e mostra qual abriu.</p>}
+    {job && <Alert kind={job.result.ok ? 'ok' : running ? 'info' : 'error'}>{job.result.message}</Alert>}
+    {found?.title_id && <div className="row">
+      <span>Abriu <b>{found.title_name || found.title_id}</b> ({found.title_id}). É este jogo?</span>
+      <button className="btn primary sm" disabled={busy} onClick={() => void saveTitle(found.title_id!, found.title_name ?? '')}>Sim, salvar</button>
+      <button className="btn sm" onClick={() => setJob(undefined)}>Não</button>
+    </div>}
+    <div className="row">
+      <button className="btn primary sm" disabled={busy || running || !agentReady} onClick={() => void run(async () => {
+        setJob({ kind: 'detect', result: await post<AgentResult>(`${base}/launch-scripts/${game.game_id}/detect`) });
+      })}>{running && job?.kind === 'detect' ? 'Reconhecendo…' : game.title_id ? 'Reconhecer de novo' : 'Reconhecer jogo'}</button>
+      {(game.title_id || game.steps.length > 0) && <button className="btn sm" disabled={busy || running || !agentReady} onClick={() => void run(async () => {
+        setJob({ kind: 'test', result: await post<AgentResult>(`${base}/launch-scripts/${game.game_id}/test`, {}) });
+      })}>{running && job?.kind === 'test' ? 'Testando…' : 'Testar abertura'}</button>}
+      <button className="btn sm" onClick={onAdvanced}>Roteiro avançado</button>
+    </div>
+    <details className="small"><summary>Informar o código manualmente</summary>
+      <div className="row" style={{ marginTop: 6 }}>
+        <Field label="Código do jogo (CUSA/PPSA)"><input value={code} maxLength={12} placeholder="CUSA05904"
+          onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))} /></Field>
+        <button className="btn sm" disabled={busy || !/^[A-Z]{4}\d{5}(_\d{2})?$/.test(code)} onClick={() => void saveTitle(code, game.title_name ?? '')}>Salvar código</button>
+      </div></details>
+  </div>;
+}
+
+/** Abertura dos jogos de um console (proprietário: base /owner/consoles/ID; equipe: /admin/consoles/ID). */
 export default function LaunchScripts({ base }: { base: string }) {
   const data = useApi<ScriptList>(`${base}/launch-scripts`);
   const [editing, setEditing] = useState<string>();
@@ -290,17 +316,10 @@ export default function LaunchScripts({ base }: { base: string }) {
   if (data.error) return <ErrorBox error={data.error} onRetry={data.reload} />;
   if (!d) return null;
   return <div className="stack">
-    {!d.agent_ready && <Alert kind="info">O teste no console e a captura de tela ficam disponíveis depois que o console for aprovado e a conexão for aplicada a um agente.
-      Você já pode montar e salvar os roteiros.</Alert>}
+    {!d.agent_ready && <Alert kind="info">Reconhecer e testar ficam disponíveis depois que o console for aprovado e a conexão for aplicada a um agente.</Alert>}
     {game ? <Editor key={game.game_id} base={base} game={game} buttons={d.buttons} onSaved={data.reload} onClose={() => setEditing(undefined)} />
       : d.games.length === 0 ? <p className="muted">Nenhum jogo vinculado a este console. Vincule os jogos no cadastro do console.</p>
-      : <div className="card table-wrap"><table className="table"><thead><tr><th>Jogo</th><th>Roteiro</th><th>Atualizado</th><th /></tr></thead>
-        <tbody>{d.games.map((g) => <tr key={g.game_id}>
-          <td>{g.title}</td>
-          <td>{g.steps.length ? <StatusPill status="ok" map={{ ok: `${g.steps.length} passos` }} tone="green" />
-            : <StatusPill status="missing" map={{ missing: 'Sem roteiro' }} tone="red" />}</td>
-          <td className="small muted">{g.updated_at ? dateTime(g.updated_at) : '—'}</td>
-          <td><button className="btn sm" onClick={() => setEditing(g.game_id)}>{g.steps.length ? 'Editar roteiro' : 'Criar roteiro'}</button></td>
-        </tr>)}</tbody></table></div>}
+      : d.games.map((g) => <GameOpening key={g.game_id} base={base} game={g} agentReady={d.agent_ready} onSaved={data.reload}
+        onAdvanced={() => setEditing(g.game_id)} />)}
   </div>;
 }

@@ -87,19 +87,31 @@ def validate(steps: list, images: dict) -> tuple[list[str], dict]:
     return clean, clean_images
 
 
+TITLE_RE = re.compile(r'^[A-Z]{4}\d{5}$')
+
+
+def _row(conn, console_id, game_id):
+    return conn.execute('select steps, images, title_id, settle_seconds from game_launch_scripts where console_id=%s and game_id=%s',
+                        (console_id, game_id)).fetchone()
+
+
 def for_console(conn, console_id, game_id) -> dict | None:
-    """Roteiro salvo para o jogo neste console (enviado ao agente na preparação)."""
-    row = conn.execute('select steps, images from game_launch_scripts where console_id=%s and game_id=%s',
-                       (console_id, game_id)).fetchone()
+    """Roteiro salvo para o jogo neste console (passos extras; enviado ao agente na preparação)."""
+    row = _row(conn, console_id, game_id)
     if not row or not row['steps']:
         return None
     return {'steps': list(row['steps']), 'images': dict(row['images'] or {})}
 
 
 def game_payload(conn, console_id, game: dict) -> dict:
-    """Jogo como o agente espera (id/slug/título) + o roteiro do painel, quando houver."""
+    """Jogo como o agente espera. Com o código do jogo reconhecido, o agente usa o fluxo padrão (menu + confirmação
+    pelo console); sem ele, o roteiro do painel ou do config.json do agente."""
     out = {'id': str(game.get('id') or ''), 'slug': game.get('slug'), 'title': game.get('title')}
-    launch = for_console(conn, console_id, game.get('id')) if game.get('id') else None
-    if launch:
-        out['launch'] = launch
+    row = _row(conn, console_id, game.get('id')) if game.get('id') else None
+    if row and row['title_id']:
+        out['title_id'] = row['title_id']
+        if row['settle_seconds'] is not None:
+            out['settle_seconds'] = row['settle_seconds']
+    elif row and row['steps']:
+        out['launch'] = {'steps': list(row['steps']), 'images': dict(row['images'] or {})}
     return out

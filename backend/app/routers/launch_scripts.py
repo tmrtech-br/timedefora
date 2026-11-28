@@ -24,6 +24,12 @@ class ScriptIn(BaseModel):
     images: dict[str, dict] = Field(default_factory=dict)
 
 
+class TitleIn(BaseModel):
+    title_id: str = Field(pattern=r'^[A-Za-z]{4}\d{5}(_\d{2})?$')
+    title_name: str = Field(default='', max_length=120)
+    settle_seconds: int | None = Field(default=None, ge=0, le=300)
+
+
 class PinIn(BaseModel):
     pin: str = Field(pattern=r'^\d{8}$')     # PIN de 8 dígitos da tela "Adicionar dispositivo" do PS4
 
@@ -57,7 +63,7 @@ def _list(console_id: UUID, owner_id: str | None):
     with tx() as conn:
         console = _console(conn, console_id, owner_id)
         rows = all_(conn, '''
-            select g.id game_id, g.title, g.slug, s.steps, s.images, s.updated_at
+            select g.id game_id, g.title, g.slug, s.steps, s.images, s.updated_at, s.title_id, s.title_name, s.settle_seconds
             from games g left join game_launch_scripts s on s.game_id=g.id and s.console_id=%s
             where g.deleted_at is null and (s.id is not null or exists (
                 select 1 from console_game_assignments a where a.console_id=%s and a.game_id=g.id
@@ -82,6 +88,30 @@ def _save(console_id: UUID, game_id: UUID, body: ScriptIn, p: Principal, owner_i
         audit_event(conn, 'console.launch_script_saved', 'consoles', console_id,
                     details={'game_id': str(game_id), 'steps': len(steps), 'images': sorted(images)})
     return {'ok': True, 'steps': steps}
+
+
+def _save_title(console_id: UUID, game_id: UUID, body: TitleIn, p: Principal, owner_id: str | None):
+    code = body.title_id.upper().split('_')[0]
+    with tx(p.user_id) as conn:
+        _console(conn, console_id, owner_id)
+        _linked_game(conn, console_id, game_id)
+        conn.execute('''insert into game_launch_scripts(console_id, game_id, title_id, title_name, settle_seconds, updated_by, updated_at)
+                        values (%s,%s,%s,%s,%s,%s,%s) on conflict (console_id, game_id) do update
+                        set title_id=excluded.title_id, title_name=excluded.title_name, settle_seconds=excluded.settle_seconds,
+                            updated_by=excluded.updated_by, updated_at=excluded.updated_at''',
+                     (console_id, game_id, code, body.title_name.strip()[:120] or None, body.settle_seconds, p.user_id, timeutil.now()))
+        audit_event(conn, 'console.game_title_saved', 'consoles', console_id, details={'game_id': str(game_id), 'title_id': code})
+    return {'ok': True, 'title_id': code}
+
+
+def _detect(console_id: UUID, game_id: UUID, owner_id: str | None):
+    """Reconhecer: o agente abre o último jogo usado no console e informa o código e o nome (o usuário confirma)."""
+    with tx() as conn:
+        _console(conn, console_id, owner_id)
+        game = _linked_game(conn, console_id, game_id)
+        adapter, ref = _agent(conn, console_id, 'script_test')
+    return _call(adapter.script_test, ref, {'id': str(game['id']), 'slug': f"detect-{game['slug']}", 'title': game['title'],
+                                            'detect': True})
 
 
 def _delete(console_id: UUID, game_id: UUID, p: Principal, owner_id: str | None):
@@ -124,12 +154,13 @@ def _test(console_id: UUID, game_id: UUID, body: TestIn, owner_id: str | None):
         if body.steps is not None:
             steps, images = ls.validate(body.steps, body.images or {})
             launch = {'steps': steps, 'images': images}
+            payload = {'id': str(game['id']), 'slug': game['slug'], 'title': game['title'], 'launch': launch}
         else:
-            launch = ls.for_console(conn, console_id, game_id)
-        if not launch or not launch['steps']:
-            raise conflict('no_script', 'Cadastre os passos do roteiro antes de testar.')
+            payload = ls.game_payload(conn, console_id, game)
+        if not payload.get('title_id') and not (payload.get('launch') or {}).get('steps'):
+            raise conflict('no_script', 'Reconheça o jogo (ou cadastre os passos do roteiro) antes de testar.')
         adapter, ref = _agent(conn, console_id, 'script_test')
-    return _call(adapter.script_test, ref, {'id': str(game['id']), 'slug': game['slug'], 'title': game['title'], 'launch': launch})
+    return _call(adapter.script_test, ref, payload)
 
 
 def _status(console_id: UUID, owner_id: str | None):
@@ -178,6 +209,16 @@ def owner_test(console_id: UUID, game_id: UUID, body: TestIn, p: Principal = Dep
     return _test(console_id, game_id, body, p.user_id)
 
 
+@owner_router.put('/launch-scripts/{game_id}/title')
+def owner_title(console_id: UUID, game_id: UUID, body: TitleIn, p: Principal = Depends(enrolled_owner)):
+    return _save_title(console_id, game_id, body, p, p.user_id)
+
+
+@owner_router.post('/launch-scripts/{game_id}/detect')
+def owner_detect(console_id: UUID, game_id: UUID, p: Principal = Depends(enrolled_owner)):
+    return _detect(console_id, game_id, p.user_id)
+
+
 @owner_router.get('/launch-test')
 def owner_status(console_id: UUID, p: Principal = Depends(enrolled_owner)):
     return _status(console_id, p.user_id)
@@ -212,6 +253,16 @@ def admin_delete(console_id: UUID, game_id: UUID, p: Principal = Depends(OPERATO
 @admin_router.post('/launch-scripts/{game_id}/test')
 def admin_test(console_id: UUID, game_id: UUID, body: TestIn, p: Principal = Depends(OPERATOR)):
     return _test(console_id, game_id, body, None)
+
+
+@admin_router.put('/launch-scripts/{game_id}/title')
+def admin_title(console_id: UUID, game_id: UUID, body: TitleIn, p: Principal = Depends(OPERATOR)):
+    return _save_title(console_id, game_id, body, p, None)
+
+
+@admin_router.post('/launch-scripts/{game_id}/detect')
+def admin_detect(console_id: UUID, game_id: UUID, p: Principal = Depends(OPERATOR)):
+    return _detect(console_id, game_id, None)
 
 
 @admin_router.get('/launch-test')
