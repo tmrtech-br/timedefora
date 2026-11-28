@@ -21,6 +21,7 @@ ADMIN_MENUS = {
     'audit': ('auditoria', 'Auditoria', 'admin'),
     'settings': ('parametros', 'Parâmetros', 'admin'),
     'policies': ('configuracoes', 'Configurações avançadas e políticas', 'admin'),
+    'owner-reviews owner-payouts': ('aprovacoes', 'Proprietários', 'admin'),
 }
 RESOURCE_MENUS = {
     resource: section for resources, (section, _, _) in ADMIN_MENUS.items()

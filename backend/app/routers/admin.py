@@ -1337,13 +1337,18 @@ def register_assignment(body: AssignmentIn, actor_id: str, owner_user_id: str | 
             g = one(conn, 'select * from games where id=%s and deleted_at is null', (body.game_id,))
             if not c or not g:
                 raise not_found('Console ou jogo inexistente.')
+            status = 'active'
             if owner_user_id is not None:
                 if str(c['owner_user_id']) != owner_user_id:
                     raise not_found()
-                if c['is_published']:
-                    raise conflict('console_published', 'Solicite a despublicação do console para alterar a agenda.')
-                if g['status'] != 'published':
+                if c['owner_review_status'] == 'submitted':
+                    raise conflict('under_review', 'Console em análise: aguarde a equipe ou cancele o envio para editar.')
+                # Jogo do catálogo ou rascunho proposto pelo próprio proprietário (só vende depois de publicado).
+                if g['status'] != 'published' and not (g['status'] == 'draft' and str(g['created_by']) == owner_user_id):
                     raise not_found('Jogo indisponível.')
+                if c['owner_approved_at'] is not None:
+                    status = 'pending_review'                  # console aprovado: a nova janela aguarda a equipe
+                    conn.execute("update consoles set owner_review_status='changes_pending' where id=%s", (c['id'],))
             _check_platform(conn, body.console_id, body.game_id)
             for i in range(count):
                 off = step * i if step else timedelta(0)
@@ -1352,7 +1357,7 @@ def register_assignment(body: AssignmentIn, actor_id: str, owner_user_id: str | 
                           (body.console_id, e, s))
                 row = insert(conn, 'console_game_assignments', {
                     'console_id': body.console_id, 'game_id': body.game_id, 'starts_at': s, 'ends_at': e,
-                    'recurrence_group_id': group, 'responsible_user_id': body.responsible_user_id or actor_id,
+                    'recurrence_group_id': group, 'responsible_user_id': body.responsible_user_id or actor_id, 'status': status,
                     'notes': body.notes + (' [há manutenção/bloqueio dentro desta janela]' if blk else ''),
                     'created_by': actor_id, 'updated_by': actor_id})
                 created.append(row)
@@ -2410,3 +2415,103 @@ def publish_policy(body: PolicyIn, p: Principal = Depends(SUPER)):
         except psycopg.errors.UniqueViolation:
             raise conflict('version_exists', 'Versão já publicada.')
     return jsonable(row)
+
+
+# ================================================================== validação de consoles de proprietários
+@router.get('/owner-reviews')
+def owner_reviews(p: Principal = Depends(ADMIN)):
+    """Consoles de proprietários aguardando análise (novos ou alterações de consoles aprovados)."""
+    with tx() as conn:
+        rows = all_(conn, '''
+            select c.id, c.code, c.name, c.model, c.location, c.description, c.is_published, p.code platform_code,
+                   c.owner_review_status status, c.owner_review_notes notes, c.owner_submitted_at submitted_at,
+                   c.owner_approved_at approved_at, c.owner_pending pending,
+                   coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id, ag.name agent_name,
+                   u.username owner_username, u.email owner_email, pa.label psn_label, pa.online_id psn_online_id,
+                   r.min_minutes, r.max_minutes, r.rate_unit, r.rate_cents, r.paused
+            from consoles c join platforms p on p.id=c.platform_id join users u on u.id=c.owner_user_id
+            left join console_connection_configs cfg on cfg.console_id=c.id
+            left join console_agents ag on ag.id=coalesce(c.owner_onboarding_agent_id, cfg.agent_id)
+            left join psn_accounts pa on pa.id=coalesce(c.owner_requested_psn_account_id, cfg.psn_account_id)
+            left join owner_console_rates r on r.console_id=c.id
+            where c.owner_user_id is not null and c.deleted_at is null
+              and c.owner_review_status in ('submitted','changes_pending')
+            order by (c.owner_review_status='submitted') desc, c.owner_submitted_at nulls last''')
+        for c in rows:
+            c['windows'] = all_(conn, '''select a.id, a.status, a.starts_at, a.ends_at, g.title, g.status game_status, g.slug
+                                         from console_game_assignments a join games g on g.id=a.game_id
+                                         where a.console_id=%s and a.status in ('active','pending_review') and a.ends_at > %s
+                                         order by a.starts_at''', (c['id'], timeutil.now()))
+        return jsonable(rows)
+
+
+class OwnerReviewIn(BaseModel):
+    agent_id: uuid.UUID | None = None
+    notes: str = Field(default='', max_length=1000)
+
+
+def _notify_owner_review(conn, cid, approved: bool, notes: str) -> None:
+    c = one(conn, 'select name, owner_user_id from consoles where id=%s', (cid,))
+    msg = ('A equipe validou o console. ' + ('Você já pode publicá-lo para aluguel no portal.' if approved else '')
+           if approved else 'A equipe pediu ajustes antes de liberar o console. ') + (f' Observações: {notes}' if notes else '')
+    notifications.notify(conn, str(c['owner_user_id']), 'owner_review',
+                         {'console': c['name'], 'resultado': 'aprovado' if approved else 'ajustes necessários', 'mensagem': msg.strip()},
+                         dedupe=f'owner_review:{cid}:{int(timeutil.now().timestamp())}', link='/proprietario')
+
+
+@router.post('/owner-reviews/{cid}/approve')
+def approve_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = Depends(SUPER)):
+    try:
+        with tx(p.user_id) as conn:
+            c = one(conn, '''select c.*, cfg.agent_id cfg_agent from consoles c left join console_connection_configs cfg on cfg.console_id=c.id
+                             where c.id=%s and c.owner_user_id is not null and c.deleted_at is null for update of c''', (cid,))
+            if not c:
+                raise not_found()
+            if c['owner_review_status'] != 'submitted':
+                raise conflict('not_submitted', 'O proprietário ainda não enviou este console para análise.')
+            agent = body.agent_id or c['owner_onboarding_agent_id'] or c['cfg_agent']
+            if not agent:
+                raise unprocessable('agent_required', 'Escolha o agente que vai controlar este console.')
+            psn_accounts._agent(conn, agent)
+            if body.agent_id and c['is_published'] and str(body.agent_id) != str(c['owner_onboarding_agent_id'] or c['cfg_agent']):
+                raise conflict('console_published', 'Despublique o console antes de trocar o agente.')
+            conn.execute('update consoles set owner_onboarding_agent_id=%s where id=%s', (agent, cid))
+            rate = (c['owner_pending'] or {}).get('rate')
+            if rate:
+                conn.execute('''insert into owner_console_rates(console_id, min_minutes, max_minutes, rate_unit, rate_cents)
+                                values (%s,%s,%s,%s,%s) on conflict (console_id) do update set min_minutes=excluded.min_minutes,
+                                max_minutes=excluded.max_minutes, rate_unit=excluded.rate_unit, rate_cents=excluded.rate_cents''',
+                             (cid, rate['min_minutes'], rate['max_minutes'], rate['rate_unit'], rate['rate_cents']))
+            conn.execute("update console_game_assignments set status='active', updated_by=%s where console_id=%s and status='pending_review'",
+                         (p.user_id, cid))
+            n = timeutil.now()
+            conn.execute('''update consoles set owner_review_status='approved', owner_review_notes=%s, owner_reviewed_at=%s,
+                            owner_reviewed_by=%s, owner_approved_at=coalesce(owner_approved_at, %s), owner_pending='{}'::jsonb
+                            where id=%s''', (body.notes, n, p.user_id, n, cid))
+            audit_event(conn, 'owner.console_approved', 'consoles', cid, reason=body.notes, details={'agent_id': str(agent)})
+            _notify_owner_review(conn, cid, True, body.notes)
+    except psycopg.errors.ExclusionViolation:
+        raise conflict('overlap', 'Uma janela pedida pelo proprietário conflita com outra já ativa neste console. Recuse e peça ajuste.')
+    return {'ok': True}
+
+
+@router.post('/owner-reviews/{cid}/reject')
+def reject_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = Depends(ADMIN)):
+    if len(body.notes.strip()) < 5:
+        raise unprocessable('notes_required', 'Explique ao proprietário o que precisa ser ajustado.')
+    with tx(p.user_id) as conn:
+        c = one(conn, 'select * from consoles where id=%s and owner_user_id is not null and deleted_at is null for update', (cid,))
+        if not c:
+            raise not_found()
+        if c['owner_approved_at'] is not None:
+            # Console já aprovado: descarta as alterações pedidas; segue no ar com a versão aprovada.
+            conn.execute("update console_game_assignments set status='cancelled' where console_id=%s and status='pending_review'", (cid,))
+            status = 'approved'
+        else:
+            status = 'rejected'
+        conn.execute('''update consoles set owner_review_status=%s, owner_review_notes=%s, owner_reviewed_at=%s,
+                        owner_reviewed_by=%s, owner_pending='{}'::jsonb where id=%s''',
+                     (status, body.notes.strip(), timeutil.now(), p.user_id, cid))
+        audit_event(conn, 'owner.console_rejected', 'consoles', cid, reason=body.notes)
+        _notify_owner_review(conn, cid, False, body.notes.strip())
+    return {'ok': True, 'status': status}

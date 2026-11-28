@@ -96,7 +96,9 @@ def consoles(p: Principal = Depends(enrolled_owner)):
         return jsonable(all_(conn, '''
             select c.id, c.code, c.name, c.status, c.is_published, p.code platform_code,
                    coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id, cfg.psn_account_id,
-                   c.owner_requested_psn_account_id
+                   c.owner_requested_psn_account_id, c.owner_review_status review_status, c.owner_review_notes review_notes,
+                   c.owner_submitted_at submitted_at, c.owner_reviewed_at reviewed_at, c.owner_approved_at approved_at,
+                   c.owner_pending pending
             from consoles c join platforms p on p.id=c.platform_id
             left join console_connection_configs cfg on cfg.console_id=c.id
             where c.owner_user_id=%s and c.deleted_at is null order by c.name
@@ -121,17 +123,23 @@ def create_console(body: ConsoleIn, p: Principal = Depends(enrolled_owner)):
 
 def owned_console(conn, console_id: UUID, owner_id: str, *, edit: bool = False, allow_published: bool = False):
     row = one(conn, '''
-        select c.id, c.is_published, c.platform_id, p.code platform_code,
-               coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id
+        select c.id, c.name, c.is_published, c.platform_id, p.code platform_code, c.owner_review_status, c.owner_approved_at,
+               c.owner_pending, coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id
         from consoles c join console_connection_configs cfg on cfg.console_id=c.id
         join platforms p on p.id=c.platform_id
         where c.id=%s and c.owner_user_id=%s and c.deleted_at is null
     ''' + (' for update of c, cfg' if edit else ''), (console_id, owner_id))
     if not row:
         raise not_found()
-    if edit and row['is_published'] and not allow_published:
-        raise conflict('console_published', 'Solicite a despublicação do console para alterar o cadastro.')
+    if edit and not allow_published and row['owner_review_status'] == 'submitted':
+        raise conflict('under_review', 'Console em análise: aguarde a equipe ou cancele o envio para editar.')
     return row
+
+
+def _changed(conn, row) -> None:
+    """Edição num console já aprovado: fica pendente de nova validação (o console segue no ar com o aprovado)."""
+    if row['owner_approved_at'] is not None:
+        conn.execute("update consoles set owner_review_status='changes_pending' where id=%s", (row['id'],))
 
 
 class OwnerAccountIn(BaseModel):
@@ -212,7 +220,11 @@ def request_connection(console_id: UUID, body: ConnectionRequestIn, p: Principal
         account = psn_accounts._account(conn, body.psn_account_id, lock=True, owner_user_id=p.user_id)
         if not console['agent_id'] or account['agent_id'] != console['agent_id'] or account['status'] != 'linked':
             raise conflict('account_not_ready', 'Selecione uma conta PSN vinculada ao agente do console.')
+        previous = one(conn, '''select c.owner_requested_psn_account_id, cfg.psn_account_id from consoles c
+                                left join console_connection_configs cfg on cfg.console_id=c.id where c.id=%s''', (console_id,))
         conn.execute('update consoles set owner_requested_psn_account_id=%s where id=%s', (account['id'], console_id))
+        if previous['owner_requested_psn_account_id'] or previous['psn_account_id']:
+            _changed(conn, console)          # trocar a conta de um console aprovado volta para análise; a 1ª conexão não
         audit_event(conn, 'owner.console_psn_requested', 'consoles', console_id,
                     details={'psn_account_id': str(account['id'])})
     return {'status': 'requested'}
@@ -291,6 +303,7 @@ def create_game_draft(console_id: UUID, body: GameDraftIn, p: Principal = Depend
         except psycopg.errors.UniqueViolation:
             raise conflict('slug_taken', 'Já existe um jogo com este slug.')
         admin._set_game_relations(conn, row['id'], [platform['code']], body.genres[:30])
+        _changed(conn, console)
         audit_event(conn, 'owner.game_draft_created', 'games', row['id'])
     return jsonable(row)
 
@@ -317,7 +330,14 @@ def save_availability(console_id: UUID, body: RateIn, p: Principal = Depends(enr
     if body.min_minutes > body.max_minutes:
         raise unprocessable('invalid_duration', 'A duração máxima precisa ser maior ou igual à mínima.')
     with tx(p.user_id) as conn:
-        owned_console(conn, console_id, p.user_id, edit=True)
+        row = owned_console(conn, console_id, p.user_id, edit=True)
+        if row['owner_approved_at'] is not None:
+            # Console aprovado: a nova tarifa só vale depois que a equipe validar.
+            conn.execute('''update consoles set owner_review_status='changes_pending',
+                            owner_pending = owner_pending || jsonb_build_object('rate', %s::jsonb) where id=%s''',
+                         (json.dumps(body.model_dump()), console_id))
+            audit_event(conn, 'owner.console_rate_change_requested', 'consoles', console_id)
+            return {**body.model_dump(), 'pending': True}
         conn.execute('''
             insert into owner_console_rates(console_id, min_minutes, max_minutes, rate_unit, rate_cents)
             values (%s,%s,%s,%s,%s)
@@ -347,7 +367,9 @@ def pause_availability(console_id: UUID, body: PauseAvailabilityIn, p: Principal
 @router.delete('/consoles/{console_id}/availability')
 def delete_availability(console_id: UUID, body: DeleteIn, p: Principal = Depends(enrolled_owner)):
     with tx(p.user_id) as conn:
-        owned_console(conn, console_id, p.user_id, edit=True)
+        row = owned_console(conn, console_id, p.user_id, edit=True)
+        if row['owner_approved_at'] is not None:
+            raise conflict('approved_console', 'Console aprovado: pause a disponibilidade ou envie uma nova tarifa para análise.')
         if not conn.execute('delete from owner_console_rates where console_id=%s', (console_id,)).rowcount:
             raise not_found()
         audit_event(conn, 'owner.console_availability_deleted', 'consoles', console_id, reason=body.reason)
@@ -442,3 +464,97 @@ def save_payout_destination(body: PayoutIn, p: Principal = Depends(enrolled_owne
         audit_event(conn, 'owner.payout_destination_changed', 'owner_payout_destinations', row['id'],
                     details={'kind': body.kind})
     return jsonable({key: row[key] for key in ('kind', 'masked', 'updated_at')})
+
+
+# ------------------------------------------------------------------ validação pela equipe
+def _checklist(conn, console_id) -> list[str]:
+    """O que falta para enviar o console para análise."""
+    c = one(conn, '''select c.*, p.code platform_code, cfg.psn_account_id from consoles c join platforms p on p.id=c.platform_id
+                     left join console_connection_configs cfg on cfg.console_id=c.id where c.id=%s''', (console_id,))
+    missing = []
+    # A conta PSN é conectada DEPOIS da aprovação: o login passa pelo agente, que a equipe vincula ao aprovar.
+    if not one(conn, 'select 1 from owner_console_rates where console_id=%s', (console_id,)) and not (c['owner_pending'] or {}).get('rate'):
+        missing.append('Defina a tarifa e a duração das sessões.')
+    if not one(conn, """select 1 from console_game_assignments where console_id=%s and status in ('active','pending_review')
+                        and ends_at > %s""", (console_id, timeutil.now())):
+        missing.append('Cadastre pelo menos um jogo com período de disponibilidade.')
+    return missing
+
+
+@router.get('/consoles/{console_id}/review')
+def review_state(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx() as conn:
+        row = owned_console(conn, console_id, p.user_id)
+        c = one(conn, '''select owner_review_status status, owner_review_notes notes, owner_submitted_at submitted_at,
+                         owner_reviewed_at reviewed_at, owner_approved_at approved_at, owner_pending pending, is_published
+                         from consoles where id=%s''', (console_id,))
+        pending_windows = all_(conn, """select a.id, g.title, a.starts_at, a.ends_at from console_game_assignments a
+                                       join games g on g.id=a.game_id where a.console_id=%s and a.status='pending_review'
+                                       order by a.starts_at""", (console_id,))
+        return jsonable({**c, 'missing': _checklist(conn, console_id), 'pending_windows': pending_windows,
+                         'agent_linked': bool(row['agent_id'])})
+
+
+@router.post('/consoles/{console_id}/submit')
+def submit_review(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        row = owned_console(conn, console_id, p.user_id, edit=True)
+        missing = _checklist(conn, console_id)
+        if missing:
+            raise unprocessable('incomplete', 'Complete o cadastro antes de enviar: ' + ' '.join(missing))
+        if row['owner_review_status'] == 'approved':
+            raise conflict('nothing_to_review', 'Nenhuma alteração pendente para enviar.')
+        conn.execute("update consoles set owner_review_status='submitted', owner_submitted_at=%s where id=%s",
+                     (timeutil.now(), console_id))
+        audit_event(conn, 'owner.console_submitted', 'consoles', console_id)
+        from ..services.preparation import notify_staff
+        kind = 'alterações de um console já aprovado' if row['owner_approved_at'] else 'um novo console'
+        notify_staff(conn, 'staff_incident', {'incidente': f'Proprietário enviou {kind} para análise',
+                                              'detalhe': f"Console {row['name']}: valide os dados, vincule o agente e aprove ou recuse"},
+                     dedupe=f'owner_submit:{console_id}:{int(timeutil.now().timestamp())}', link='/admin/aprovacoes')
+    return {'status': 'submitted'}
+
+
+@router.post('/consoles/{console_id}/withdraw')
+def withdraw_review(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        row = owned_console(conn, console_id, p.user_id, allow_published=True)
+        if row['owner_review_status'] != 'submitted':
+            raise conflict('not_submitted', 'Este console não está em análise.')
+        back = 'changes_pending' if row['owner_approved_at'] else 'draft'
+        conn.execute('update consoles set owner_review_status=%s where id=%s', (back, console_id))
+    return {'status': back}
+
+
+@router.post('/consoles/{console_id}/publish')
+def owner_publish(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx() as conn:
+        row = owned_console(conn, console_id, p.user_id, allow_published=True)
+        if row['owner_approved_at'] is None:
+            raise conflict('not_approved', 'A equipe precisa validar o console e vincular o agente antes da publicação.')
+    return admin._publish_console(console_id)
+
+
+@router.post('/consoles/{console_id}/unpublish')
+def owner_unpublish(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        owned_console(conn, console_id, p.user_id, allow_published=True)
+        conn.execute('update consoles set is_published=false where id=%s', (console_id,))
+        audit_event(conn, 'owner.console_unpublished', 'consoles', console_id)
+    return {'ok': True, 'message': 'Console fora do ar para novas reservas. As já pagas continuam valendo.'}
+
+
+@router.get('/consoles/{console_id}/history')
+def console_history(console_id: UUID, limit: int = 100, p: Principal = Depends(enrolled_owner)):
+    """Filas e sessões que o console teve (jogador identificado só pelas iniciais)."""
+    with tx() as conn:
+        owned_console(conn, console_id, p.user_id)
+        rows = all_(conn, '''
+            select r.code, r.status, r.mode, r.minutes, r.starts_at, r.ends_at, r.total_cents, g.title game,
+                   upper(left(u.username, 2)) || '***' player, s.seconds_used, s.end_reason, s.first_connected_at
+            from reservations r join games g on g.id=r.game_id join users u on u.id=r.user_id
+            left join game_sessions s on s.reservation_id=r.id
+            where r.console_id=%s and r.status not in ('pending_payment','expired')
+            order by r.starts_at desc limit %s
+        ''', (console_id, max(1, min(limit, 500))))
+    return jsonable(rows)

@@ -7,9 +7,12 @@ import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { DataTable, fromLocalInput, NewRecord, useAction, useDelete } from '@/components/admin/common';
 import { EMPTY_GAME, GameRegistrationFields, gameRegistrationBody } from '@/components/admin/Games';
+import OwnerReviewPanel from '@/components/OwnerReviewPanel';
 
 type Console = { id: string; code: string; name: string; platform_code: string; agent_id: string | null; is_published: boolean;
-  owner_requested_psn_account_id?: string | null; psn_account_id?: string | null };
+  owner_requested_psn_account_id?: string | null; psn_account_id?: string | null; review_status?: string };
+const REVIEW_LABEL: Record<string, string> = { draft: 'Rascunho', submitted: 'Em análise', approved: 'Aprovado (não publicado)',
+  changes_pending: 'Alterações pendentes', rejected: 'Ajustes solicitados' };
 type Account = { id: string; label: string; online_id: string | null; status: string; agent_id: string | null };
 const EMPTY_CONSOLE = { code: '', name: '', platform_code: 'PS5', model: '', serial_number: '', location: '', description: '' };
 type Games = { games: { id: string; title: string }[]; assignments: { id: string; title: string; starts_at: string; ends_at: string }[]; drafts: { id: string; title: string }[] };
@@ -39,7 +42,7 @@ function Rates({ consoleId, value, locked, onSaved }: { consoleId: string; value
           (request) => run(async () => { await request(); setRate(DEFAULT_RATE); setEditing(true); onSaved(); }, 'Disponibilidade excluída.'),
         )}>Excluir</button>
       </div>
-      {locked && <p className="small muted">Despublique o console para alterar ou excluir a tarifa e a duração.</p>}
+      {locked && <p className="small muted">Console em análise: cancele o envio para alterar a tarifa e a duração.</p>}
     </div>}
     {editing && <form className="stack" onSubmit={(event) => {
     event.preventDefault();
@@ -132,9 +135,10 @@ export default function OwnerInventory() {
           rate.setData(null);
         }}>
           <option value="">Selecione</option>
-          {consoles.data?.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.is_published ? 'Publicado' : 'Aguardando publicação'}</option>)}
+          {consoles.data?.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.is_published ? 'Publicado' : REVIEW_LABEL[item.review_status ?? 'draft'] ?? 'Rascunho'}</option>)}
         </select></Field>
-        {current?.agent_id && !current.is_published && <Field label="Conta PSN para o console">
+        {current && <OwnerReviewPanel key={current.id} consoleId={current.id} onChange={() => { void consoles.reload(); void games.reload(); void rate.reload(); }} />}
+        {current?.agent_id && <Field label="Conta PSN para o console">
           <select value={current.owner_requested_psn_account_id ?? current.psn_account_id ?? ''} disabled={busy} onChange={(event) => {
             const psn_account_id = event.target.value;
             if (!psn_account_id) return;
@@ -216,7 +220,7 @@ export default function OwnerInventory() {
         
         {!current && <p>Selecione um console para vincular jogos.</p>}
         {current && games.data && <>
-          {!current.is_published && <NewRecord title="Cadastrar jogo para revisão">{(close) => <form className="stack" onSubmit={(event) => {
+          {current.review_status !== 'submitted' && <NewRecord title="Cadastrar jogo para revisão">{(close) => <form className="stack" onSubmit={(event) => {
             event.preventDefault();
             void run(async () => {
               await post(`/owner/consoles/${current.id}/game-drafts`, gameRegistrationBody(gameDraft));
@@ -230,7 +234,7 @@ export default function OwnerInventory() {
             <div><button className="btn primary" disabled={busy || String(gameDraft.title).trim().length < 2}>Cadastrar rascunho</button></div>
           </form>}</NewRecord>}
           {Boolean(games.data.drafts.length) && <DataTable rows={games.data.drafts} cols={[[ 'Rascunho aguardando revisão', (item) => item.title ]]} />}
-          {!current.is_published && <form className="stack" onSubmit={(event) => {
+          {current.review_status !== 'submitted' && <form className="stack" onSubmit={(event) => {
             event.preventDefault();
             void run(async () => {
               await post(`/owner/consoles/${current.id}/games`, { game_id: window.game_id,
@@ -251,7 +255,7 @@ export default function OwnerInventory() {
       </section>
       <section className="card stack" id="disponibilidade"><h2>Disponibilidade</h2>
         
-        {current && !rate.loading && !rate.error && <Rates key={current.id} consoleId={current.id} value={rate.data} locked={current.is_published} onSaved={rate.reload} />}
+        {current && !rate.loading && !rate.error && <Rates key={current.id} consoleId={current.id} value={rate.data} locked={current.review_status === 'submitted'} onSaved={rate.reload} />}
         {!current && <p>Selecione um console para configurar a duração e a tarifa.</p>}
       </section>
       <section className="card stack" id="recebimento"><h2>Recebimento</h2>
