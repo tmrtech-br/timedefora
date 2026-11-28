@@ -213,6 +213,14 @@ class DirectPad:
         if name not in _BUTTONS:
             raise ValueError(f'Botão desconhecido: {name}')
         self._c.button(_BUTTONS[name], 'tap', delay=hold)
+        # Pela internet um pacote pode se perder. Se o "soltar" some, o console acha que o botão segue apertado e repete o
+        # movimento (ex.: ← várias vezes). Reenvia o histórico: o console aplica só o evento mais novo (o "soltar").
+        for _ in range(2):
+            time.sleep(0.12)
+            try:
+                self._c._send_event()
+            except Exception:
+                break
 
     def reset(self) -> None:
         for name in list(self._pressed):
