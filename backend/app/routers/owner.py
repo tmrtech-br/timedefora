@@ -293,10 +293,9 @@ def create_game_draft(console_id: UUID, body: GameDraftIn, p: Principal = Depend
         conn.execute('select pg_advisory_xact_lock(hashtext(%s))', (platform['code'] + ':' + title.lower(),))
         if one(conn, '''
             select 1 from games g join game_platforms gp on gp.game_id=g.id
-            where gp.platform_id=%s and lower(g.title)=lower(%s) and g.deleted_at is null
-              and (g.status='published' or g.created_by=%s)
+            where gp.platform_id=%s and lower(g.title)=lower(%s) and g.deleted_at is null and g.created_by=%s
         ''', (console['platform_id'], title, p.user_id)):
-            raise conflict('game_exists', 'Já existe um jogo ou rascunho com esse título para a plataforma.')
+            raise conflict('game_exists', 'Você já cadastrou um jogo com esse título para a plataforma.')
         slug = body.slug or 'proprietario-' + security.new_token(12).lower().replace('_', '-')
         if not admin.SLUG_RE.fullmatch(slug) or not 1 <= body.min_minutes <= body.max_minutes <= 480:
             raise unprocessable('invalid_game', 'Verifique o slug e o intervalo de duração do jogo.')
@@ -705,10 +704,17 @@ def delete_console(console_id: UUID, body: DeleteIn, p: Principal = Depends(enro
                         and ends_at > %s""", (console_id, timeutil.now())):
             raise conflict('has_reservations', 'Há reservas futuras neste console. Tire-o do ar e aguarde elas terminarem para excluir.')
         n = timeutil.now()
+        previous = console_ref(conn, console_id)
         conn.execute("update consoles set deleted_at=%s, is_published=false, status='disabled' where id=%s", (n, console_id))
         conn.execute("""update console_game_assignments set status='archived' where console_id=%s
                         and status in ('active','pending_review') and ends_at > %s""", (console_id, n))
+        # Libera a conta PSN e os dispositivos: senão a conta seguia "presa" ao console excluído.
+        conn.execute('''update console_connection_configs
+                        set capture_device_id=null, control_adapter_id=null, psn_account_id=null, psn_device_uid=null,
+                            connection_status='unconfigured', method='unconfigured'
+                        where console_id=%s''', (console_id,))
         audit_event(conn, 'owner.console_deleted', 'consoles', console_id, reason=body.reason)
+    admin._release_agent_connection(previous)
     return {'ok': True}
 
 

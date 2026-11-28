@@ -1,7 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { CONSOLE_TESTS, ProgressModal } from '@/components/admin/ProgressModal';
-import { Alert, Modal, StatusPill } from '@/components/ui';
+import { Alert, StatusPill } from '@/components/ui';
 import { post } from '@/lib/api';
 import { dateTime, duration, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
@@ -16,7 +16,7 @@ type Review = {
 type HistoryRow = { code: string; status: string; mode: string; minutes: number; starts_at: string; ends_at: string; total_cents: number;
   game: string; player: string; seconds_used: number | null; end_reason: string | null; first_connected_at: string | null };
 const STATUS: Record<string, string> = { draft: 'Rascunho', submitted: 'Em análise pela equipe', approved: 'Aprovado',
-  changes_pending: 'Alterações não enviadas', rejected: 'Ajustes solicitados', in_progress: 'Em andamento' };
+  changes_pending: 'Alterações não enviadas', rejected: 'Reprovado', in_progress: 'Em andamento' };
 const RES_STATUS: Record<string, string> = { confirmed: 'Na fila', active: 'Jogando', completed: 'Concluída', no_show: 'Ausência',
   cancelled: 'Cancelada', needs_resolution: 'Em resolução', refunded: 'Reembolsada' };
 
@@ -89,7 +89,6 @@ export default function OwnerReviewPanel({ consoleId, onChange, phase, onPublish
   const review = useApi<Review>(`/owner/consoles/${consoleId}/review`, 15000);
   const { run, msg, busy } = useAction();
   const r = review.data;
-  const [showNotes, setShowNotes] = useState(false);
   const diag = useApi<DiagState>(phase !== 'review' && r?.approved_at ? `/owner/consoles/${consoleId}/diagnostics` : null, 15000);
   const validated = !!diag.data?.validation?.validated_at;
   const pendingWindows = !!r?.pending_windows.length;
@@ -106,14 +105,14 @@ export default function OwnerReviewPanel({ consoleId, onChange, phase, onPublish
     {r && <>
       {phase === 'review' && r.status === 'submitted' && <p className="small muted">O cadastro foi enviado. A aba Teste será liberada após a aprovação da equipe.</p>}
       {phase === 'review' && r.status === 'approved' && <p className="small muted">Cadastro aprovado. Abra a aba Teste para validar o console.</p>}
-      {r.notes && r.status === 'rejected' && <div className="row">
-        <button className="btn" onClick={() => setShowNotes(true)}>Ver motivo da recusa</button>
-        {showNotes && <Modal title="Ajustes solicitados pela equipe" onClose={() => setShowNotes(false)} allowEscape>
-          <p style={{ whiteSpace: 'pre-wrap' }}>{r.notes}</p>
-          <p className="small muted">Depois de corrigir, clique em “Enviar para análise”.</p>
-        </Modal>}
+      {r.status === 'rejected' && <div className="owner-review-rejected" role="alert">
+        <strong>Cadastro reprovado pela equipe{r.reviewed_at ? ` em ${dateTime(r.reviewed_at)}` : ''}</strong>
+        <span className="owner-review-notes-label">Observações da equipe</span>
+        <p>{r.notes || 'A equipe não registrou observações.'}</p>
+        <small>Corrija o que foi apontado e clique em “Enviar para análise”.</small>
       </div>}
-      {r.notes && !['rejected', 'approved'].includes(r.status) && <p className="small muted">Observações da equipe: {r.notes}</p>}
+      {r.notes && !['rejected', 'approved'].includes(r.status) && <div className="owner-review-notes">
+        <span className="owner-review-notes-label">Observações da equipe</span><p>{r.notes}</p></div>}
       {r.status === 'changes_pending' && <p className="small muted">{pendingWindows
         ? 'O jogo já está vinculado. Clique em “Enviar para análise” para a equipe aprovar o período.'
         : 'Clique em “Enviar para análise” para a equipe validar as alterações.'}</p>}

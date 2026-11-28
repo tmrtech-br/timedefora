@@ -836,7 +836,8 @@ def set_connection(cid: uuid.UUID, body: ConnectionIn, p: Principal = Depends(AD
                     elif c['platform_code'] == 'PS4' and one(conn, '''select 1 from console_connection_configs cc
                         join consoles cx on cx.id=cc.console_id join platforms pp on pp.id=cx.platform_id
                         where cc.psn_account_id=%s and cc.network_route='internet_psn'
-                        and cc.method='remote_play_native' and pp.code='PS4' and cc.console_id<>%s''',
+                        and cc.method='remote_play_native' and pp.code='PS4' and cc.console_id<>%s
+                        and cx.deleted_at is null''',
                         (body.psn_account_id, cid)):
                         errors['psn_account_id'] = 'Esta conta já está associada a outro PS4 pela internet.'
                 if c['platform_code'] == 'PS4':
@@ -2586,11 +2587,10 @@ def reject_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = Dep
         if not c:
             raise not_found()
         if c['owner_approved_at'] is not None:
-            # Console já aprovado: descarta as alterações pedidas; segue no ar com a versão aprovada.
+            # Console já aprovado: descarta as alterações pedidas; se estiver no ar, segue com a versão aprovada.
             conn.execute("update console_game_assignments set status='cancelled' where console_id=%s and status='pending_review'", (cid,))
-            status = 'approved'
-        else:
-            status = 'rejected'
+        # Sempre "reprovado": o proprietário vê o motivo, corrige e reenvia (testes e publicação ficam bloqueados até lá).
+        status = 'rejected'
         # Console nunca aprovado: a proposta (conexão, horários) é o próprio cadastro em ajuste e fica; aprovado: descarta.
         conn.execute('''update consoles set owner_review_status=%s, owner_review_notes=%s, owner_reviewed_at=%s, owner_reviewed_by=%s,
                         owner_pending=case when owner_approved_at is null then owner_pending else '{}'::jsonb end where id=%s''',

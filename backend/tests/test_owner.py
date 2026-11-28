@@ -197,6 +197,14 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatc
     assert api.post(f'/owner/consoles/{cid}/submit').status_code == 200
     assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'notes': ''}).status_code == 200
     assert api.get(f'/owner/consoles/{cid}/availability').json()['rate_cents'] == 150
+    # reprovar um console já aprovado: fica "reprovado" (testes bloqueados) até reenviar e a equipe aprovar
+    assert admin.post(f'/admin/owner-reviews/{cid}/reject', json={'notes': 'Refaça o teste de imagem.'}).json()['status'] == 'rejected'
+    st = api.get(f'/owner/consoles/{cid}/review').json()
+    assert st['status'] == 'rejected' and st['notes'] == 'Refaça o teste de imagem.'
+    assert api.get('/owner/consoles').json()[0]['review_status'] == 'rejected'
+    assert api.post(f'/owner/consoles/{cid}/diagnostics').json()['code'] == 'configuration_pending_review'
+    assert api.post(f'/owner/consoles/{cid}/submit').status_code == 200
+    assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'notes': ''}).status_code == 200
     with tx() as conn:
         assert conn.execute("select count(*) n from console_game_assignments where console_id=%s and status='active'", (cid,)).fetchone()['n'] == 2
     assert api.get(f'/owner/consoles/{cid}/history').status_code == 200
@@ -207,6 +215,8 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatc
     delete_psn_path = f"/owner/psn-accounts/{acc['id']}"
     assert api.delete(delete_psn_path).json()['code'] == 'account_in_use'
     assert api.delete(f'/owner/consoles/{cid}', json={'reason': 'Vendi o console'}).status_code == 200
+    with tx() as conn:   # a conta PSN fica livre para outro PS4
+        assert conn.execute('select psn_account_id from console_connection_configs where console_id=%s', (cid,)).fetchone()['psn_account_id'] is None
     assert api.get('/owner/consoles').json() == []
     assert cid not in {c['id'] for c in admin.get('/admin/queues').json()}
     assert cid not in {a['console_id'] for a in admin.get('/admin/assignments').json()}

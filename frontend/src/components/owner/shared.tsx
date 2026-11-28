@@ -10,7 +10,7 @@ export type OwnerConsole = {
 export type PsnAccount = { id: string; label: string; online_id: string | null; status: string; agent_id: string | null };
 
 export const REVIEW_LABEL: Record<string, string> = {
-  draft: 'Rascunho', submitted: 'Em análise', approved: 'Aprovado', changes_pending: 'Alterações não enviadas', rejected: 'Ajustes solicitados',
+  draft: 'Rascunho', submitted: 'Em análise', approved: 'Aprovado', changes_pending: 'Alterações não enviadas', rejected: 'Reprovado',
 };
 
 /** Seletor do console em que o proprietário está trabalhando (compartilhado entre os menus). */

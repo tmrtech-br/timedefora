@@ -865,6 +865,14 @@ html:has(.policy-dialog[open]) { overflow: hidden; }
 .owner-local-draft { border: 1px solid var(--line2); border-radius: 12px; padding: 12px; gap: 10px; }
 .owner-registration-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .owner-registration-summary section { border: 1px solid var(--line); border-radius: 11px; padding: 12px; overflow-wrap: anywhere; }
+.owner-review-rejected { display: grid; gap: 6px; padding: 14px 16px; border-radius: 12px; border: 1px solid rgba(255, 75, 92, .55);
+  border-left: 5px solid var(--red); background: rgba(255, 75, 92, .12); color: #ffd3d8; }
+.owner-review-rejected > strong { color: #ff8a96; font-size: 15px; }
+.owner-review-rejected p, .owner-review-notes p { margin: 0; white-space: pre-wrap; font-size: 15px; color: var(--text); font-weight: 600; }
+.owner-review-rejected small { color: #ffb3ba; }
+.owner-review-notes { display: grid; gap: 4px; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(255, 191, 60, .4);
+  border-left: 4px solid var(--amber); background: rgba(255, 191, 60, .08); }
+.owner-review-notes-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 .owner-registration-summary ul { padding-left: 18px; }
 .owner-registration-summary p, .owner-registration-summary ul { margin: 6px 0 0; color: var(--muted); }
 .owner-support-panel { position: fixed; z-index: 65; right: 16px; bottom: 16px; left: auto;

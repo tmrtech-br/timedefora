@@ -74,7 +74,7 @@ export default function OwnerGames({ consoles, selected, setSelected, onReviewCh
   const { busy, msg, run } = useAction();
   const deletion = useDelete();
   const locked = current?.review_status === 'submitted';
-  const owned = games.data?.owned_games ?? games.data?.drafts ?? [];
+  const owned = (games.data?.owned_games ?? games.data?.drafts ?? []).filter((g) => g.status !== 'archived');
   const today = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
   return <section className="stack" id="jogos">
     {!wizard && <div className="card"><ConsolePicker consoles={consoles} value={selected} onChange={setSelected} /></div>}
@@ -103,12 +103,12 @@ export default function OwnerGames({ consoles, selected, setSelected, onReviewCh
         <div className="grid3 owner-game-window">
           <Field label="Jogo"><select required value={win.game_id} onChange={(e) => setWin({ ...win, game_id: e.target.value })}>
             <option value="">Selecione</option>
-            {games.data.drafts.length > 0 && <optgroup label="Meus jogos (em revisão)">{games.data.drafts.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</optgroup>}
-            <optgroup label="Catálogo">{games.data.games.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}</optgroup>
+            {owned.map((g) => <option key={g.id} value={g.id}>{g.title}{g.status === 'draft' ? ' (em revisão)' : ''}</option>)}
           </select></Field>
           <DateTimeField label="Disponível de" required value={win.starts_at} min={today} onChange={(v) => setWin({ ...win, starts_at: v })} />
           <DateTimeField label="Até" required value={win.ends_at} min={win.starts_at || today} onChange={(v) => setWin({ ...win, ends_at: v })} />
         </div>
+        {owned.length === 0 && <p className="small muted" style={{ margin: 0 }}>Cadastre um jogo em “Cadastrar jogo” para vincular aqui.</p>}
         <div><button className="btn" disabled={busy || !win.game_id || !isLocalDateTime(win.starts_at) || !isLocalDateTime(win.ends_at) || win.ends_at <= win.starts_at}>Adicionar período do jogo</button></div>
       </form>}
       {!wizard && !locked && current.approved_at && games.data.assignments.some((item) => item.status === 'pending_review') &&
