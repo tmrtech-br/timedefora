@@ -78,12 +78,15 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     w = api.post(f'/owner/consoles/{cid}/games', json={'game_id': str(world['game']['id']), 'starts_at': at(3, 8).isoformat(), 'ends_at': at(3, 12).isoformat()})
     assert w.status_code == 201, w.text
     missing = api.get(f'/owner/consoles/{cid}/review').json()['missing']
-    assert len(missing) == 1 and 'PSN' in missing[0]
+    assert len(missing) == 2 and any('conexão' in m for m in missing) and any('PSN' in m for m in missing)
+    r = api.put(f'/owner/consoles/{cid}/connection-settings', json={'method': 'remote_play_native', 'network_route': 'lan',
+                                                                     'internal_host': '192.168.0.50', 'console_identifier': 'DONO-01'})
+    assert r.status_code == 200, r.text
     with tx() as conn:   # conta PSN conectada pelo agente escolhido (login Sony simulado no banco)
         acc = insert(conn, 'psn_accounts', {'agent_id': agent, 'label': 'conta-dono', 'status': 'linked', 'owner_user_id': user['id']})
     assert api.put(f'/owner/consoles/{cid}/connection', json={'psn_account_id': str(acc['id'])}).status_code == 200
     assert api.put(f'/owner/consoles/{cid}/hours', json={'hours': [{'weekday': 1, 'opens_at': '08:00', 'closes_at': '22:00'}]}).json()['pending'] is False
-    assert api.get(f'/owner/consoles/{cid}/review').json()['missing'] == []
+    assert api.get(f'/owner/consoles/{cid}/review').json()['missing'] == [], api.get(f'/owner/consoles/{cid}/review').json()['missing']
     # sem aprovação não publica
     assert api.post(f'/owner/consoles/{cid}/publish').status_code == 409
     assert api.post(f'/owner/consoles/{cid}/submit').status_code == 200
@@ -96,7 +99,16 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     assert admin.post(f'/admin/owner-reviews/{cid}/reject', json={'notes': 'Ajuste as artes do jogo.'}).json()['status'] == 'rejected'
     assert api.get(f'/owner/consoles/{cid}/review').json()['status'] == 'rejected'
     assert api.post(f'/owner/consoles/{cid}/submit').status_code == 200
+    # antes da aprovação não testa
+    assert api.post(f'/owner/consoles/{cid}/diagnostics').status_code == 409
     assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'agent_id': agent, 'notes': 'ok'}).status_code == 200
+    # aprovado: aplica a conexão proposta (com o agente) e enfileira o diagnóstico
+    d = api.post(f'/owner/consoles/{cid}/diagnostics')
+    assert d.status_code == 202, d.text
+    with tx() as conn:
+        cfg = conn.execute('select method, agent_id, internal_host from console_connection_configs where console_id=%s', (cid,)).fetchone()
+    assert cfg['method'] == 'remote_play_native' and str(cfg['agent_id']) == agent and cfg['internal_host'] == '192.168.0.50'
+    assert api.get(f'/owner/consoles/{cid}/diagnostics').json()['run']['status'] == 'queued'
     st = api.get(f'/owner/consoles/{cid}/review').json()
     assert st['status'] == 'approved' and st['approved_at'] and st['agent_linked'] is True
     # edição de console aprovado: fica pendente (tarifa atual continua)

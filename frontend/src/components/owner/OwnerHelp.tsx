@@ -1,37 +1,39 @@
 import Link from 'next/link';
-import { BadgeCheck, CalendarClock, CircleDollarSign, Gamepad2, Landmark, MonitorSmartphone, Send, UserRoundCheck } from 'lucide-react';
+import { BadgeCheck, CalendarClock, CircleDollarSign, FlaskConical, Gamepad2, Landmark, MonitorSmartphone, Send, UserRoundCheck } from 'lucide-react';
 
 const STEPS = [
-  { icon: MonitorSmartphone, color: 'purple', title: 'Cadastre o console', tag: 'Cadastro de console',
-    text: 'Informe código, nome, plataforma e escolha o agente da plataforma que vai controlar o seu console (o computador nosso ligado a ele).' },
-  { icon: UserRoundCheck, color: 'pink', title: 'Conecte a conta PSN', tag: 'Contas PSN',
-    text: 'Cadastre a conta PSN do console, faça o login Sony (pelo link que aparece) e vincule a conta ao console.' },
-  { icon: Gamepad2, color: 'cyan', title: 'Cadastre os jogos e o preço', tag: 'Jogos e preços',
+  { icon: MonitorSmartphone, color: '#a98bff', title: 'Cadastre o console', tag: 'Cadastro de console',
+    text: 'Informe código, nome e plataforma. Em seguida configure a conexão (como o console será acessado) e a qualidade da transmissão.' },
+  { icon: UserRoundCheck, color: '#f472d0', title: 'Associe a conta PSN', tag: 'Contas PSN',
+    text: 'Cadastre a conta PSN do console e indique que o console vai usá-la. O login Sony é feito depois da aprovação.' },
+  { icon: Gamepad2, color: '#67d8f0', title: 'Cadastre os jogos e o preço', tag: 'Jogos e preços',
     text: 'Cadastre o jogo com capa, banner e descrição (ou escolha um do catálogo), defina o período em que ele fica disponível e o preço por minuto ou por hora.' },
-  { icon: CalendarClock, color: 'green', title: 'Defina os dias e horários', tag: 'Disponibilidade',
+  { icon: CalendarClock, color: '#5ee8a8', title: 'Defina os dias e horários', tag: 'Disponibilidade',
     text: 'Marque os dias da semana e os horários em que o console pode ser alugado.' },
-  { icon: Landmark, color: 'amber', title: 'Informe onde receber', tag: 'Configurações bancárias',
+  { icon: Landmark, color: '#f6c453', title: 'Informe onde receber', tag: 'Configurações bancárias',
     text: 'Cadastre a chave Pix ou a conta bancária. Sua parte de cada sessão concluída é enviada a partir de 10 minutos após o fim.' },
-  { icon: Send, color: 'purple', title: 'Envie para análise', tag: 'Cadastro de console',
-    text: 'Com tudo preenchido, clique em "Enviar para análise". A equipe confere o cadastro, as artes e a conexão, e aprova ou pede ajustes.' },
-  { icon: BadgeCheck, color: 'green', title: 'Publique e acompanhe', tag: 'Dashboard',
-    text: 'Aprovado, publique o console para aluguel. Acompanhe reservas, sessões e ganhos no Dashboard. Qualquer alteração volta para a validação, e o console segue no ar com a versão aprovada.' },
+  { icon: Send, color: '#a98bff', title: 'Envie para análise', tag: 'Cadastro de console',
+    text: 'Com tudo preenchido, clique em "Enviar para análise". A equipe confere o cadastro e as artes e vincula o console e a conta PSN ao agente.' },
+  { icon: FlaskConical, color: '#f472d0', title: 'Teste a conexão', tag: 'Cadastro de console',
+    text: 'Aprovado, faça o login Sony da conta PSN e clique em "Aplicar configuração e testar". O diagnóstico confere imagem, áudio, controles e o agente.' },
+  { icon: BadgeCheck, color: '#5ee8a8', title: 'Publique e acompanhe', tag: 'Dashboard',
+    text: 'Com os testes aprovados, publique o console para aluguel e acompanhe reservas, sessões e ganhos no Dashboard. Alterações voltam para a validação e o console segue no ar com a versão aprovada.' },
 ];
 
-/** Passo a passo do cadastro do console para o proprietário (mesmo estilo de "Como funciona"). */
+/** Passo a passo do cadastro do console (cartões em zigue-zague ligados por setas, como na referência). */
 export default function OwnerHelp() {
-  return <section className="stack how" id="ajuda">
-    <ol className="timeline" aria-label="Passo a passo do cadastro do console">
+  return <section className="stack" id="ajuda">
+    <ol className="zigzag" aria-label="Passo a passo do cadastro do console">
       {STEPS.map((s, i) => (
-        <li key={s.title} className={`tl-item ${s.color}`} style={{ ['--i' as string]: i }}>
-          <span className="tl-node" aria-hidden><s.icon size={22} /></span>
-          <article className="tl-card">
-            <header><span className="tl-step">Passo {i + 1}</span><span className="tl-tag">{s.tag}</span></header>
+        <li key={s.title} className={`zz-item ${i % 2 ? 'right' : 'left'}${i === STEPS.length - 1 ? ' last' : ''}`} style={{ ['--c' as string]: s.color }}>
+          <span className="zz-node" aria-hidden><s.icon size={22} /></span>
+          <article className="zz-card">
+            <header><span className="zz-step">Passo {i + 1}</span><span className="zz-tag">{s.tag}</span></header>
             <h2>{s.title}</h2>
             <p>{s.text}</p>
           </article>
+          {i < STEPS.length - 1 && <span className="zz-link" aria-hidden />}
         </li>))}
-      <li className="tl-end" aria-hidden><span>NO AR!</span></li>
     </ol>
     <section className="card how-rules">
       <h2>Bom saber</h2>

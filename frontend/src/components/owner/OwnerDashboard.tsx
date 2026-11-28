@@ -1,11 +1,12 @@
 'use client';
 import { useMemo, useState } from 'react';
 import { FileDown } from 'lucide-react';
-import { Alert, Field } from '@/components/ui';
+import { Alert } from '@/components/ui';
 import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { downloadReportPdf } from '@/lib/reportPdf';
 import { DataTable } from '@/components/admin/common';
+import DateFilter from '@/components/DateFilter';
 import { BarChart } from './shared';
 
 type Row = { code: string; status: string; minutes: number; total_cents: number; starts_at: string; game: string; console: string; day: string;
@@ -66,10 +67,10 @@ export default function OwnerDashboard() {
 
   return <section className="stack" id="dashboard">
     <div className="card owner-filters">
-      <Field label="De"><input type="date" value={filters.date_from} onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} /></Field>
-      <Field label="Até"><input type="date" value={filters.date_to} onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} /></Field>
-      <Field label="Console"><select value={filters.console_id} onChange={(e) => setFilters({ ...filters, console_id: e.target.value })}>
-        <option value="">Todos</option>{rep.data?.consoles.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+      <DateFilter label="De" value={filters.date_from} max={filters.date_to || undefined} onChange={(v) => setFilters({ ...filters, date_from: v })} />
+      <DateFilter label="Até" value={filters.date_to} min={filters.date_from || undefined} onChange={(v) => setFilters({ ...filters, date_to: v })} />
+      <label className="field">Console<select value={filters.console_id} onChange={(e) => setFilters({ ...filters, console_id: e.target.value })}>
+        <option value="">Todos</option>{rep.data?.consoles.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
       <button className="btn" disabled={!rep.data} onClick={exportPdf}><FileDown size={16} aria-hidden />Exportar PDF</button>
     </div>
     {rep.error && <Alert kind="error">{rep.error.message}</Alert>}

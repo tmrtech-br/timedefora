@@ -172,6 +172,9 @@ def create_account(body: OwnerAccountIn, p: Principal = Depends(enrolled_owner))
                                                'owner_user_id': p.user_id, 'created_by': p.user_id},
                          returning='id, label, status')
             audit_event(conn, 'psn.account_created', 'psn_accounts', row['id'])
+            if console:   # já associa ao console escolhido (a equipe aprova o vínculo)
+                conn.execute('update consoles set owner_requested_psn_account_id=coalesce(owner_requested_psn_account_id, %s) where id=%s',
+                             (row['id'], console['id']))
     except psycopg.errors.UniqueViolation:
         raise conflict('label_taken', 'Já existe uma conta PSN com esse rótulo neste agente.')
     return jsonable(row)
@@ -226,8 +229,8 @@ def request_connection(console_id: UUID, body: ConnectionRequestIn, p: Principal
     with tx(p.user_id) as conn:
         console = owned_console(conn, console_id, p.user_id, edit=True)
         account = psn_accounts._account(conn, body.psn_account_id, lock=True, owner_user_id=p.user_id)
-        if not console['agent_id'] or account['agent_id'] != console['agent_id'] or account['status'] != 'linked':
-            raise conflict('account_not_ready', 'Selecione uma conta PSN vinculada ao agente do console.')
+        if console['agent_id'] and account['agent_id'] and account['agent_id'] != console['agent_id']:
+            raise conflict('account_not_ready', 'Esta conta PSN pertence a outro agente. Use uma conta deste console.')
         previous = one(conn, '''select c.owner_requested_psn_account_id, cfg.psn_account_id from consoles c
                                 left join console_connection_configs cfg on cfg.console_id=c.id where c.id=%s''', (console_id,))
         conn.execute('update consoles set owner_requested_psn_account_id=%s where id=%s', (account['id'], console_id))
@@ -490,12 +493,12 @@ def _checklist(conn, console_id) -> list[str]:
     c = one(conn, '''select c.*, p.code platform_code, cfg.psn_account_id from consoles c join platforms p on p.id=c.platform_id
                      left join console_connection_configs cfg on cfg.console_id=c.id where c.id=%s''', (console_id,))
     missing = []
-    if not (c['owner_onboarding_agent_id'] or c['agent_id']):
-        missing.append('Escolha o agente da plataforma que vai controlar o console (Cadastro de console).')
-    if c['platform_code'] in ('PS4', 'PS5'):
-        acc = c['owner_requested_psn_account_id'] or c['psn_account_id']
-        if not acc or not one(conn, "select 1 from psn_accounts where id=%s and status='linked'", (acc,)):
-            missing.append('Conecte e vincule a conta PSN ao console (Contas PSN).')
+    conn_cfg = (c['owner_pending'] or {}).get('connection')
+    cfg_method = one(conn, 'select method from console_connection_configs where console_id=%s', (console_id,))
+    if not conn_cfg and (not cfg_method or cfg_method['method'] == 'unconfigured'):
+        missing.append('Configure a conexão e a transmissão do console (Cadastro de console).')
+    if c['platform_code'] in ('PS4', 'PS5') and not (c['owner_requested_psn_account_id'] or c['psn_account_id']):
+        missing.append('Cadastre a conta PSN e associe ao console (Contas PSN).')
     if not one(conn, 'select 1 from owner_console_rates where console_id=%s', (console_id,)) and not (c['owner_pending'] or {}).get('rate'):
         missing.append('Defina a tarifa e a duração das sessões.')
     if not one(conn, """select 1 from console_game_assignments where console_id=%s and status in ('active','pending_review')
@@ -743,3 +746,101 @@ def owner_report(date_from: str | None = None, date_to: str | None = None, conso
             order by r.starts_at desc''', tuple(args))
         consoles = all_(conn, 'select id, name from consoles where owner_user_id=%s and deleted_at is null order by name', (p.user_id,))
     return jsonable({'date_from': d1.isoformat(), 'date_to': d2.isoformat(), 'consoles': consoles, 'rows': rows})
+
+
+# ------------------------------------------------------------------ conexão/transmissão proposta + testes após aprovação
+OWNER_METHODS = ('remote_play_native', 'remote_play_chiaki')
+
+
+class ConnectionSettingsIn(BaseModel):
+    method: Literal['remote_play_native', 'remote_play_chiaki']
+    network_route: Literal['lan', 'internet_psn', 'internet_port_forward'] = 'internet_psn'
+    console_identifier: str | None = Field(default=None, max_length=80)
+    internal_host: str | None = Field(default=None, max_length=120)
+    public_host: str | None = Field(default=None, max_length=253)
+    public_port: int | None = Field(default=None, ge=1, le=65535)
+    resolution: Literal['720p', '1080p'] = '720p'
+    fps: Literal[30, 60] = 30
+    bitrate_kbps: int = Field(default=6000, ge=1500, le=15000)
+    standby_after_session: bool = True
+    keep_awake_minutes: int = Field(default=15, ge=0, le=240)
+
+
+@router.get('/consoles/{console_id}/connection-settings')
+def get_connection_settings(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx() as conn:
+        row = owned_console(conn, console_id, p.user_id)
+        cfg = one(conn, '''select method, network_route, console_identifier, internal_host, public_host, public_port, resolution, fps,
+                           bitrate_kbps, standby_after_session, keep_awake_minutes, validated_at, video_validated_at, audio_validated_at,
+                           control_validated_at, heartbeat_validated_at, connection_status
+                           from console_connection_configs where console_id=%s''', (console_id,))
+        return jsonable({'current': cfg, 'pending': (row['owner_pending'] or {}).get('connection')})
+
+
+@router.put('/consoles/{console_id}/connection-settings')
+def put_connection_settings(console_id: UUID, body: ConnectionSettingsIn, p: Principal = Depends(enrolled_owner)):
+    """Proposta do proprietário: aplicada (com o agente) depois que a equipe aprovar, no botão "Aplicar e testar"."""
+    errors = {}
+    if body.network_route == 'lan' and not (body.internal_host or '').strip():
+        errors['internal_host'] = 'Informe o IP do console na rede do agente.'
+    if body.network_route == 'internet_port_forward' and (body.method != 'remote_play_chiaki' or not (body.public_host or '').strip()):
+        errors['public_host'] = 'Redirecionamento de porta: use o Remote Play (chiaki) e informe o IP público/DDNS.'
+    if errors:
+        raise unprocessable('validation_error', 'Verifique a configuração.', fields=errors)
+    with tx(p.user_id) as conn:
+        row = owned_console(conn, console_id, p.user_id, edit=True)
+        if body.method == 'remote_play_native' and body.network_route == 'internet_psn' and row['platform_code'] != 'PS4':
+            raise unprocessable('validation_error', 'Remote Play pela PSN ainda funciona só com PS4. Para PS5 use "Mesma rede do agente".')
+        conn.execute('''update consoles set owner_pending = owner_pending || jsonb_build_object('connection', %s::jsonb) where id=%s''',
+                     (json.dumps(body.model_dump()), console_id))
+        _changed(conn, row)
+        audit_event(conn, 'owner.connection_proposed', 'consoles', console_id)
+    return {**body.model_dump(), 'pending': True}
+
+
+def _psn_for(conn, console_id) -> dict | None:
+    c = one(conn, '''select coalesce(c.owner_requested_psn_account_id, cfg.psn_account_id) acc from consoles c
+                     left join console_connection_configs cfg on cfg.console_id=c.id where c.id=%s''', (console_id,))
+    return one(conn, 'select * from psn_accounts where id=%s', (c['acc'],)) if c and c['acc'] else None
+
+
+@router.post('/consoles/{console_id}/diagnostics', status_code=202)
+def owner_run_diagnostics(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    """Depois da aprovação: aplica a conexão proposta (com o agente e a conta PSN aprovados) e roda todos os testes."""
+    with tx() as conn:
+        row = owned_console(conn, console_id, p.user_id, allow_published=True)
+        if row['owner_approved_at'] is None or not row['agent_id']:
+            raise conflict('not_approved', 'Os testes ficam liberados depois que a equipe aprovar e vincular o agente.')
+        pending = (row['owner_pending'] or {}).get('connection')
+        cfg = one(conn, 'select method from console_connection_configs where console_id=%s', (console_id,))
+        acc = _psn_for(conn, console_id)
+        needs_psn = (pending or {}).get('network_route') == 'internet_psn'
+        if needs_psn and (not acc or acc['status'] != 'linked'):
+            raise conflict('psn_login_required', 'Faça o login Sony da conta PSN do console (Contas PSN) antes de testar.')
+        if not pending and cfg['method'] == 'unconfigured':
+            raise conflict('not_configured', 'Configure a conexão e a transmissão do console antes de testar.')
+    if pending:
+        admin.set_connection(console_id, admin.ConnectionIn(**pending, agent_id=row['agent_id'],
+                                                            psn_account_id=acc['id'] if acc and needs_psn else None,
+                                                            reason='Configuração enviada pelo proprietário e aprovada pela equipe.'), p)
+        with tx(p.user_id) as conn:
+            conn.execute("update consoles set owner_pending = owner_pending - 'connection' where id=%s", (console_id,))
+    with tx(p.user_id) as conn:
+        active = one(conn, "select id, status from console_diagnostic_runs where console_id=%s and status in ('queued','running','cancelling')",
+                     (console_id,))
+        if active:
+            return jsonable(active)
+        run = insert(conn, 'console_diagnostic_runs', {'console_id': console_id, 'requested_by': p.user_id}, returning='id, status')
+        audit_event(conn, 'owner.diagnostics_queued', 'console_diagnostic_runs', run['id'])
+    return jsonable(run)
+
+
+@router.get('/consoles/{console_id}/diagnostics')
+def owner_diagnostics(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx() as conn:
+        owned_console(conn, console_id, p.user_id)
+        run = one(conn, '''select id, status, results, error, created_at, finished_at from console_diagnostic_runs
+                           where console_id=%s order by created_at desc limit 1''', (console_id,))
+        cfg = one(conn, '''select validated_at, video_validated_at, audio_validated_at, control_validated_at, heartbeat_validated_at,
+                           connection_status, method from console_connection_configs where console_id=%s''', (console_id,))
+    return jsonable({'run': run, 'validation': cfg})

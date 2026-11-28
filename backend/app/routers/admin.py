@@ -2480,6 +2480,14 @@ def approve_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = De
             if body.agent_id and c['is_published'] and str(body.agent_id) != str(c['owner_onboarding_agent_id'] or c['cfg_agent']):
                 raise conflict('console_published', 'Despublique o console antes de trocar o agente.')
             conn.execute('update consoles set owner_onboarding_agent_id=%s where id=%s', (agent, cid))
+            # Conta PSN pedida pelo proprietário passa a usar o agente aprovado (o login Sony é feito por ele).
+            if c['owner_requested_psn_account_id']:
+                try:
+                    with conn.transaction():
+                        conn.execute('update psn_accounts set agent_id=%s where id=%s and agent_id is null',
+                                     (agent, c['owner_requested_psn_account_id']))
+                except psycopg.errors.UniqueViolation:
+                    raise conflict('psn_label_taken', 'Já existe uma conta PSN com esse nome neste agente. Peça ao proprietário para renomear.')
             rate = (c['owner_pending'] or {}).get('rate')
             if rate:
                 conn.execute('''insert into owner_console_rates(console_id, min_minutes, max_minutes, rate_unit, rate_cents)
@@ -2494,7 +2502,8 @@ def approve_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = De
                 apply_hours(conn, cid, hours)
             n = timeutil.now()
             conn.execute('''update consoles set owner_review_status='approved', owner_review_notes=%s, owner_reviewed_at=%s,
-                            owner_reviewed_by=%s, owner_approved_at=coalesce(owner_approved_at, %s), owner_pending='{}'::jsonb
+                            owner_reviewed_by=%s, owner_approved_at=coalesce(owner_approved_at, %s),
+                            owner_pending = owner_pending - 'rate' - 'hours'   -- conexão: aplicada no "Aplicar e testar" do proprietário
                             where id=%s''', (body.notes, n, p.user_id, n, cid))
             audit_event(conn, 'owner.console_approved', 'consoles', cid, reason=body.notes, details={'agent_id': str(agent)})
             _notify_owner_review(conn, cid, True, body.notes)
@@ -2517,8 +2526,9 @@ def reject_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = Dep
             status = 'approved'
         else:
             status = 'rejected'
-        conn.execute('''update consoles set owner_review_status=%s, owner_review_notes=%s, owner_reviewed_at=%s,
-                        owner_reviewed_by=%s, owner_pending='{}'::jsonb where id=%s''',
+        # Console nunca aprovado: a proposta (conexão, horários) é o próprio cadastro em ajuste e fica; aprovado: descarta.
+        conn.execute('''update consoles set owner_review_status=%s, owner_review_notes=%s, owner_reviewed_at=%s, owner_reviewed_by=%s,
+                        owner_pending=case when owner_approved_at is null then owner_pending else '{}'::jsonb end where id=%s''',
                      (status, body.notes.strip(), timeutil.now(), p.user_id, cid))
         audit_event(conn, 'owner.console_rejected', 'consoles', cid, reason=body.notes)
         _notify_owner_review(conn, cid, False, body.notes.strip())

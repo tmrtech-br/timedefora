@@ -38,7 +38,7 @@ def _claim():
         ''', (now,))
 
 
-def _principal(conn, actor_id) -> Principal:
+def _principal(conn, actor_id, console_id=None) -> Principal:
     row = one(conn, '''
         select u.*, coalesce(up.overrides,'{}'::jsonb) overrides,
           coalesce((select array_agg(r.code) from role_assignments ra join roles r on r.id=ra.role_id
@@ -50,10 +50,14 @@ def _principal(conn, actor_id) -> Principal:
         raise forbidden()
     p = Principal(str(actor_id), '', row['username'], row['full_name'], row['email'], row['status'],
                   bool(row['email_verified_at']), roles=set(row['roles']), permissions=row['overrides'])
-    if not p.has('admin') or not is_allowed(p.permissions, 'level:admin', 'menu:consoles',
-                                          action_key('POST', '/admin/consoles/{cid}/diagnostic-runs')):
-        raise forbidden()
-    return p
+    if p.has('admin') and is_allowed(p.permissions, 'level:admin', 'menu:consoles',
+                                     action_key('POST', '/admin/consoles/{cid}/diagnostic-runs')):
+        return p
+    # Proprietário testando o próprio console depois da aprovação da equipe.
+    if console_id and one(conn, '''select 1 from consoles where id=%s and owner_user_id=%s and owner_approved_at is not null
+                                   and deleted_at is null''', (console_id, actor_id)):
+        return p
+    raise forbidden()
 
 
 def process_one() -> bool:
@@ -72,7 +76,7 @@ def process_one() -> bool:
 
     try:
         with tx(actor) as conn:
-            p = _principal(conn, job['requested_by'])
+            p = _principal(conn, job['requested_by'], job['console_id'])
         body = PairIn(code=security.decrypt(job['pairing_code_enc'])) if job['pairing_code_enc'] else None
         token = actor_id_var.set(actor)
         try:

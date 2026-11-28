@@ -5,7 +5,7 @@ import { post, put } from '@/lib/api';
 import { DataTable, NewRecord, useAction } from '@/components/admin/common';
 import { ConsolePicker, type OwnerConsole, type PsnAccount } from './shared';
 
-const PSN_STATUS: Record<string, string> = { pending: 'Login pendente', linked: 'Conectada', expired: 'Expirada', error: 'Com erro', disabled: 'Desativada', no_agent: 'Sem agente' };
+const PSN_STATUS: Record<string, string> = { pending: 'Login pendente', linked: 'Conectada', expired: 'Expirada', error: 'Com erro', disabled: 'Desativada', no_agent: 'Aguardando aprovação' };
 
 /** Contas PSN do proprietário: cadastrar, fazer o login Sony (pelo agente do console) e vincular ao console. */
 export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadConsoles, selected, setSelected }: {
@@ -30,10 +30,10 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
           void run(async () => {
             await post('/owner/psn-accounts', { console_id: psnConsole || null, label: label.trim() });
             setLabel(''); setPsnConsole(''); reloadAccounts(); close();
-          }, 'Conta cadastrada. Agora clique em "Fazer login Sony".');
+          }, 'Conta cadastrada e associada ao console. O login Sony é liberado após a aprovação da equipe.');
         }}>
           <Field label="Nome para identificar a conta"><input required minLength={2} maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} /></Field>
-          <Field label="Console PlayStation" hint="O login Sony é feito pelo agente escolhido no cadastro do console.">
+          <Field label="Console PlayStation" hint="O login Sony fica liberado depois que a equipe aprovar o console e vincular o agente.">
             <select required value={psnConsole} onChange={(e) => setPsnConsole(e.target.value)}>
               <option value="">Selecione</option>{playStations.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.platform_code}</option>)}</select></Field>
           <button className="btn primary" disabled={busy}>Cadastrar conta PSN</button>
@@ -47,7 +47,7 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
               const console_id = e.target.value;
               if (console_id) void run(async () => { await put(`/owner/psn-accounts/${a.id}/agent`, { console_id }); reloadAccounts(); }, 'Agente associado. Faça o login Sony.');
             }}><option value="">Usar agente do console…</option>{playStations.filter((c) => c.agent_id).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>}
-            <button className="btn sm" disabled={busy || !a.agent_id || a.status === 'disabled'} onClick={() => run(async () => {
+            <button className="btn sm" disabled={busy || !a.agent_id || a.status === 'disabled'} title={a.agent_id ? undefined : 'Liberado após a aprovação da equipe'} onClick={() => run(async () => {
               const r = await post<{ login_url: string }>(`/owner/psn-accounts/${a.id}/login/start`);
               setRedirectUrl(''); setLogin({ id: a.id, url: r.login_url });
             })}>{a.status === 'linked' ? 'Refazer login Sony' : 'Fazer login Sony'}</button>
@@ -61,16 +61,15 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
       <h2 style={{ margin: 0 }}>Conta PSN do console</h2>
       <ConsolePicker consoles={playStations} value={playStations.some((c) => c.id === selected) ? selected : ''} onChange={setSelected} />
       {current && !['PS4', 'PS5'].includes(current.platform_code) && <p className="muted">Este console não usa conta PSN.</p>}
-      {current && ['PS4', 'PS5'].includes(current.platform_code) && (!current.agent_id
-        ? <Alert kind="warn">Escolha o agente do console em Cadastro de console para conectar a conta PSN.</Alert>
-        : <Field label="Conta PSN conectada que o console vai usar">
+      {current && ['PS4', 'PS5'].includes(current.platform_code) && (
+        <Field label="Conta PSN que o console vai usar" hint={current.agent_id ? undefined : 'A equipe vincula a conta e o console ao agente na aprovação.'}>
           <select value={current.owner_requested_psn_account_id ?? current.psn_account_id ?? ''} disabled={busy || current.review_status === 'submitted'} onChange={(e) => {
             const psn_account_id = e.target.value;
             if (psn_account_id) void run(async () => { await put(`/owner/consoles/${current.id}/connection`, { psn_account_id }); reloadConsoles(); },
               current.approved_at ? 'Troca de conta enviada para a validação da equipe.' : 'Conta vinculada ao console.');
           }}>
             <option value="">Selecione</option>
-            {accounts?.filter((a) => a.agent_id === current.agent_id && a.status === 'linked').map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
+            {accounts?.filter((a) => !a.agent_id || a.agent_id === current.agent_id).map((a) => <option key={a.id} value={a.id}>{a.label}{a.status === 'linked' ? '' : ' (login pendente)'}</option>)}
           </select></Field>)}
     </div>
     {login && <Modal title="Login na conta Sony" onClose={() => { setLogin(undefined); setRedirectUrl(''); }}>
