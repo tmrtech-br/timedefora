@@ -2,18 +2,17 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { BarChart3, CircleHelp, Gamepad2, Headphones, Landmark, LifeBuoy, MonitorSmartphone, UserRoundCheck, CalendarClock } from 'lucide-react';
+import { BarChart3, CircleHelp, Headphones, Landmark, LifeBuoy, MonitorSmartphone } from 'lucide-react';
 import { Alert, Field } from '@/components/ui';
 import { put } from '@/lib/api';
 import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
+import { useAuth } from '@/lib/auth';
 import { DataTable, useAction } from '@/components/admin/common';
 import OwnerDashboard from '@/components/owner/OwnerDashboard';
 import OwnerConsoles from '@/components/owner/OwnerConsoles';
-import OwnerPsn from '@/components/owner/OwnerPsn';
-import OwnerGames from '@/components/owner/OwnerGames';
-import OwnerHours from '@/components/owner/OwnerHours';
 import OwnerHelp from '@/components/owner/OwnerHelp';
+import SupportPanel from '@/components/SupportPanel';
 import type { OwnerConsole, PsnAccount } from '@/components/owner/shared';
 
 type Destination = { kind: 'pix' | 'bank'; masked: string; updated_at: string };
@@ -23,10 +22,7 @@ const PAYOUT_LABEL: Record<string, string> = { scheduled: 'Agendado', waiting_de
 
 const MENU = [
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-  { id: 'cadastro', label: 'Cadastro de console', icon: MonitorSmartphone },
-  { id: 'psn', label: 'Contas PSN', icon: UserRoundCheck },
-  { id: 'jogos', label: 'Jogos e preços', icon: Gamepad2 },
-  { id: 'disponibilidade', label: 'Disponibilidade', icon: CalendarClock },
+  { id: 'cadastro', label: 'Cadastro', icon: MonitorSmartphone },
   { id: 'recebimento', label: 'Configurações bancárias', icon: Landmark },
   { id: 'suporte', label: 'Suporte', icon: Headphones },
   { id: 'ajuda', label: 'Ajuda', icon: CircleHelp },
@@ -38,14 +34,21 @@ export default function OwnerInventory() {
   const consoles = useApi<OwnerConsole[]>('/owner/consoles');
   const accounts = useApi<PsnAccount[]>('/owner/psn-accounts');
   const [tab, setTab] = useState<Tab>('dashboard');
-  const [selected, setSelected] = useState('');
+  const [supportOpen, setSupportOpen] = useState(false);
+  const { me } = useAuth();
+  const openSupport = () => setSupportOpen(true);
   useEffect(() => {
-    const fromHash = () => { const h = window.location.hash.slice(1) as Tab; if (MENU.some((m) => m.id === h)) setTab(h); };
+    const fromHash = () => {
+      const h = window.location.hash.slice(1);
+      if (['psn', 'jogos', 'disponibilidade'].includes(h)) {
+        window.history.replaceState(null, '', '#cadastro');
+        setTab('cadastro');
+      } else setTab(MENU.find((item) => item.id === h)?.id ?? 'dashboard');
+    };
     fromHash();
     window.addEventListener('hashchange', fromHash);
     return () => window.removeEventListener('hashchange', fromHash);
   }, []);
-  useEffect(() => { if (!selected && consoles.data?.length === 1) setSelected(consoles.data[0].id); }, [consoles.data, selected]);
   const go = (id: Tab) => { setTab(id); try { window.history.replaceState(null, '', `#${id}`); } catch { /* */ } };
   const title = MENU.find((m) => m.id === tab)?.label;
 
@@ -58,15 +61,13 @@ export default function OwnerInventory() {
       <h2 className="owner-title">{title}</h2>
       {consoles.error && <Alert kind="error">{consoles.error.message}</Alert>}
       {tab === 'dashboard' && <OwnerDashboard />}
-      {tab === 'cadastro' && <OwnerConsoles consoles={consoles.data} reload={consoles.reload} selected={selected} setSelected={setSelected} />}
-      {tab === 'psn' && <OwnerPsn consoles={consoles.data} accounts={accounts.data} reloadAccounts={accounts.reload} reloadConsoles={consoles.reload}
-        selected={selected} setSelected={setSelected} />}
-      {tab === 'jogos' && <OwnerGames key={selected} consoles={consoles.data} selected={selected} setSelected={setSelected} onReviewChange={consoles.reload} />}
-      {tab === 'disponibilidade' && <OwnerHours key={selected} consoles={consoles.data} selected={selected} setSelected={setSelected} onReviewChange={consoles.reload} />}
+      {tab === 'cadastro' && me && <OwnerConsoles key={me.id} ownerId={me.id} consoles={consoles.data} accounts={accounts.data}
+        reload={consoles.reload} reloadAccounts={accounts.reload} onSupport={openSupport} />}
       {tab === 'recebimento' && <Payments />}
-      {tab === 'suporte' && <Support />}
-      {tab === 'ajuda' && <OwnerHelp />}
+      {tab === 'suporte' && <Support onSupport={openSupport} />}
+      {tab === 'ajuda' && <OwnerHelp onSupport={openSupport} />}
     </div>
+    <SupportPanel open={supportOpen} onClose={() => setSupportOpen(false)} />
   </div>;
 }
 
@@ -113,13 +114,13 @@ function PayoutForm({ onSaved }: { onSaved: () => void }) {
   </form>;
 }
 
-function Support() {
+function Support({ onSupport }: { onSupport: () => void }) {
   return <section className="stack" id="suporte">
     <div className="card stack">
       <h2 style={{ margin: 0 }}>Falar com a equipe</h2>
       <p className="muted" style={{ margin: 0 }}>Abra um chamado e acompanhe as respostas pelo site e por e-mail. Informe o nome do console no assunto para agilizar.</p>
       <div className="row">
-        <Link className="btn primary" href="/suporte"><LifeBuoy size={16} aria-hidden />Abrir chamado</Link>
+        <button className="btn primary" onClick={onSupport}><LifeBuoy size={16} aria-hidden />Falar com o suporte</button>
         <Link className="btn" href="/suporte">Meus chamados</Link>
       </div>
     </div>

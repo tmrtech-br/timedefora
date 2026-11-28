@@ -15,8 +15,9 @@ const QUICK = ['A imagem está travando ou com atraso', 'O controle não respond
  * fala com a equipe. Reaproveita o chamado aberto desta reserva; sem chamado, abre um já marcado como "Sessão".
  */
 export default function SupportPanel({ open, onClose, reservationId, game, consoleName, onStaffReply }: {
-  open: boolean; onClose: () => void; reservationId: string; game: string; consoleName: string; onStaffReply?: (count: number) => void;
+  open: boolean; onClose: () => void; reservationId?: string; game?: string; consoleName?: string; onStaffReply?: (count: number) => void;
 }) {
+  const subject = reservationId ? `Sessão: ${game} em ${consoleName}`.slice(0, 140) : 'Portal do proprietário';
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [text, setText] = useState('');
@@ -28,18 +29,20 @@ export default function SupportPanel({ open, onClose, reservationId, game, conso
   const load = useCallback(async () => {
     try {
       const all = await get<Ticket[]>('/support/tickets');
-      const mine = all.find((t) => t.reservation_id === reservationId && t.status !== 'closed');
+      const mine = all.find((t) => t.status !== 'closed' && (reservationId
+        ? t.reservation_id === reservationId : !t.reservation_id && t.subject === subject));
       setTicket(mine ? await get<Ticket>(`/support/tickets/${mine.id}`) : null);
     } catch { /* mantém o que já está na tela */ }
     setLoaded(true);
-  }, [reservationId]);
+  }, [reservationId, subject]);
 
   // Atualiza a conversa (5 s com o painel aberto; 20 s fechado, para avisar de resposta da equipe).
   useEffect(() => {
+    if (!open && !reservationId) return;
     load();
     const t = setInterval(load, open ? 5000 : 20000);
     return () => clearInterval(t);
-  }, [load, open]);
+  }, [load, open, reservationId]);
 
   const staff = (ticket?.messages || []).filter((m) => m.is_staff).length;
   useEffect(() => {
@@ -54,7 +57,7 @@ export default function SupportPanel({ open, onClose, reservationId, game, conso
     setBusy(true); setErr('');
     try {
       if (ticket) await post(`/support/tickets/${ticket.id}/messages`, { body });
-      else await post('/support/tickets', { subject: `Sessão: ${game} em ${consoleName}`.slice(0, 140), category: 'sessao', message: body, reservation_id: reservationId });
+      else await post('/support/tickets', { subject, category: reservationId ? 'sessao' : 'geral', message: body, reservation_id: reservationId });
       setText('');
       await load();
     } catch (e) { setErr(e instanceof ApiError ? e.message : 'Não foi possível enviar. Tente de novo.'); }
@@ -63,10 +66,10 @@ export default function SupportPanel({ open, onClose, reservationId, game, conso
 
   if (!open) return null;
   return (
-    <aside className="support-panel" role="dialog" aria-label="Suporte durante a partida">
+    <aside className={`support-panel${reservationId ? '' : ' owner-support-panel'}`} role="dialog" aria-label={reservationId ? 'Suporte durante a partida' : 'Suporte do proprietário'}>
       <header>
         <div><b><Headphones size={16} aria-hidden /> Suporte</b>
-          <small>{ticket ? `${TICKET_STATUS[ticket.status] || ticket.status} · resposta aqui mesmo` : 'Seu jogo continua rodando enquanto fala com a gente'}</small></div>
+          <small>{ticket ? `${TICKET_STATUS[ticket.status] || ticket.status} · resposta aqui mesmo` : reservationId ? 'Seu jogo continua rodando enquanto fala com a gente' : subject}</small></div>
         <button className="icon-btn" onClick={onClose} aria-label="Fechar suporte"><X size={18} /></button>
       </header>
       <div className="support-body" ref={list}>
@@ -78,15 +81,17 @@ export default function SupportPanel({ open, onClose, reservationId, game, conso
             </div>))
         ) : (
           <div className="stack" style={{ gap: 8 }}>
-            <p className="small muted" style={{ margin: 0 }}>O que está acontecendo? O chamado já vai com o jogo, o console e o horário desta sessão.</p>
-            <div className="support-quick">{QUICK.map((q) => <button key={q} type="button" className="btn sm" onClick={() => setText(q === 'Outro problema' ? '' : q)}>{q}</button>)}</div>
+            <p className="small muted" style={{ margin: 0 }}>{reservationId
+              ? 'O que está acontecendo? O chamado já vai com o jogo, o console e o horário desta sessão.'
+              : 'Conte para a equipe como podemos ajudar com o seu cadastro.'}</p>
+            {reservationId && <div className="support-quick">{QUICK.map((q) => <button key={q} type="button" className="btn sm" onClick={() => setText(q === 'Outro problema' ? '' : q)}>{q}</button>)}</div>}
           </div>)}
-        {ticket?.messages && !ticket.messages.some((m) => m.is_staff) && <p className="small dim" style={{ margin: 0 }}>Chamado recebido. A equipe responde aqui; você pode continuar jogando.</p>}
+        {ticket?.messages && !ticket.messages.some((m) => m.is_staff) && <p className="small dim" style={{ margin: 0 }}>Chamado recebido. A equipe responde aqui.</p>}
       </div>
       <footer>
         {err && <Alert kind="error">{err}</Alert>}
         <div className="support-input">
-          <textarea rows={2} maxLength={5000} value={text} placeholder={ticket ? 'Escreva uma mensagem…' : 'Descreva o problema…'}
+          <textarea rows={2} maxLength={5000} value={text} aria-label="Mensagem ao suporte" placeholder={ticket ? 'Escreva uma mensagem…' : 'Descreva o problema…'}
             onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
           <button className="btn primary" onClick={send} disabled={busy || !text.trim()} aria-label="Enviar"><Send size={16} /></button>
         </div>

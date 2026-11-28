@@ -6,6 +6,7 @@ import { time } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { useAction } from '@/components/admin/common';
 import type { GameWindow } from './OwnerGames';
+import { useDraftValue } from './registrationDraft';
 import { ConsolePicker, type OwnerConsole } from './shared';
 
 type Hour = { weekday: number; opens_at: string; closes_at: string };
@@ -67,26 +68,26 @@ function AvailabilityCalendar({ consoleId, rows }: { consoleId: string; rows: Da
 }
 
 /** Dias e horários da semana em que o console fica disponível para aluguel. */
-export default function OwnerHours({ consoles, selected, setSelected, onReviewChange }: {
-  consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void; onReviewChange: () => void;
+export default function OwnerHours({ consoles, selected, setSelected, onReviewChange, wizard = false, onAdvance }: {
+  consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void; onReviewChange: () => void; wizard?: boolean; onAdvance?: () => void;
 }) {
   const current = consoles?.find((c) => c.id === selected);
   const data = useApi<{ hours: Hour[]; pending: Hour[] | null }>(current ? `/owner/consoles/${current.id}/hours` : null);
-  const [rows, setRows] = useState<DayRow[]>(DAYS.map(() => ({ on: false, opens_at: '08:00', closes_at: '22:00' })));
+  const [rows, setRows, cached] = useDraftValue<DayRow[]>('hours', DAYS.map(() => ({ on: false, opens_at: '08:00', closes_at: '22:00' })));
   const { busy, msg, run } = useAction();
   useEffect(() => {
     const src = data.data?.pending ?? data.data?.hours;
-    if (!src) return;
+    if (!src || cached) return;
     setRows(DAYS.map((_, wd) => {
       const h = src.find((x) => x.weekday === wd);
       return h ? { on: true, opens_at: h.opens_at, closes_at: h.closes_at } : { on: false, opens_at: '08:00', closes_at: '22:00' };
     }));
-  }, [data.data]);
+  }, [data.data, cached]);
   const set = (i: number, patch: Partial<DayRow>) => setRows((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const invalid = rows.some((r) => r.on && r.opens_at >= r.closes_at);
   const locked = current?.review_status === 'submitted';
   return <section className="stack" id="disponibilidade">
-    <div className="card"><ConsolePicker consoles={consoles} value={selected} onChange={setSelected} /></div>
+    {!wizard && <div className="card"><ConsolePicker consoles={consoles} value={selected} onChange={setSelected} /></div>}
     {msg}
     {current && <AvailabilityCalendar consoleId={current.id} rows={rows} />}
     {current && <div className="card stack">
@@ -108,12 +109,13 @@ export default function OwnerHours({ consoles, selected, setSelected, onReviewCh
         <button className="btn primary" disabled={busy || invalid || locked || data.loading} onClick={() => run(async () => {
           const result = await put<{ pending: boolean }>(`/owner/consoles/${current.id}/hours`, { hours: rows.flatMap((r, wd) => (r.on ? [{ weekday: wd, opens_at: r.opens_at, closes_at: r.closes_at }] : [])) });
           try {
-            if (result.pending) await post(`/owner/consoles/${current.id}/submit`);
+            if (result.pending && !wizard) await post(`/owner/consoles/${current.id}/submit`);
+            onAdvance?.();
           } finally {
             data.reload();
             onReviewChange();
           }
-        }, current.approved_at ? 'Novos horários enviados para análise.' : 'Horários salvos.')}>{current.approved_at ? 'Salvar e enviar para análise' : 'Salvar horários'}</button>
+        }, current.approved_at && !wizard ? 'Novos horários enviados para análise.' : 'Horários salvos.')}>{wizard ? 'Salvar e continuar' : current.approved_at ? 'Salvar e enviar para análise' : 'Salvar horários'}</button>
         <button className="btn" disabled={locked} onClick={() => setRows((r) => r.map((x, i) => ({ ...x, on: i >= 1 && i <= 5 })))}>Segunda a sexta</button>
         <button className="btn" disabled={locked} onClick={() => setRows((r) => r.map((x) => ({ ...x, on: true })))}>Todos os dias</button>
       </div>

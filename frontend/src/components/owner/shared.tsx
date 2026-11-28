@@ -5,6 +5,7 @@ export type OwnerConsole = {
   id: string; code: string; name: string; platform_code: string; agent_id: string | null; is_published: boolean; status: string;
   owner_requested_psn_account_id?: string | null; psn_account_id?: string | null; review_status?: string; review_notes?: string;
   approved_at?: string | null; model?: string; location?: string; description?: string; serial_number?: string | null;
+  pending?: { rate?: { rate_cents: number; rate_unit: string; min_minutes: number; max_minutes: number } };
 };
 export type PsnAccount = { id: string; label: string; online_id: string | null; status: string; agent_id: string | null };
 

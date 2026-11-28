@@ -5,15 +5,16 @@ import { Field, Modal, StatusPill } from '@/components/ui';
 import { ApiError, post, put } from '@/lib/api';
 import { DataTable, NewRecord, useAction, useDelete } from '@/components/admin/common';
 import { ConsolePicker, type OwnerConsole, type PsnAccount } from './shared';
+import { useDraftValue } from './registrationDraft';
 
 const PSN_STATUS: Record<string, string> = { pending: 'Login pendente', linked: 'Conectada', expired: 'Expirada', error: 'Com erro', disabled: 'Desativada' };
 
 /** Contas PSN do proprietário: cadastrar, fazer o login Sony e vincular ao console (a equipe só confere o vínculo). */
-export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadConsoles, selected, setSelected }: {
+export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadConsoles, selected, setSelected, wizard = false, onSaveDraft }: {
   consoles: OwnerConsole[] | null; accounts: PsnAccount[] | null; reloadAccounts: () => void; reloadConsoles: () => void;
-  selected: string; setSelected: (id: string) => void;
+  selected: string; setSelected: (id: string) => void; wizard?: boolean; onSaveDraft?: () => void;
 }) {
-  const [label, setLabel] = useState('');
+  const [label, setLabel] = useDraftValue('psnLabel', '');
   const [psnConsole, setPsnConsole] = useState('');
   const [login, setLogin] = useState<{ id: string; url: string }>();
   const [redirectUrl, setRedirectUrl] = useState('');
@@ -40,16 +41,18 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
         <NewRecord title="Nova conta PSN">{(close) => <form className="stack" onSubmit={(e) => {
           e.preventDefault();
           void run(async () => {
-            await post('/owner/psn-accounts', { console_id: psnConsole || null, label: label.trim() });
-            setSelected(psnConsole);
+            const consoleId = wizard ? selected : psnConsole;
+            await post('/owner/psn-accounts', { console_id: consoleId || null, label: label.trim() });
+            if (!wizard) setSelected(consoleId);
             setLabel(''); setPsnConsole(''); reloadAccounts(); reloadConsoles(); close();
           }, 'Conta cadastrada. Agora clique em "Fazer login Sony".');
         }}>
           <Field label="Nome para identificar a conta"><input required minLength={2} maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} /></Field>
-          <Field label="Console PlayStation">
+          {!wizard && <Field label="Console PlayStation">
             <select required value={psnConsole} onChange={(e) => setPsnConsole(e.target.value)}>
-              <option value="">Selecione</option>{playStations.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.platform_code}</option>)}</select></Field>
-          <button className="btn primary" disabled={busy}>Cadastrar conta PSN</button>
+              <option value="">Selecione</option>{playStations.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.platform_code}</option>)}</select></Field>}
+          <div className="row"><button className="btn primary" disabled={busy}>Cadastrar conta PSN</button>
+            {onSaveDraft && <button type="button" className="btn" onClick={onSaveDraft}>Salvar rascunho</button>}</div>
         </form>}</NewRecord></div>
       <DataTable rows={accounts} empty="Nenhuma conta PSN cadastrada."
         cols={[['Conta', (a) => a.label], ['ID PSN', (a) => a.online_id ?? '—'],
@@ -66,7 +69,7 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
     </div>
     <div className="card stack">
       <h2 style={{ margin: 0 }}>Conta PSN do console</h2>
-      <ConsolePicker consoles={playStations} value={playStations.some((c) => c.id === selected) ? selected : ''} onChange={setSelected} />
+      {!wizard && <ConsolePicker consoles={playStations} value={playStations.some((c) => c.id === selected) ? selected : ''} onChange={setSelected} />}
       {current && !['PS4', 'PS5'].includes(current.platform_code) && <p className="muted">Este console não usa conta PSN.</p>}
       {current && ['PS4', 'PS5'].includes(current.platform_code) && (
         <Field label="Conta PSN que o console vai usar">

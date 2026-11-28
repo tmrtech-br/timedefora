@@ -1,5 +1,4 @@
 'use client';
-import { useState } from 'react';
 import { Alert, Field, StatusPill } from '@/components/ui';
 import { patch, post, put } from '@/lib/api';
 import { dateTime, money } from '@/lib/format';
@@ -8,6 +7,7 @@ import { DataTable, fromLocalInput, NewRecord, useAction, useDelete } from '@/co
 import { EMPTY_GAME, GameRegistrationFields, gameRegistrationBody } from '@/components/admin/Games';
 import DateTimeField, { isLocalDateTime } from '@/components/admin/DateTimeField';
 import { ConsolePicker, type OwnerConsole } from './shared';
+import { useDraftValue } from './registrationDraft';
 
 export type GameWindow = { id: string; title: string; starts_at: string; ends_at: string; status: string; game_status?: string };
 type Games = { games: { id: string; title: string }[]; assignments: GameWindow[]; drafts: { id: string; title: string; status?: string }[];
@@ -16,9 +16,9 @@ type Rate = { min_minutes: number; max_minutes: number; rate_unit: 'minute' | 'h
 const DEFAULT_RATE: Rate = { min_minutes: 10, max_minutes: 120, rate_unit: 'minute', rate_cents: 100 };
 
 function Price({ consoleId, value, locked, approved, onSaved }: { consoleId: string; value: Rate | null; locked: boolean; approved: boolean; onSaved: () => void }) {
-  const [rate, setRate] = useState<Rate>(value ?? DEFAULT_RATE);
-  const [reais, setReais] = useState(((value ?? DEFAULT_RATE).rate_cents / 100).toFixed(2).replace('.', ','));
-  const [editing, setEditing] = useState(!value);
+  const [rate, setRate] = useDraftValue<Rate>('rate', value ?? DEFAULT_RATE);
+  const [reais, setReais] = useDraftValue('rateDisplay', ((value ?? DEFAULT_RATE).rate_cents / 100).toFixed(2).replace('.', ','));
+  const [editing, setEditing] = useDraftValue('rateEditing', !value);
   const { busy, msg, run } = useAction();
   const deletion = useDelete();
   return <div className="stack">{msg}{deletion.dialog}
@@ -55,21 +55,21 @@ function Price({ consoleId, value, locked, approved, onSaved }: { consoleId: str
 }
 
 /** Jogos e preços: cadastrar o jogo (para revisão), vincular aos períodos do console e definir o preço. */
-export default function OwnerGames({ consoles, selected, setSelected, onReviewChange }: {
-  consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void; onReviewChange: () => void;
+export default function OwnerGames({ consoles, selected, setSelected, onReviewChange, wizard = false, onSaveDraft }: {
+  consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void; onReviewChange: () => void; wizard?: boolean; onSaveDraft?: () => void;
 }) {
   const current = consoles?.find((c) => c.id === selected);
   const games = useApi<Games>(current ? `/owner/consoles/${current.id}/games` : null);
   const rate = useApi<Rate | null>(current ? `/owner/consoles/${current.id}/availability` : null);
-  const [gameDraft, setGameDraft] = useState<Record<string, unknown>>(EMPTY_GAME);
-  const [win, setWin] = useState({ game_id: '', starts_at: '', ends_at: '' });
+  const [gameDraft, setGameDraft] = useDraftValue<Record<string, unknown>>('game', EMPTY_GAME);
+  const [win, setWin] = useDraftValue('gameWindow', { game_id: '', starts_at: '', ends_at: '' });
   const { busy, msg, run } = useAction();
   const deletion = useDelete();
   const locked = current?.review_status === 'submitted';
   const owned = games.data?.owned_games ?? games.data?.drafts ?? [];
   const today = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
   return <section className="stack" id="jogos">
-    <div className="card"><ConsolePicker consoles={consoles} value={selected} onChange={setSelected} /></div>
+    {!wizard && <div className="card"><ConsolePicker consoles={consoles} value={selected} onChange={setSelected} /></div>}
     {msg}{deletion.dialog}{locked && <Alert kind="info">Console em análise: para editar, cancele o envio em Cadastro de console.</Alert>}
     {current && games.data && <div className="card stack">
       <div className="spread"><h2 style={{ margin: 0 }}>Jogos</h2>
@@ -82,14 +82,15 @@ export default function OwnerGames({ consoles, selected, setSelected, onReviewCh
         }}>
           <p className="small muted" style={{ margin: 0 }}>Plataforma: {current.platform_code}. A equipe confere as artes e a licença antes de liberar a venda.</p>
           <GameRegistrationFields f={gameDraft} set={(key, value) => setGameDraft((f) => ({ ...f, [key]: value }))} owner />
-          <div><button className="btn primary" disabled={busy || String(gameDraft.title).trim().length < 2}>Cadastrar jogo</button></div>
+          <div className="row"><button className="btn primary" disabled={busy || String(gameDraft.title).trim().length < 2}>Cadastrar jogo</button>
+            {onSaveDraft && <button type="button" className="btn" onClick={onSaveDraft}>Salvar rascunho</button>}</div>
         </form>}</NewRecord>}</div>
       {!locked && <form className="stack" onSubmit={(e) => {
         e.preventDefault();
         void run(async () => {
           await post(`/owner/consoles/${current.id}/games`, { game_id: win.game_id, starts_at: fromLocalInput(win.starts_at), ends_at: fromLocalInput(win.ends_at) });
           setWin({ game_id: '', starts_at: '', ends_at: '' }); await games.reload(); onReviewChange();
-        }, current.approved_at ? 'Período salvo. Envie as alterações para a equipe analisar.' : 'Período adicionado.');
+        }, 'Período adicionado.');
       }}>
         <div className="grid3 owner-game-window">
           <Field label="Jogo"><select required value={win.game_id} onChange={(e) => setWin({ ...win, game_id: e.target.value })}>
@@ -102,7 +103,7 @@ export default function OwnerGames({ consoles, selected, setSelected, onReviewCh
         </div>
         <div><button className="btn" disabled={busy || !win.game_id || !isLocalDateTime(win.starts_at) || !isLocalDateTime(win.ends_at) || win.ends_at <= win.starts_at}>Adicionar período do jogo</button></div>
       </form>}
-      {!locked && current.approved_at && games.data.assignments.some((item) => item.status === 'pending_review') &&
+      {!wizard && !locked && current.approved_at && games.data.assignments.some((item) => item.status === 'pending_review') &&
         <div><button className="btn primary" disabled={busy} onClick={() => void run(async () => {
           await post(`/owner/consoles/${current.id}/submit`);
           onReviewChange();
@@ -118,7 +119,7 @@ export default function OwnerGames({ consoles, selected, setSelected, onReviewCh
             (request) => run(async () => { await request(); await games.reload(); }, 'Jogo excluído.'), 'Os períodos deste jogo também são removidos.')}>Excluir jogo</button>]]} /></>}
     </div>}
     {current && <div className="card stack"><h2 style={{ margin: 0 }}>Preço</h2>
-      {!rate.loading && !rate.error && <Price key={current.id} consoleId={current.id} value={rate.data} locked={locked} approved={!!current.approved_at} onSaved={rate.reload} />}
+      {!rate.loading && !rate.error && <Price key={current.id} consoleId={current.id} value={rate.data} locked={locked} approved={!!current.approved_at} onSaved={() => { void rate.reload(); onReviewChange(); }} />}
     </div>}
   </section>;
 }

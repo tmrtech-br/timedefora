@@ -1,10 +1,12 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { CheckCircle2, Wifi } from 'lucide-react';
 import { Alert, Field } from '@/components/ui';
 import { put } from '@/lib/api';
 import { useApi } from '@/lib/hooks';
 import { useAction } from '@/components/admin/common';
 import type { OwnerConsole } from './shared';
+import { useDraftValue } from './registrationDraft';
 
 type Settings = { method: 'remote_play_native' | 'remote_play_chiaki'; network_route: 'lan' | 'internet_psn' | 'internet_port_forward';
   console_identifier: string; internal_host: string; public_host: string; public_port: number | null; resolution: '720p' | '1080p';
@@ -13,25 +15,27 @@ const DEFAULT: Settings = { method: 'remote_play_native', network_route: 'intern
   public_port: null, resolution: '720p', fps: 30, bitrate_kbps: 6000, standby_after_session: true, keep_awake_minutes: 15 };
 
 /** Método de conexão e qualidade da transmissão propostos pelo proprietário (a equipe aplica com o agente). */
-export default function OwnerConnection({ console: c, onSaved }: { console: OwnerConsole; onSaved: () => void }) {
+export default function OwnerConnection({ console: c, onSaved, wizard = false }: { console: OwnerConsole; onSaved: () => void; wizard?: boolean }) {
   const data = useApi<{ current: (Omit<Partial<Settings>, 'method'> & { method: string }) | null; pending: Settings | null }>(`/owner/consoles/${c.id}/connection-settings`);
-  const [s, setS] = useState<Settings>(DEFAULT);
+  const [s, setS, cached] = useDraftValue<Settings>('connection', DEFAULT);
   const { run, msg, busy } = useAction();
   useEffect(() => {
     const src = data.data?.pending ?? (data.data?.current && data.data.current.method !== 'unconfigured' ? data.data.current : null);
-    if (src) setS({ ...DEFAULT, ...src, console_identifier: src.console_identifier ?? '', internal_host: src.internal_host ?? '', public_host: src.public_host ?? '' } as Settings);
-  }, [data.data]);
+    if (src && !cached) setS({ ...DEFAULT, ...src, console_identifier: src.console_identifier ?? '', internal_host: src.internal_host ?? '', public_host: src.public_host ?? '' } as Settings);
+  }, [data.data, cached]);
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS((x) => ({ ...x, [k]: v }));
   const locked = c.review_status === 'submitted';
   const isPs4 = c.platform_code === 'PS4';
 
   return <div className="card stack">
-    <h2 style={{ margin: 0 }}>Conexão e transmissão</h2>
-    <p className="small muted" style={{ margin: 0 }}>Como o agente vai se conectar ao console e a qualidade da imagem enviada ao jogador.
-      A equipe aplica essa configuração ao aprovar; depois você testa e publica.</p>
-    {msg}{data.data?.pending && <Alert kind="info">Configuração salva{c.approved_at ? ': clique em "Aplicar configuração e testar" em Validação e publicação.' : ' e enviada junto com a análise.'}</Alert>}
+    {!wizard && <h2 style={{ margin: 0 }}>Conexão e transmissão</h2>}
+    <p className="small muted" style={{ margin: 0 }}>Defina como o agente se conecta ao console e a qualidade da imagem enviada ao jogador.</p>
+    {msg}{!wizard && data.data?.pending && <Alert kind="info">Configuração salva{c.approved_at ? ': clique em "Aplicar configuração e testar" em Validação e publicação.' : ' e enviada junto com a análise.'}</Alert>}
     {!isPs4 && <Alert kind="warn">Por enquanto o aluguel pela internet (PSN) funciona só com PS4. Este console ainda não pode ser configurado.</Alert>}
-    <dl className="kv small"><dt>Conexão</dt><dd>Remote Play pela internet (PSN): o console fica no seu endereço, ligado ou em repouso, com o Remote Play ativado.</dd></dl>
+    <div className="stack" style={{ gap: 6 }}>
+      <span className="small muted">Tipo de conexão</span>
+      <div className="owner-wizard-method"><Wifi size={21} aria-hidden /><strong>Remote Play (PSN)</strong><CheckCircle2 size={18} aria-hidden /></div>
+    </div>
     <div className="grid2">
       <Field label="Identificação do console" hint="Nome do console na PSN (Configurações › Sistema › Informações do sistema)">
         <input maxLength={80} disabled={locked} value={s.console_identifier} onChange={(e) => set('console_identifier', e.target.value)} /></Field>
@@ -51,6 +55,6 @@ export default function OwnerConnection({ console: c, onSaved }: { console: Owne
         console_identifier: s.console_identifier || null, resolution: s.resolution, fps: s.fps, bitrate_kbps: s.bitrate_kbps,
         standby_after_session: s.standby_after_session, keep_awake_minutes: s.keep_awake_minutes });
       data.reload(); onSaved();
-    }, c.approved_at ? 'Configuração salva: envie para análise para a equipe validar.' : 'Configuração de conexão salva.')}>Salvar conexão e transmissão</button></div>
+    }, 'Configuração de conexão salva.')}>{wizard ? 'Salvar e continuar' : 'Salvar conexão e transmissão'}</button></div>
   </div>;
 }

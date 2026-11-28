@@ -20,6 +20,11 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
     } });
     if (path === '/api/owner/terms') return route.fulfill({ json: { accepted_at: '2026-11-01T12:00:00Z' } });
     if (path === '/api/owner/consoles') return route.fulfill({ json: [consoleRow] });
+    if (path === '/api/owner/consoles/console/review') return route.fulfill({ json: { status: 'draft',
+      setup: { connection: true, psn: account.status === 'linked', games: false, availability: false },
+      pending: {}, pending_windows: [], missing: [],
+    } });
+    if (path === '/api/owner/consoles/console/games') return route.fulfill({ json: { games: [], drafts: [], assignments: [] } });
     if (path === '/api/owner/psn-accounts') {
       if (request.method() === 'POST') {
         consoleRow.owner_requested_psn_account_id = account.id;
@@ -40,12 +45,12 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
     return route.fulfill({ json: [] });
   });
 
-  await page.goto('/proprietario#psn');
+  await page.goto('/proprietario#cadastro');
+  await page.getByRole('button', { name: 'Continuar cadastro' }).click();
   const consoleCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Conta PSN do console' }) });
   await expect(consoleCard.getByText('Cadastre uma conta', { exact: false })).toBeVisible();
   await page.getByRole('button', { name: 'Novo cadastro' }).click();
   await page.getByLabel('Nome para identificar a conta').fill(account.label);
-  await page.getByLabel('Console PlayStation').selectOption(consoleRow.id);
   await page.getByRole('button', { name: 'Cadastrar conta PSN' }).click();
 
   await consoleCard.getByRole('button', { name: 'Fazer login Sony' }).click();
@@ -62,6 +67,8 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
   await dialog.getByRole('button', { name: 'Concluir vínculo' }).click();
   await expect(consoleCard.getByText('Conectada', { exact: true })).toBeVisible();
   expect(submittedRedirect).toEqual({ redirect_url: redirectUrl });
+  await page.getByRole('button', { name: 'Avançar', exact: true }).click();
+  await expect(page.getByRole('navigation', { name: 'Progresso do cadastro' }).getByRole('button', { name: 'Jogos vinculados' })).toHaveAttribute('aria-current', 'step');
 });
 
 test('admin gerencia contas PSN com respostas simuladas do backend', async ({ page }) => {

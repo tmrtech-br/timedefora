@@ -493,25 +493,29 @@ def my_payouts(p: Principal = Depends(enrolled_owner)):
 # ------------------------------------------------------------------ validação pela equipe
 def _checklist(conn, console_id, *, require_psn_login: bool = True) -> list[str]:
     """O que falta para enviar o console para análise."""
+    return list(_setup_issues(conn, console_id, require_psn_login=require_psn_login).values())
+
+
+def _setup_issues(conn, console_id, *, require_psn_login: bool = True) -> dict[str, str]:
     c = one(conn, '''select c.*, p.code platform_code, cfg.psn_account_id from consoles c join platforms p on p.id=c.platform_id
                      left join console_connection_configs cfg on cfg.console_id=c.id where c.id=%s''', (console_id,))
-    missing = []
+    missing = {}
     conn_cfg = (c['owner_pending'] or {}).get('connection')
     cfg_method = one(conn, 'select method from console_connection_configs where console_id=%s', (console_id,))
     if not conn_cfg and (not cfg_method or cfg_method['method'] == 'unconfigured'):
-        missing.append('Configure a conexão e a transmissão do console (Cadastro de console).')
+        missing['connection'] = 'Configure a conexão e a transmissão do console.'
     if c['platform_code'] in ('PS4', 'PS5'):
         psn_id = c['owner_requested_psn_account_id'] or c['psn_account_id']
         if not psn_id:
-            missing.append('Cadastre a conta PSN e associe ao console (Contas PSN).')
+            missing['psn'] = 'Cadastre a conta PSN e associe ao console.'
         elif require_psn_login and not one(conn, "select 1 from psn_accounts where id=%s and status='linked'", (psn_id,)):
-            missing.append('Conclua o login Sony em Contas PSN.')
+            missing['psn'] = 'Conclua o login Sony em Contas PSN.'
     if not one(conn, 'select 1 from owner_console_rates where console_id=%s', (console_id,)) and not (c['owner_pending'] or {}).get('rate'):
-        missing.append('Defina a tarifa e a duração das sessões.')
+        missing['rate'] = 'Defina a tarifa e a duração das sessões.'
     if not one(conn, """select 1 from console_game_assignments a join games g on g.id=a.game_id
                         where a.console_id=%s and a.status in ('active','pending_review')
                         and a.ends_at > %s and g.deleted_at is null""", (console_id, timeutil.now())):
-        missing.append('Cadastre pelo menos um jogo com período de disponibilidade.')
+        missing['games'] = 'Cadastre pelo menos um jogo com período de disponibilidade.'
     return missing
 
 
@@ -526,7 +530,12 @@ def review_state(console_id: UUID, p: Principal = Depends(enrolled_owner)):
                                        join games g on g.id=a.game_id where a.console_id=%s and a.status='pending_review'
                                          and a.ends_at>%s and g.deleted_at is null
                                        order by a.starts_at""", (console_id, timeutil.now()))
-        return jsonable({**c, 'missing': _checklist(conn, console_id), 'pending_windows': pending_windows,
+        issues = _setup_issues(conn, console_id)
+        hours_saved = ('hours' in c['pending'] or bool(c['pending'].get('availability_saved'))
+                       or bool(one(conn, 'select 1 from console_operating_hours where console_id=%s', (console_id,))))
+        return jsonable({**c, 'missing': list(issues.values()), 'pending_windows': pending_windows,
+                         'setup': {'connection': 'connection' not in issues, 'psn': 'psn' not in issues,
+                                   'games': 'games' not in issues and 'rate' not in issues, 'availability': hours_saved},
                          'agent_linked': bool(row['agent_id'])})
 
 
@@ -567,6 +576,11 @@ def owner_publish(console_id: UUID, p: Principal = Depends(enrolled_owner)):
         row = owned_console(conn, console_id, p.user_id, allow_published=True)
         if row['owner_approved_at'] is None:
             raise conflict('not_approved', 'A equipe precisa validar o console e vincular o agente antes da publicação.')
+        if row['owner_review_status'] != 'approved':
+            if one(conn, "select 1 from console_game_assignments where console_id=%s and status='pending_review' and ends_at>%s",
+                   (console_id, timeutil.now())):
+                raise conflict('assignment_pending_review', 'A equipe precisa aprovar o período do jogo antes da publicação.')
+            raise conflict('not_approved', 'Aguarde a aprovação das alterações antes de publicar o console.')
     return admin._publish_console(console_id)
 
 
@@ -745,10 +759,11 @@ def put_hours(console_id: UUID, body: HoursIn, p: Principal = Depends(enrolled_o
         row = owned_console(conn, console_id, p.user_id, edit=True)
         if row['owner_approved_at'] is not None:     # aprovado: vale depois da validação da equipe
             conn.execute('''update consoles set owner_review_status='changes_pending',
-                            owner_pending = owner_pending || jsonb_build_object('hours', %s::jsonb) where id=%s''',
+                            owner_pending = owner_pending || jsonb_build_object('hours', %s::jsonb, 'availability_saved', true) where id=%s''',
                          (json.dumps(hours), console_id))
             return {'hours': hours, 'pending': True}
         apply_hours(conn, console_id, hours)
+        conn.execute("update consoles set owner_pending=owner_pending || '{\"availability_saved\":true}'::jsonb where id=%s", (console_id,))
         audit_event(conn, 'owner.console_hours_changed', 'consoles', console_id)
     return {'hours': hours, 'pending': False}
 
@@ -842,12 +857,12 @@ def owner_run_diagnostics(console_id: UUID, p: Principal = Depends(enrolled_owne
         row = owned_console(conn, console_id, p.user_id, allow_published=True)
         if row['owner_approved_at'] is None or not row['agent_id']:
             raise conflict('not_approved', 'Os testes ficam liberados depois que a equipe aprovar e vincular o agente.')
+        if row['owner_review_status'] != 'approved':
+            raise conflict('configuration_pending_review', 'Aguarde a aprovação das alterações antes de testar o console.')
         pending = (row['owner_pending'] or {}).get('connection')
         cfg = one(conn, 'select method, network_route from console_connection_configs where console_id=%s', (console_id,))
         acc = _psn_for(conn, console_id)
         needs_psn = (pending or cfg or {}).get('network_route') == 'internet_psn'
-        if pending and row['owner_review_status'] != 'approved':
-            raise conflict('configuration_pending_review', 'Envie a nova configuração para análise e aguarde a aprovação antes de testá-la.')
         if needs_psn and (not acc or acc['status'] != 'linked'):
             raise conflict('psn_login_required', 'Faça o login Sony da conta PSN do console (menu Contas PSN) antes de testar.')
         if not pending and (not cfg or cfg['method'] == 'unconfigured'):
