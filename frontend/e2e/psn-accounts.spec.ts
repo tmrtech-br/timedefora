@@ -8,7 +8,7 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
   };
   const account = { id: 'psn', label: 'Conta de teste', status: 'pending', agent_id: null };
   const loginUrl = 'https://example.test/login';
-  const redirectUrl = 'https://example.test/redirect?code=ficticio';
+  const redirectUrl = `https://remoteplay.dl.playstation.net/remoteplay/redirect?code=${'ficticio'.repeat(32)}`;
   let submittedRedirect: unknown;
 
   await page.route('**/api/**', (route) => {
@@ -46,7 +46,9 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
   await consoleCard.getByRole('button', { name: 'Fazer login Sony' }).click();
   const dialog = page.getByRole('dialog', { name: 'Login na conta Sony' });
   await expect(dialog.getByRole('link', { name: 'Abra o login da Sony' })).toHaveAttribute('href', loginUrl);
-  await dialog.getByLabel('Endereço da página após o login').fill(redirectUrl);
+  const redirectInput = dialog.getByLabel('Endereço da página após o login');
+  await redirectInput.fill(redirectUrl);
+  await expect(redirectInput).toHaveValue(redirectUrl);
   await dialog.getByRole('button', { name: 'Concluir' }).click();
   await expect(consoleCard.getByText('Conectada', { exact: true })).toBeVisible();
   expect(submittedRedirect).toEqual({ redirect_url: redirectUrl });

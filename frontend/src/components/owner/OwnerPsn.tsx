@@ -103,7 +103,7 @@ export default function OwnerPsn({ consoles, accounts, reloadAccounts, reloadCon
           <li>Depois de entrar, a Sony abre uma página em branco ou de erro: copie o endereço completo dessa página.</li>
           <li>Cole o endereço abaixo e conclua.</li>
         </ol>
-        <Field label="Endereço da página após o login"><input type="url" required autoComplete="off" value={redirectUrl} onChange={(e) => setRedirectUrl(e.target.value)} /></Field>
+        <Field label="Endereço da página após o login"><input type="url" required maxLength={8192} autoComplete="off" value={redirectUrl} onChange={(e) => setRedirectUrl(e.target.value)} /></Field>
         <div><button className="btn primary" disabled={busy}>Concluir</button></div>
       </form></Modal>}
   </section>;
