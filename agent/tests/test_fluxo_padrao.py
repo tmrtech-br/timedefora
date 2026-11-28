@@ -6,7 +6,7 @@ from consoleagent.standard_flow import FlowError, open_game
 
 
 class FakePS4:
-    """Telas: welcome → home (foco 0 = Novidades) → jogo. recent = jogos do menu, do mais recente ao mais antigo."""
+    """Telas: welcome → perfis → home → jogo. Fila do menu: 0 = Store, 1 = Novidades, 2.. = jogos (mais recente primeiro)."""
 
     def __init__(self, screen='welcome', recent=('CUSA05904', 'CUSA00411'), running='', appear_offline=False):
         self.screen, self.recent, self.running = screen, list(recent), running
@@ -31,16 +31,16 @@ class FakePS4:
                 self.screen = 'profiles'
         elif self.screen == 'profiles':
             if name == 'cross':
-                self.screen, self.focus = 'home', 0
+                self.screen, self.focus = 'home', 1      # após o perfil: foco em Novidades
         elif self.screen == 'game' and name == 'ps':
-            self.screen, self.focus = 'home', 1          # volta ao menu com foco no jogo aberto
+            self.screen, self.focus = 'home', 2          # volta ao menu com foco no jogo aberto
         elif self.screen == 'home':
             if name == 'dpad_left':
                 self.focus = max(0, self.focus - 1)
             elif name == 'dpad_right':
-                self.focus = min(len(self.recent), self.focus + 1)
-            elif name == 'cross' and self.focus >= 1:
-                chosen = self.recent[self.focus - 1]
+                self.focus = min(len(self.recent) + 1, self.focus + 1)
+            elif name == 'cross' and self.focus >= 2:
+                chosen = self.recent[self.focus - 2]
                 if chosen == self.running:
                     self.screen = 'game'
                 elif self.running:
@@ -78,7 +78,7 @@ def test_caminhos_1_e_2_seleciona_o_perfil_e_abre_o_ultimo_jogo():
 
 def test_caminho_3_no_menu_abre_o_jogo():
     ps4 = FakePS4('home')
-    ps4.focus = 2                                         # foco em qualquer lugar do menu
+    ps4.focus = 3                                         # foco em qualquer lugar do menu
     r = run(ps4)
     assert r.title_id == 'CUSA05904' and r.path == 'menu'
 

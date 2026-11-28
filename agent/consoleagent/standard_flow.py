@@ -6,7 +6,8 @@ Caminhos (o estado vem da presença PSN e/ou do DDP local, ver presence.py):
    do console (foco em "Novidades").
 3. Menu do console (conta online, sem jogo): → até o ícone do jogo → ✕.
 Jogo certo já aberto: só espera ficar pronto. Outro jogo aberto: PS → menu → ícone → ✕ → ✕ (confirma fechar o atual).
-No menu do PS4 o 1º ícone à direita de "Novidades" é o último jogo usado; os seguintes, os usados antes.
+No menu do PS4 a fila começa em "Store", depois "Novidades"; o 1º ícone à direita de "Novidades" é o último jogo usado
+(visto em PS4 real, 28/11/2026). Depois de entrar no perfil o foco já está em "Novidades".
 Confirmação: o title ID informado pelo console precisa ser o esperado; ele surge no início do carregamento, então ainda
 espera a imagem assentar antes de liberar o jogador.
 """
@@ -26,9 +27,13 @@ class FlowError(Exception):
 HOLD, GAP = 0.3, 1.0     # pela PSN (internet) toques curtos e seguidos se perdem: segura 0,3 s e espera 1 s entre eles
 
 
+_trace: Callable[[str], None] = lambda label: None
+
+
 def _tap(pad, name: str, sleep: Callable, gap: float = GAP) -> None:
     pad.press(name, HOLD)
     sleep(gap)
+    _trace(name)                                   # diagnóstico: imagem da tela depois de cada toque
 
 
 @dataclass
@@ -64,8 +69,10 @@ def _wait_title(state: StateReader, sleep: Callable, clock: Callable, limit: flo
 def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: str = '', *, woke: bool = False,
               detect: bool = False, sleep: Callable = time.sleep, clock: Callable = time.monotonic,
               progress: Callable[[str], None] = lambda s: None, max_tiles: int = 4, settle: float = 45.0,
-              launch_timeout: float = 75.0) -> FlowResult:
+              launch_timeout: float = 75.0, trace: Callable[[str], None] | None = None) -> FlowResult:
     """Abre `expected` (ex.: CUSA05904) ou, com detect=True, o último jogo usado e informa qual abriu."""
+    global _trace
+    _trace = trace or (lambda label: None)
     expected = normalize_title(expected)
     if not detect and not expected:
         raise FlowError('Código do jogo (CUSA/PPSA) não informado: reconheça o jogo no menu Roteiros.')
@@ -108,10 +115,12 @@ def open_game(pad, state: StateReader, frame_ok: Callable[[], bool], expected: s
         progress(f'abrindo o jogo pelo menu (ícone {tile})' + (' — nova tentativa' if retried else ''))
         if current or tile > first or path == 'menu' or retried:
             _tap(pad, 'ps', sleep, 3)                       # volta ao menu do console (com ou sem jogo aberto)
+        steps = tile                                        # a partir de "Novidades"
         if path != 'perfil+menu' or tile > first or retried:
-            for _ in range(6):                              # foco em "Novidades" (primeiro item da fila)
+            for _ in range(6):                              # vai ao início da fila ("Store")
                 _tap(pad, 'dpad_left', sleep, 0.8)
-        for _ in range(tile):
+            steps = tile + 1                                # Store → Novidades → jogos
+        for _ in range(steps):
             _tap(pad, 'dpad_right', sleep)
         _tap(pad, 'cross', sleep, 2.5)
         if current:

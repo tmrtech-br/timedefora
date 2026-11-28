@@ -349,11 +349,27 @@ class ConsoleRuntime:
         def progress(step: str) -> None:
             j.step = f'"{title}": {step}'
 
+        trace = None
+        if game.get('force'):                    # teste pelo painel: guarda a tela depois de cada toque (agent/logs/flow-*)
+            from pathlib import Path
+            folder = Path(__file__).resolve().parents[1] / 'logs' / time.strftime('flow-%Y%m%d-%H%M%S')
+            folder.mkdir(parents=True, exist_ok=True)
+            count = [0]
+
+            def trace(label: str) -> None:
+                count[0] += 1
+                try:
+                    f = self.link.frame()
+                    if f.image is not None:
+                        f.image.save(folder / f'{count[0]:02d}-{time.strftime("%H%M%S")}-{label}.png')
+                except Exception:
+                    pass
+            log.info('diagnóstico do fluxo em %s', folder)
         try:
             settle = float(game.get('settle_seconds') or self.cfg.game_settle_seconds)
             r = open_game(self.ensure_pad(), state, lambda: self.link.frame().ok, str(game.get('title_id') or ''),
                           woke=self.woke, detect=bool(game.get('detect')), sleep=self.d.sleep, progress=progress,
-                          settle=0 if game.get('detect') else settle)
+                          settle=0 if game.get('detect') else settle, trace=trace)
         except FlowError as e:
             raise Fail(str(e))
         j.data = {'title_id': r.title_id, 'title_name': r.title_name, 'path': r.path, 'tile': r.tile}
