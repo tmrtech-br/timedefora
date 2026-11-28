@@ -820,3 +820,22 @@ html:has(.policy-dialog[open]) { overflow: hidden; }
 .owner-steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--muted); }
 .owner-steps li.done { color: #7be0a3; } .owner-steps li.done::marker { content: '✓  '; }
 .owner-steps li.now { color: #fff; font-weight: 600; }
+/* ---- Portal do proprietário ---- */
+.owner-portal .admin-nav a { display: flex; align-items: center; gap: 8px; }
+.owner-title { margin: 0; }
+.owner-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 12px; align-items: end; }
+.owner-filters .btn { height: 42px; }
+.owner-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.owner-chart { margin: 0; }
+.owner-chart figcaption { font-weight: 700; margin-bottom: 8px; }
+.owner-chart .oc-label { fill: var(--muted); font-size: 17px; }
+.owner-chart .oc-value { fill: var(--text); font-size: 17px; font-weight: 600; }
+.owner-chart .oc-bar { fill: var(--purple); opacity: .85; }
+.owner-hours { display: grid; gap: 8px; }
+.owner-hour { display: grid; grid-template-columns: 140px 120px auto 120px 1fr; gap: 10px; align-items: center; padding: 8px 12px;
+  border-radius: 10px; background: #15112b; border: 1px solid var(--line); }
+.owner-hour.on { border-color: rgba(177, 60, 255, .55); }
+.owner-hour input[type='time'] { height: 38px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line2); background: #0f0c20; color: var(--text); }
+.owner-hour input:disabled { opacity: .45; }
+@media (max-width: 900px) { .owner-filters, .owner-kpis { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .owner-filters, .owner-kpis { grid-template-columns: 1fr; } .owner-hour { grid-template-columns: 1fr 1fr; } }

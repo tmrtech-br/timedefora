@@ -58,7 +58,17 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     freeze(at(2, 7, 0))
     admin, _ = admin_api('chefe_valida')
     api, user = _owner()
-    c = api.post('/owner/consoles', json={'code': 'DONO-01', 'name': 'PS5 do dono', 'platform_code': 'PS5'})
+    from app.core import security
+    from app.core.db import insert
+    with tx() as conn:   # agente real liberado para proprietários
+        agent = str(insert(conn, 'console_agents', {'name': 'agente-dono', 'host_name': 'pc', 'is_simulated': False, 'status': 'online',
+                                                    'endpoint_url': 'https://agente.exemplo', 'outbound_token_enc': security.encrypt('tok'),
+                                                    'available_to_owners': True})['id'])
+    assert [a['id'] for a in api.get('/owner/agents').json()] == [agent]
+    assert api.get('/owner/consoles/code-check', params={'code': 'x'}).json()['valid'] is False
+    assert api.get('/owner/consoles/code-check', params={'code': 'PS5-01'}).json()['available'] is False
+    assert api.get('/owner/consoles/code-check', params={'code': 'DONO-01'}).json()['available'] is True
+    c = api.post('/owner/consoles', json={'code': 'DONO-01', 'name': 'PS5 do dono', 'platform_code': 'PS5', 'agent_id': agent})
     assert c.status_code == 201, c.text
     cid = c.json()['id']
     # incompleto: não envia
@@ -67,6 +77,12 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     assert api.put(f'/owner/consoles/{cid}/availability', json={'min_minutes': 10, 'max_minutes': 60, 'rate_unit': 'minute', 'rate_cents': 100}).status_code == 200
     w = api.post(f'/owner/consoles/{cid}/games', json={'game_id': str(world['game']['id']), 'starts_at': at(3, 8).isoformat(), 'ends_at': at(3, 12).isoformat()})
     assert w.status_code == 201, w.text
+    missing = api.get(f'/owner/consoles/{cid}/review').json()['missing']
+    assert len(missing) == 1 and 'PSN' in missing[0]
+    with tx() as conn:   # conta PSN conectada pelo agente escolhido (login Sony simulado no banco)
+        acc = insert(conn, 'psn_accounts', {'agent_id': agent, 'label': 'conta-dono', 'status': 'linked', 'owner_user_id': user['id']})
+    assert api.put(f'/owner/consoles/{cid}/connection', json={'psn_account_id': str(acc['id'])}).status_code == 200
+    assert api.put(f'/owner/consoles/{cid}/hours', json={'hours': [{'weekday': 1, 'opens_at': '08:00', 'closes_at': '22:00'}]}).json()['pending'] is False
     assert api.get(f'/owner/consoles/{cid}/review').json()['missing'] == []
     # sem aprovação não publica
     assert api.post(f'/owner/consoles/{cid}/publish').status_code == 409
@@ -80,11 +96,6 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     assert admin.post(f'/admin/owner-reviews/{cid}/reject', json={'notes': 'Ajuste as artes do jogo.'}).json()['status'] == 'rejected'
     assert api.get(f'/owner/consoles/{cid}/review').json()['status'] == 'rejected'
     assert api.post(f'/owner/consoles/{cid}/submit').status_code == 200
-    from app.core import security
-    from app.core.db import insert
-    with tx() as conn:   # agente real (não simulado) com endereço e credencial, como em produção
-        agent = str(insert(conn, 'console_agents', {'name': 'agente-dono', 'host_name': 'pc', 'is_simulated': False, 'status': 'online',
-                                                    'endpoint_url': 'https://agente.exemplo', 'outbound_token_enc': security.encrypt('tok')})['id'])
     assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'agent_id': agent, 'notes': 'ok'}).status_code == 200
     st = api.get(f'/owner/consoles/{cid}/review').json()
     assert st['status'] == 'approved' and st['approved_at'] and st['agent_linked'] is True
@@ -101,3 +112,9 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     with tx() as conn:
         assert conn.execute("select count(*) n from console_game_assignments where console_id=%s and status='active'", (cid,)).fetchone()['n'] == 2
     assert api.get(f'/owner/consoles/{cid}/history').status_code == 200
+    assert api.get('/owner/report').status_code == 200
+    # horários num console aprovado: ficam pendentes
+    assert api.put(f'/owner/consoles/{cid}/hours', json={'hours': [{'weekday': 2, 'opens_at': '10:00', 'closes_at': '20:00'}]}).json()['pending'] is True
+    # exclusão sem reservas futuras
+    assert api.delete(f'/owner/consoles/{cid}', json={'reason': 'Vendi o console'}).status_code == 200
+    assert api.get('/owner/consoles').json() == []

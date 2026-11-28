@@ -1,5 +1,6 @@
 """Cadastro e consultas restritas ao proprietário."""
 import json
+import re
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
@@ -94,7 +95,7 @@ def accounts(p: Principal = Depends(enrolled_owner)):
 def consoles(p: Principal = Depends(enrolled_owner)):
     with tx() as conn:
         return jsonable(all_(conn, '''
-            select c.id, c.code, c.name, c.status, c.is_published, p.code platform_code,
+            select c.id, c.code, c.name, c.status, c.is_published, p.code platform_code, c.model, c.location, c.description, c.serial_number,
                    coalesce(c.owner_onboarding_agent_id, cfg.agent_id) agent_id, cfg.psn_account_id,
                    c.owner_requested_psn_account_id, c.owner_review_status review_status, c.owner_review_notes review_notes,
                    c.owner_submitted_at submitted_at, c.owner_reviewed_at reviewed_at, c.owner_approved_at approved_at,
@@ -113,11 +114,18 @@ class ConsoleIn(BaseModel):
     serial_number: str | None = Field(default=None, max_length=120)
     location: str = Field(default='', max_length=120)
     description: str = Field(default='', max_length=500)
+    agent_id: UUID | None = None        # agente da plataforma liberado para proprietários (permite o login PSN já)
 
 
 @router.post('/consoles', status_code=201)
 def create_console(body: ConsoleIn, p: Principal = Depends(enrolled_owner)):
-    row = admin.register_console(admin.ConsoleIn(**body.model_dump()), p.user_id, p.user_id)
+    if body.agent_id:
+        with tx() as conn:
+            _owner_agent(conn, body.agent_id)
+    row = admin.register_console(admin.ConsoleIn(**body.model_dump(exclude={'agent_id'})), p.user_id, p.user_id)
+    if body.agent_id:
+        with tx(p.user_id) as conn:
+            conn.execute('update consoles set owner_onboarding_agent_id=%s where id=%s', (body.agent_id, row['id']))
     return {key: row[key] for key in ('id', 'code', 'name', 'status', 'is_published', 'platform_code')}
 
 
@@ -239,9 +247,9 @@ def games(console_id: UUID, p: Principal = Depends(enrolled_owner)):
             where gp.platform_id=%s and g.status='published' and g.deleted_at is null order by g.title
         ''', (console['platform_id'],))
         assignments = all_(conn, '''
-            select a.id, a.starts_at, a.ends_at, g.title
+            select a.id, a.starts_at, a.ends_at, a.status, g.title || case when a.status='pending_review' then ' (aguardando validação)' else '' end title
             from console_game_assignments a join games g on g.id=a.game_id
-            where a.console_id=%s and a.status='active' and a.ends_at>%s order by a.starts_at
+            where a.console_id=%s and a.status in ('active','pending_review') and a.ends_at>%s order by a.starts_at
         ''', (console_id, timeutil.now()))
         drafts = all_(conn, '''
             select g.id, g.title from games g join game_platforms gp on gp.game_id=g.id
@@ -482,7 +490,12 @@ def _checklist(conn, console_id) -> list[str]:
     c = one(conn, '''select c.*, p.code platform_code, cfg.psn_account_id from consoles c join platforms p on p.id=c.platform_id
                      left join console_connection_configs cfg on cfg.console_id=c.id where c.id=%s''', (console_id,))
     missing = []
-    # A conta PSN é conectada DEPOIS da aprovação: o login passa pelo agente, que a equipe vincula ao aprovar.
+    if not (c['owner_onboarding_agent_id'] or c['agent_id']):
+        missing.append('Escolha o agente da plataforma que vai controlar o console (Cadastro de console).')
+    if c['platform_code'] in ('PS4', 'PS5'):
+        acc = c['owner_requested_psn_account_id'] or c['psn_account_id']
+        if not acc or not one(conn, "select 1 from psn_accounts where id=%s and status='linked'", (acc,)):
+            missing.append('Conecte e vincule a conta PSN ao console (Contas PSN).')
     if not one(conn, 'select 1 from owner_console_rates where console_id=%s', (console_id,)) and not (c['owner_pending'] or {}).get('rate'):
         missing.append('Defina a tarifa e a duração das sessões.')
     if not one(conn, """select 1 from console_game_assignments where console_id=%s and status in ('active','pending_review')
@@ -568,3 +581,165 @@ def console_history(console_id: UUID, limit: int = 100, p: Principal = Depends(e
             order by r.starts_at desc limit %s
         ''', (console_id, max(1, min(limit, 500))))
     return jsonable(rows)
+
+
+# ------------------------------------------------------------------ cadastro do console (portal reorganizado)
+CODE_RE = re.compile(r'^[A-Z0-9-]{3,30}$')
+
+
+@router.get('/agents')
+def owner_agents(p: Principal = Depends(enrolled_owner)):
+    """Agentes da plataforma liberados pela equipe para os proprietários escolherem."""
+    with tx() as conn:
+        return jsonable(all_(conn, '''select id, name, location, status from console_agents
+                                      where available_to_owners and not is_simulated order by name'''))
+
+
+@router.get('/consoles/code-check')
+def code_check(code: str = '', p: Principal = Depends(enrolled_owner)):
+    """Validação do código enquanto o proprietário digita."""
+    c = code.strip().upper()
+    if not CODE_RE.fullmatch(c):
+        return {'valid': False, 'available': False, 'message': 'Use de 3 a 30 letras maiúsculas, números ou hífen (ex.: PS5-JOAO-01).'}
+    with tx() as conn:
+        taken = one(conn, 'select 1 from consoles where code=%s and deleted_at is null', (c,))
+    return {'valid': True, 'available': not taken, 'message': 'Código já usado por outro console.' if taken else 'Código disponível.'}
+
+
+def _owner_agent(conn, agent_id) -> None:
+    a = one(conn, 'select available_to_owners, is_simulated from console_agents where id=%s', (agent_id,))
+    if not a or not a['available_to_owners'] or a['is_simulated']:
+        raise unprocessable('invalid_agent', 'Escolha um dos agentes disponíveis para proprietários.')
+
+
+class ConsoleEditIn(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=60)
+    model: str | None = Field(default=None, max_length=120)
+    serial_number: str | None = Field(default=None, max_length=120)
+    location: str | None = Field(default=None, max_length=120)
+    description: str | None = Field(default=None, max_length=500)
+    agent_id: UUID | None = None
+
+
+@router.patch('/consoles/{console_id}')
+def edit_console(console_id: UUID, body: ConsoleEditIn, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        row = owned_console(conn, console_id, p.user_id, edit=True)
+        fields = {k: v for k, v in body.model_dump(exclude={'agent_id'}).items() if k in body.model_fields_set}
+        if fields.get('name') is not None:
+            fields['name'] = fields['name'].strip()
+        if 'agent_id' in body.model_fields_set and body.agent_id:
+            if row['owner_approved_at'] is not None and str(body.agent_id) != str(row['agent_id']):
+                raise conflict('approved_console', 'Console aprovado: fale com a equipe para trocar o agente.')
+            _owner_agent(conn, body.agent_id)
+            conn.execute('update consoles set owner_onboarding_agent_id=%s where id=%s', (body.agent_id, console_id))
+        if fields:
+            sets = ', '.join(f'{k}=%s' for k in fields)
+            conn.execute(f'update consoles set {sets}, updated_by=%s where id=%s', (*fields.values(), p.user_id, console_id))
+        _changed(conn, row)
+        audit_event(conn, 'owner.console_edited', 'consoles', console_id, details={'fields': sorted(fields)})
+    return {'ok': True}
+
+
+@router.delete('/consoles/{console_id}')
+def delete_console(console_id: UUID, body: DeleteIn, p: Principal = Depends(enrolled_owner)):
+    with tx(p.user_id) as conn:
+        owned_console(conn, console_id, p.user_id, allow_published=True)
+        if one(conn, """select 1 from reservations where console_id=%s and status in ('pending_payment','confirmed','active')
+                        and ends_at > %s""", (console_id, timeutil.now())):
+            raise conflict('has_reservations', 'Há reservas futuras neste console. Tire-o do ar e aguarde elas terminarem para excluir.')
+        n = timeutil.now()
+        conn.execute("update consoles set deleted_at=%s, is_published=false, status='disabled' where id=%s", (n, console_id))
+        conn.execute("""update console_game_assignments set status='archived' where console_id=%s
+                        and status in ('active','pending_review') and ends_at > %s""", (console_id, n))
+        audit_event(conn, 'owner.console_deleted', 'consoles', console_id, reason=body.reason)
+    return {'ok': True}
+
+
+class HourIn(BaseModel):
+    weekday: int = Field(ge=0, le=6)        # 0 = domingo
+    opens_at: str
+    closes_at: str
+
+
+class HoursIn(BaseModel):
+    hours: list[HourIn] = Field(max_length=50)
+
+
+@router.get('/consoles/{console_id}/hours')
+def get_hours(console_id: UUID, p: Principal = Depends(enrolled_owner)):
+    with tx() as conn:
+        row = owned_console(conn, console_id, p.user_id)
+        hours = all_(conn, '''select weekday, to_char(opens_at,'HH24:MI') opens_at, to_char(closes_at,'HH24:MI') closes_at
+                              from console_operating_hours where console_id=%s order by weekday, opens_at''', (console_id,))
+        return {'hours': hours, 'pending': (row['owner_pending'] or {}).get('hours')}
+
+
+def _valid_hours(hours: list[HourIn]) -> list[dict]:
+    from datetime import time as dtime
+    out = []
+    for h in hours:
+        try:
+            o, c = dtime.fromisoformat(h.opens_at), dtime.fromisoformat(h.closes_at)
+        except ValueError:
+            raise unprocessable('validation_error', 'Horário inválido (use HH:MM).')
+        if o >= c:
+            raise unprocessable('validation_error', 'O horário de abertura precisa ser antes do fechamento.')
+        out.append({'weekday': h.weekday, 'opens_at': o.strftime('%H:%M'), 'closes_at': c.strftime('%H:%M')})
+    return out
+
+
+def apply_hours(conn, console_id, hours: list[dict]) -> None:
+    conn.execute('delete from console_operating_hours where console_id=%s', (console_id,))
+    for h in hours:
+        insert(conn, 'console_operating_hours', {'console_id': console_id, 'weekday': h['weekday'],
+                                                 'opens_at': h['opens_at'], 'closes_at': h['closes_at']})
+
+
+@router.put('/consoles/{console_id}/hours')
+def put_hours(console_id: UUID, body: HoursIn, p: Principal = Depends(enrolled_owner)):
+    hours = _valid_hours(body.hours)
+    with tx(p.user_id) as conn:
+        row = owned_console(conn, console_id, p.user_id, edit=True)
+        if row['owner_approved_at'] is not None:     # aprovado: vale depois da validação da equipe
+            conn.execute('''update consoles set owner_review_status='changes_pending',
+                            owner_pending = owner_pending || jsonb_build_object('hours', %s::jsonb) where id=%s''',
+                         (json.dumps(hours), console_id))
+            return {'hours': hours, 'pending': True}
+        apply_hours(conn, console_id, hours)
+        audit_event(conn, 'owner.console_hours_changed', 'consoles', console_id)
+    return {'hours': hours, 'pending': False}
+
+
+@router.get('/report')
+def owner_report(date_from: str | None = None, date_to: str | None = None, console_id: UUID | None = None,
+                 p: Principal = Depends(enrolled_owner)):
+    """Dados do dashboard do proprietário (filtráveis por período e console)."""
+    from datetime import date as ddate, timedelta
+    try:
+        d1 = ddate.fromisoformat(date_from) if date_from else timeutil.local(timeutil.now()).date() - timedelta(days=29)
+        d2 = ddate.fromisoformat(date_to) if date_to else timeutil.local(timeutil.now()).date()
+    except ValueError:
+        raise unprocessable('validation_error', 'Datas inválidas.')
+    if d2 < d1 or (d2 - d1).days > 366:
+        raise unprocessable('validation_error', 'Escolha um período de até 1 ano.')
+    tz = 'America/Fortaleza'
+    args: list = [p.user_id, d1, d2]
+    extra = ''
+    if console_id:
+        extra = ' and r.console_id=%s'
+        args.append(console_id)
+    with tx() as conn:
+        rows = all_(conn, f'''
+            select r.code, r.status, r.minutes, r.total_cents, r.starts_at, g.title game, c.name console,
+                   (r.starts_at at time zone '{tz}')::date as day, s.seconds_used, s.end_reason,
+                   st.owner_cents, st.status settlement_status, po.status payout_status
+            from reservations r join games g on g.id=r.game_id join consoles c on c.id=r.console_id
+            left join game_sessions s on s.reservation_id=r.id
+            left join owner_settlements st on st.reservation_id=r.id
+            left join owner_payouts po on po.settlement_id=st.id
+            where r.owner_user_id=%s and (r.starts_at at time zone '{tz}')::date between %s and %s
+              and r.status not in ('pending_payment','expired'){extra}
+            order by r.starts_at desc''', tuple(args))
+        consoles = all_(conn, 'select id, name from consoles where owner_user_id=%s and deleted_at is null order by name', (p.user_id,))
+    return jsonable({'date_from': d1.isoformat(), 'date_to': d2.isoformat(), 'consoles': consoles, 'rows': rows})

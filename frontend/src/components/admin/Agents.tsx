@@ -367,6 +367,10 @@ export default function Agents() {
           })}>{!a.is_simulated && configFile ? 'Cadastrar e atualizar config.json' : 'Cadastrar'}</button>
         </>}</NewRecord>
         <DataTable rows={agents.data} error={agents.error?.message} cols={[['Nome', (r) => String(r.name)], ['Host', (r) => String(r.host_name)], ['Status', (r) => <StatusPill status={String(r.status)} map={AGENT_STATUS} tone={({ online: 'green', offline: 'red', degraded: 'amber', unknown: '' } as Record<string, string>)[String(r.status)]} />], ['Simulado', (r) => (r.is_simulated ? 'sim' : 'não')],
+          ['Proprietários', (r) => (r.is_simulated ? '—' : <label className="check" title="Proprietários podem escolher este agente ao cadastrar o console">
+            <input type="checkbox" checked={Boolean(r.available_to_owners)} onChange={(e) => run(async () => {
+              await patch(`/admin/agents/${r.id}`, { available_to_owners: e.target.checked }); agents.reload();
+            }, e.target.checked ? 'Agente liberado para proprietários.' : 'Agente retirado da lista dos proprietários.')} />Liberado</label>)],
           ['Último heartbeat', (r) => dateTime(r.last_heartbeat_at as string)], ['Ações', (r) => <button className="btn sm" onClick={() => setSelectedAgent({ row: r })}>Ações</button>]]} />
       </section>
       <section className="card stack"><h2>Capturadoras HDMI</h2>

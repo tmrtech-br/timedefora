@@ -30,10 +30,9 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
     {msg}{review.error && <Alert kind="error">{review.error.message}</Alert>}
     {r && <>
       <ol className="small owner-steps">
-        <li className={r.status !== 'draft' && r.status !== 'rejected' ? 'done' : ''}>Cadastre console, jogos (com artes) e períodos, e a tarifa.</li>
-        <li className={r.approved_at ? 'done' : r.status === 'submitted' ? 'now' : ''}>Envie para análise: a equipe valida e vincula o agente.</li>
-        <li className={r.agent_linked && r.approved_at ? 'now' : ''}>Depois da aprovação: conecte a conta PSN e aguarde o teste de conexão da equipe.</li>
-        <li className={r.is_published ? 'done' : ''}>Publique o console para aluguel.</li>
+        <li className={r.status !== 'draft' && r.status !== 'rejected' ? 'done' : ''}>Cadastre o console (com o agente), a conta PSN, os jogos com artes e períodos, o preço e os horários.</li>
+        <li className={r.approved_at ? 'done' : r.status === 'submitted' ? 'now' : ''}>Envie para análise: a equipe confere tudo e aprova o vínculo do console, da conta PSN e do agente.</li>
+        <li className={r.is_published ? 'done' : r.approved_at ? 'now' : ''}>Publique o console para aluguel.</li>
       </ol>
       {r.notes && r.status !== 'approved' && <Alert kind="warn">Observações da equipe: {r.notes}</Alert>}
       {r.status === 'changes_pending' && <Alert kind="info">Você alterou um console aprovado. Ele <b>continua no ar com a versão aprovada</b>;

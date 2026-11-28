@@ -350,7 +350,7 @@ def patch_agent(aid: uuid.UUID, body: dict, p: Principal = Depends(ADMIN)):
     _check_agent_endpoint(str(body['endpoint_url']) if body.get('endpoint_url') else None)
     with tx() as conn:
         row = _patch(conn, 'console_agents', aid, body, {'name', 'host_name', 'description', 'location', 'endpoint_url',
-                                                         'cpu_limit_pct', 'ram_limit_mb', 'network_limit_mbps'})
+                                                         'cpu_limit_pct', 'ram_limit_mb', 'network_limit_mbps', 'available_to_owners'})
     row.pop('credential_hash', None)
     row.pop('outbound_token_enc', None)
     return jsonable(row)
@@ -2488,6 +2488,10 @@ def approve_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = De
                              (cid, rate['min_minutes'], rate['max_minutes'], rate['rate_unit'], rate['rate_cents']))
             conn.execute("update console_game_assignments set status='active', updated_by=%s where console_id=%s and status='pending_review'",
                          (p.user_id, cid))
+            hours = (c['owner_pending'] or {}).get('hours')
+            if hours is not None:
+                from .owner import apply_hours
+                apply_hours(conn, cid, hours)
             n = timeutil.now()
             conn.execute('''update consoles set owner_review_status='approved', owner_review_notes=%s, owner_reviewed_at=%s,
                             owner_reviewed_by=%s, owner_approved_at=coalesce(owner_approved_at, %s), owner_pending='{}'::jsonb
