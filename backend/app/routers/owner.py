@@ -870,6 +870,7 @@ def delete_psn_account(account_id: UUID, body: DeleteIn, p: Principal = Depends(
             raise conflict('account_in_use', 'Conta em uso pelo console ' + ', '.join(u['name'] for u in used)
                            + '. Associe outra conta ao console (ou exclua o console) antes de excluir esta.')
         conn.execute('update consoles set owner_requested_psn_account_id=null where owner_requested_psn_account_id=%s', (account_id,))
+        psn_accounts.clear_deleted_console_bindings(conn, account_id)
         if row['agent_id'] is not None:
             try:
                 psn_accounts._call_agent(conn, row, '', method='DELETE')   # apaga o login guardado no agente

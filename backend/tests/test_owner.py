@@ -53,7 +53,7 @@ def _owner(username='dono_valida'):
     return api, user
 
 
-def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
+def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze, monkeypatch):
     from conftest import at
     freeze(at(2, 7, 0))
     admin, _ = admin_api('chefe_valida')
@@ -140,8 +140,21 @@ def test_fluxo_de_validacao_do_console_do_proprietario(world, freeze):
     # horários num console aprovado: ficam pendentes
     assert api.put(f'/owner/consoles/{cid}/hours', json={'hours': [{'weekday': 2, 'opens_at': '10:00', 'closes_at': '20:00'}]}).json()['pending'] is True
     # exclusão sem reservas futuras
+    delete_psn_path = f"/owner/psn-accounts/{acc['id']}"
+    assert api.delete(delete_psn_path).json()['code'] == 'account_in_use'
     assert api.delete(f'/owner/consoles/{cid}', json={'reason': 'Vendi o console'}).status_code == 200
     assert api.get('/owner/consoles').json() == []
+    from app.routers import psn_accounts
+
+    calls = []
+    monkeypatch.setattr(psn_accounts, '_send_agent', lambda target, suffix, payload, method: calls.append(method))
+    removed = api.delete(delete_psn_path)
+    assert removed.status_code == 200, removed.text
+    assert calls == ['DELETE']
+    assert api.get('/owner/psn-accounts').json() == []
+    with tx() as conn:
+        cfg = conn.execute('select psn_account_id, method from console_connection_configs where console_id=%s', (cid,)).fetchone()
+        assert cfg == {'psn_account_id': None, 'method': 'unconfigured'}
 
 
 def test_exclusoes_do_proprietario(world, freeze):

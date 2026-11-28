@@ -159,15 +159,21 @@ def remove_account(account_id: uuid.UUID, body: DeleteIn, p: Principal = Depends
             codes = ', '.join(console['code'] for console in used)
             raise conflict('account_in_use',
                            f'Abra Consoles e conexão e use Desvincular conta PSN nos consoles vinculados ({codes}) antes de excluir a conta.')
-        conn.execute('''update console_connection_configs cfg
-                        set psn_account_id=null, psn_device_uid=null
-                        from consoles c
-                        where cfg.console_id=c.id and c.deleted_at is not null and cfg.psn_account_id=%s''', (account_id,))
+        clear_deleted_console_bindings(conn, account_id)
         if row['agent_id'] is not None:
             _call_agent(conn, row, '', method='DELETE')
         audit_event(conn, 'psn.account_deleted', 'psn_accounts', account_id, reason=body.reason)
         conn.execute('delete from psn_accounts where id=%s', (account_id,))
     return {'ok': True}
+
+
+def clear_deleted_console_bindings(conn, account_id):
+    # O método Remote Play pela internet exige PSN mesmo em um cadastro já excluído.
+    conn.execute('''update console_connection_configs cfg
+                    set psn_account_id=null, psn_device_uid=null,
+                        method='unconfigured', connection_status='unconfigured'
+                    from consoles c
+                    where cfg.console_id=c.id and c.deleted_at is not null and cfg.psn_account_id=%s''', (account_id,))
 
 
 @router.post('/{account_id}/login/start')
