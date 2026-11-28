@@ -27,12 +27,18 @@ const KINDS: { kind: Kind; label: string; help: string }[] = [
   { kind: 'press', label: 'Apertar botão', help: 'Um toque no botão.' },
   { kind: 'wait', label: 'Esperar', help: 'Pausa fixa, em segundos.' },
   { kind: 'hold', label: 'Segurar botão', help: 'Mantém o botão apertado pelos segundos informados.' },
-  { kind: 'press_if_text', label: 'Apertar se o texto aparecer', help: 'Ex.: "Seja bem-vindo" ou a seleção de usuário: só aperta se a tela estiver lá.' },
-  { kind: 'press_until_text', label: 'Apertar até o texto aparecer', help: 'Navega (ex.: → Direita) até o nome do jogo aparecer na tela.' },
-  { kind: 'wait_text', label: 'Esperar o texto aparecer', help: 'Confirma a tela. Se não aparecer no prazo, a preparação falha.' },
-  { kind: 'press_if_image', label: 'Apertar se a imagem aparecer', help: 'Como o de texto, usando um recorte da tela.' },
-  { kind: 'press_until_image', label: 'Apertar até a imagem aparecer', help: 'Navega até o recorte (ex.: ícone do jogo) aparecer.' },
-  { kind: 'wait_image', label: 'Esperar a imagem aparecer', help: 'Confirma que está no jogo certo (ex.: logo ou menu do jogo).' },
+  { kind: 'press_if_image', label: 'Apertar se o elemento aparecer', help: 'Ex.: tela "Seja bem-vindo" ou seleção de usuário: só aperta se o recorte estiver na tela.' },
+  { kind: 'press_until_image', label: 'Apertar até o elemento aparecer', help: 'Navega (ex.: → Direita) até o ícone do jogo, selecionado, aparecer na tela.' },
+  { kind: 'wait_image', label: 'Esperar o elemento aparecer', help: 'Confirma que está no jogo certo (logo ou menu do jogo). Se não aparecer no prazo, a preparação falha.' },
+  { kind: 'press_if_text', label: 'Apertar se o texto aparecer (OCR)', help: 'Leitura de texto: menos confiável que o elemento; use só como apoio.' },
+  { kind: 'press_until_text', label: 'Apertar até o texto aparecer (OCR)', help: 'Leitura de texto: menos confiável que o elemento; use só como apoio.' },
+  { kind: 'wait_text', label: 'Esperar o texto aparecer (OCR)', help: 'Leitura de texto: menos confiável que o elemento; use só como apoio.' },
+];
+/** Recortes que o modelo PS4 usa (o proprietário captura cada um na tela do console). */
+const TEMPLATE_IMAGES: [string, string][] = [
+  ['boas-vindas', 'tela "Seja bem-vindo" / seleção de usuário (ex.: o seu avatar)'],
+  ['icone-jogo', 'ícone do jogo selecionado na tela inicial, incluindo o nome que só aparece quando ele está selecionado'],
+  ['jogo-aberto', 'logo ou menu do jogo já aberto'],
 ];
 
 function parse(raw: string): Step {
@@ -59,10 +65,10 @@ function format(s: Step): string {
   }
 }
 
-/** Modelo para PS4: sai da tela de boas-vindas/usuário, vai ao início, procura o jogo pelo nome e confirma. */
-function ps4Template(title: string): string[] {
-  return ['ps', 'wait:4', 'press_if_text:cross:Seja bem-vindo', 'wait:3', 'press_if_text:cross:Quem está usando', 'wait:5',
-    'ps', 'wait:3', 'dpad_up', 'dpad_down', `press_until_text:dpad_right:20:${title}`, 'cross', 'wait:20'];
+/** Modelo para PS4 por elementos: passa da tela de boas-vindas/usuário, vai ao início, navega até o ícone do jogo e confirma. */
+function ps4Template(): string[] {
+  return ['ps', 'wait:4', 'press_if_image:cross:boas-vindas', 'wait:5', 'ps', 'wait:3',
+    'press_until_image:dpad_right:20:icone-jogo', 'cross', 'wait_image:90:jogo-aberto'];
 }
 
 function SnapshotCropper({ shot, onCancel, onSave, onUseText }: {
@@ -107,7 +113,7 @@ function SnapshotCropper({ shot, onCancel, onSave, onUseText }: {
       <button className="btn primary" disabled={!box || box.w < 6 || box.h < 6 || !/^[a-z0-9][a-z0-9_-]*$/.test(name)} onClick={crop}>Salvar recorte</button>
     </div>
     <div className="stack small">
-      <strong>Textos lidos na tela</strong>
+      <strong>Textos lidos na tela (OCR, apoio)</strong>
       {shot.ocr_error ? <Alert kind="warn">{shot.ocr_error}</Alert> : shot.text.length === 0 ? <span className="muted">Nenhum texto reconhecido.</span>
         : <div className="row launch-ocr">{shot.text.map((t, i) => <button key={`${t}-${i}`} className="btn sm" title="Adicionar passo que espera este texto"
           onClick={() => onUseText(t)}>{t}</button>)}</div>}
@@ -147,13 +153,18 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
       <button className="btn sm" onClick={onClose}><X size={15} aria-hidden /> Fechar</button></div>
     {msg}
     <p className="small muted" style={{ margin: 0 }}>O agente executa os passos em ordem ao preparar o console para cada reserva.
-      Use os passos de <b>texto</b> e <b>imagem</b> para conferir a tela: se o jogo não for confirmado, a preparação falha e a equipe é avisada,
-      em vez de liberar o jogador no menu do console.</p>
+      Use os passos de <b>elemento</b> (recortes da tela do console) para conferir onde está: se o jogo não for confirmado, a preparação
+      falha e a equipe é avisada, em vez de liberar o jogador no menu do console.</p>
     <div className="row">
-      <button className="btn sm" onClick={() => { setRaw(null); setSteps(ps4Template(game.title).map(parse)); }}><Wand2 size={15} aria-hidden /> Usar modelo PS4</button>
+      <button className="btn sm" onClick={() => { setRaw(null); setSteps(ps4Template().map(parse)); }}><Wand2 size={15} aria-hidden /> Usar modelo PS4</button>
       <button className="btn sm" onClick={() => raw === null ? setRaw(steps.map(format).join('\n')) : applyRaw()}>
         {raw === null ? 'Editar como texto' : 'Voltar aos campos'}</button>
     </div>
+    {(() => {
+      const needed = TEMPLATE_IMAGES.filter(([n]) => list.some((s) => s.endsWith(`:${n}`)) && !images[n]);
+      return needed.length > 0 && <Alert kind="warn"><div>Capture estes elementos na tela do console (botão “Capturar tela do console”) com o nome indicado:
+        <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>{needed.map(([n, d]) => <li key={n}><b>{n}</b> — {d}</li>)}</ul></div></Alert>;
+    })()}
     {raw !== null ? <Field label="Passos (um por linha)" hint="Formatos: cross · wait:3 · hold:ps:2 · wait_text:30:Texto · press_until_text:dpad_right:20:Nome do jogo · press_if_text:cross:Seja bem-vindo · wait_image:60:recorte">
       <textarea rows={Math.max(8, list.length + 2)} value={raw} onChange={(e) => setRaw(e.target.value)} spellCheck={false} />
     </Field> : <ol className="launch-steps">
@@ -191,7 +202,7 @@ function Editor({ base, game, buttons, onSaved, onClose }: {
     </ol>}
 
     <div className="stack">
-      <div className="spread"><strong>Imagens de referência</strong>
+      <div className="spread"><strong>Elementos da tela (recortes)</strong>
         <button className="btn sm" disabled={busy} onClick={() => void run(async () => {
           const r = await post<AgentResult>(`${base}/screen`);
           if (!r.ok) throw new Error(r.message);

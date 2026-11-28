@@ -87,8 +87,10 @@ def read_text(image) -> list[str]:
     from winrt.windows.graphics.imaging import BitmapAlphaMode, BitmapPixelFormat, SoftwareBitmap
     from winrt.windows.storage.streams import DataWriter
     img = image.convert('RGBA')
-    if img.width < 1000:                                  # OCR erra menos com letras maiores
-        img = img.resize((img.width * 2, img.height * 2))
+    # O OCR do Windows perde palavras em telas de 720p ("Far Cry 5" lido como "Far 5"): ampliada 3× lê certo.
+    scale = 3 if img.width <= 1280 else 2 if img.width <= 1920 else 1
+    if scale > 1:
+        img = img.resize((img.width * scale, img.height * scale))
     writer = DataWriter()
     writer.write_bytes(img.tobytes())
     bitmap = SoftwareBitmap.create_copy_from_buffer(writer.detach_buffer(), BitmapPixelFormat.RGBA8, img.width, img.height,
