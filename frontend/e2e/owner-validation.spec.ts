@@ -22,7 +22,7 @@ test('o cadastro salva um rascunho incompleto e libera somente etapas já alcan�
       if (request.method() === 'PUT') connection = true;
       return reply({ current: null, pending: null });
     }
-    if (path === `${prefix}/review`) return reply({ status: 'draft', setup: { connection, psn: false, games: false, availability: false },
+    if (path === `${prefix}/review`) return reply({ status: 'draft', setup: { connection, psn: false, games: false, price: false, availability: false },
       pending: {}, pending_windows: [], missing: ['Conclua o login Sony.'] });
     return reply([]);
   });
@@ -72,7 +72,7 @@ test('proprietário acompanha as etapas do console, o diagnóstico e os período
       approved_at: now.toISOString() }]);
     if (path === `${prefix}/review`) return reply({
       status: reviewStatus, approved_at: now.toISOString(), is_published: published, pending: {}, missing: [],
-      setup: { connection: true, psn: true, games: true, availability: true },
+      setup: { connection: true, psn: true, games: true, price: true, availability: true },
       notes: reviewStatus === 'rejected' ? 'Confira o horário de sábado.' : '',
       pending_windows: reviewStatus === 'changes_pending' ? [window] : [],
     });
@@ -99,6 +99,7 @@ test('proprietário acompanha as etapas do console, o diagnóstico e os período
   await review.getByRole('button', { name: 'Aplicar configuração e testar' }).click();
   const progress = page.getByRole('dialog', { name: 'Diagnóstico do console' });
   await expect(progress.getByRole('progressbar')).toBeVisible();
+  await expect(progress.getByText('Durante os testes, não mexa no console nem no controle.')).toBeVisible();
   await expect(progress.getByText('Em execução', { exact: true })).toBeVisible();
   await progress.getByRole('button', { name: 'Cancelar', exact: true }).click();
   await expect(review.getByText('Diagnóstico cancelado.', { exact: true })).toBeVisible();
@@ -125,7 +126,7 @@ test('proprietário acompanha as etapas do console, o diagnóstico e os período
   await page.reload();
   await page.getByRole('button', { name: 'Continuar cadastro' }).click();
   await review.getByRole('button', { name: 'Publicar para aluguel' }).click();
-  await page.getByRole('button', { name: 'Cadastros', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Meus cadastros' })).toBeVisible();
   await expect(page.getByText('Publicado', { exact: true })).toBeVisible();
 });
 
@@ -185,18 +186,21 @@ test('admin confere e publica o jogo antes de aprovar o console', async ({ page 
   const game = { id: 'game', title: 'Jogo para revisão', slug: 'jogo-para-revisao', status: 'draft',
     commercial_license_status: 'pending', platform_codes: ['PS4'], genres: [] };
   let approved = false;
+  const others = Array.from({ length: 5 }, (_, i) => ({
+    id: `outro-${i}`, code: `PS4-0${i + 2}`, name: `Outro console ${i + 1}`, status: 'changes_pending',
+  }));
   await page.route('**/api/**', (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     const reply = (json: unknown) => route.fulfill({ json });
     if (path === '/api/me/session') return reply({ authenticated: true, user: { id: 'admin', username: 'admin', roles: ['superadmin'], mfa_enabled: true, mfa_verified: true } });
     if (path === '/api/admin/agents') return reply([{ id: 'agent', name: 'Agente' }]);
-    if (path === '/api/admin/owner-reviews') return reply(approved ? [] : [{
+    if (path === '/api/admin/owner-reviews') return reply(approved ? others : [{
       id: 'console', code: 'PS4-01', name: 'Console para revisão', platform_code: 'PS4', status: 'submitted',
       pending: {}, hours: [], agent_id: 'agent', psn_status: 'linked',
       windows: [{ id: 'window', game_id: game.id, title: game.title, game_status: game.status, min_minutes: 10, max_minutes: 60,
         starts_at: '2026-11-28T08:00:00-03:00', ends_at: '2026-11-28T22:00:00-03:00' }],
-    }]);
+    }, ...others]);
     if (path === '/api/admin/games/game') {
       if (request.method() === 'PATCH') game.status = request.postDataJSON().status;
       return reply(game);
@@ -205,6 +209,14 @@ test('admin confere e publica o jogo antes de aprovar o console', async ({ page 
     return reply([]);
   });
   await page.goto('/admin/aprovacoes');
+  await expect(page.getByRole('region', { name: 'Cadastros para aprovação' })).toHaveAttribute('data-scrollable', 'true');
+  await page.getByLabel('Situação', { exact: true }).selectOption('submitted');
+  await expect(page.getByRole('button', { name: /Ver cadastro de Outro console/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Aprovar vínculo', exact: false })).toHaveCount(0);
+  await page.getByLabel('Buscar cadastro').fill('sem resultado');
+  await expect(page.getByText('Nenhum cadastro corresponde aos filtros.')).toBeVisible();
+  await page.getByRole('button', { name: 'Limpar filtros' }).click();
+  await page.getByRole('button', { name: 'Ver cadastro de Console para revisão' }).click();
   const approve = page.getByRole('button', { name: 'Aprovar vínculo', exact: false });
   await expect(approve).toBeDisabled();
   await page.getByRole('button', { name: game.title }).click();
@@ -215,5 +227,5 @@ test('admin confere e publica o jogo antes de aprovar o console', async ({ page 
   await details.getByRole('button', { name: 'Fechar', exact: true }).click();
   await expect(approve).toBeEnabled();
   await approve.click();
-  await expect(page.getByText('Nenhum console aguardando análise.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Ver cadastro de Console para revisão' })).toHaveCount(0);
 });

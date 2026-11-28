@@ -144,12 +144,10 @@ def game_detail(slug: str, p: Principal | None = Depends(optional_user)):
                     'trailer_url': g['trailer_url'] if g['trailer_licensed'] else None,
                     'min_minutes': g['min_minutes'], 'max_minutes': g['max_minutes'],
                     'commercially_licensed': g['commercial_license_status'] == 'authorized'})
-        out['packages'] = [{'minutes': x['minutes'], 'price_cents': x['price_cents'], 'promotion': x['promo']}
-                           for x in scheduling.offered_minutes(conn, g)]
+        offers = scheduling.offered_minutes(conn, g)
+        out['packages'] = [{'minutes': x['minutes'], 'price_cents': x['price_cents'], 'promotion': x['promo']} for x in offers]
         out['rate_cents_per_minute'] = get_settings(conn)['booking_rate_cents_per_minute']
-        out['availability'] = scheduling.availability_summary(conn, g)
-        for c in out['availability']['consoles']:
-            c['queue'] = scheduling.public_queue(conn, c['console_id'], p.user_id if p else None)
+        out['availability'] = scheduling.availability_summary(conn, g, offers=offers, viewer_id=p.user_id if p else None)
         ch = one(conn, """select provider, channel_name, external_url, status from streaming_channels
                           where status<>'disabled' and (game_id=%s or console_id in
                           (select console_id from console_game_assignments where game_id=%s and status='active'

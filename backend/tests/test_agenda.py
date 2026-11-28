@@ -287,3 +287,22 @@ def test_reserva_por_minuto_usa_janela_e_tarifa_do_servidor(world, freeze):
     assert booking.status_code == 201, booking.text
     assert booking.json()['total_cents'] == 10000
     assert api.get(f"/reservations/{booking.json()['id']}").json()['cancellation_policy']['version']
+
+
+def test_estimativas_do_catalogo_preservam_horarios_e_precos_do_proprietario(world):
+    from app.services import scheduling
+
+    owner = make_user('owner_catalogo', roles=('owner',))
+    cid = world['console']['id']
+    game = world['game']
+    with tx() as conn:
+        conn.execute('update consoles set owner_user_id=%s where id=%s', (owner['id'], cid))
+        insert(conn, 'owner_console_rates', {'console_id': cid, 'rate_unit': 'minute', 'rate_cents': 100, 'min_minutes': 10, 'max_minutes': 60})
+        info = scheduling.availability_summary(conn, game)['consoles'][0]
+        assert info['packages']
+        for package in info['packages']:
+            minutes = package['minutes']
+            slots = scheduling.find_slots(conn, game['id'], minutes, 'queue', console_id=cid)
+            assert package['fits'] == bool(slots)
+            assert package['estimated_start_at'] == (slots[0].start.isoformat() if slots else None)
+            assert package['price_cents'] == 100 * minutes

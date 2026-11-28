@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, CalendarClock, Check, ClipboardCheck, FlaskConical, Gamepad2, Headphones, LockKeyhole, Radio, UserRoundCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CalendarClock, Check, CircleDollarSign, ClipboardCheck, FlaskConical, Gamepad2, Headphones, LockKeyhole, Radio, UserRoundCheck } from 'lucide-react';
 import { ErrorBox, Field, Loading } from '@/components/ui';
 import { toast } from '@/components/Toaster';
 import { get, patch, post } from '@/lib/api';
@@ -11,7 +11,7 @@ import { useAction } from '@/components/admin/common';
 import OwnerReviewPanel from '@/components/OwnerReviewPanel';
 import OwnerConnection from './OwnerConnection';
 import OwnerPsn from './OwnerPsn';
-import OwnerGames, { type GameWindow } from './OwnerGames';
+import OwnerGames, { OwnerPrice, type GameWindow } from './OwnerGames';
 import OwnerHours from './OwnerHours';
 import { DraftFieldsContext, useDraftValue, type RegistrationDraft } from './registrationDraft';
 import type { OwnerConsole, PsnAccount } from './shared';
@@ -21,13 +21,15 @@ const STEPS = [
   { title: 'Conexão e transmissão', icon: Radio },
   { title: 'Configurações de uso', icon: UserRoundCheck },
   { title: 'Jogos vinculados', icon: Gamepad2 },
+  { title: 'Preço', icon: CircleDollarSign },
   { title: 'Disponibilidade', icon: CalendarClock },
   { title: 'Revisão', icon: ClipboardCheck },
   { title: 'Teste', icon: FlaskConical },
 ];
+const [DATA, CONNECTION, USE, GAMES, PRICE, AVAILABILITY, REVIEW, TEST] = [0, 1, 2, 3, 4, 5, 6, 7] as const;
 export const EMPTY_CONSOLE = { code: '', name: '', platform_code: 'PS4', model: '', serial_number: '', location: '', description: '' };
 type ConsoleFields = typeof EMPTY_CONSOLE;
-type Review = { status: string; missing: string[]; setup: { connection: boolean; psn: boolean; games: boolean; availability: boolean } };
+type Review = { status: string; missing: string[]; setup: { connection: boolean; psn: boolean; games: boolean; price: boolean; availability: boolean } };
 
 export function RegistrationSummary({ console: c, accounts }: { console: OwnerConsole; accounts: PsnAccount[] | null }) {
   const base = `/owner/consoles/${c.id}`;
@@ -93,14 +95,14 @@ function ConsoleForm({ console: c, onSave }: { console?: OwnerConsole; onSave: (
 }
 
 function availableStep(review?: Review | null) {
-  if (!review) return 0;
-  if (review.status === 'approved' || review.status === 'submitted' || review.status === 'rejected') return 5;
+  if (!review) return DATA;
+  if (['approved', 'submitted', 'rejected'].includes(review.status)) return REVIEW;
   const setup = review.setup;
-  if (!setup) return 1;
-  if (!setup.connection) return 1;
-  if (!setup.psn) return 2;
-  if (!setup.games) return 3;
-  return setup.availability ? 5 : 4;
+  if (!setup?.connection) return CONNECTION;
+  if (!setup.psn) return USE;
+  if (!setup.games) return GAMES;
+  if (!setup.price) return PRICE;
+  return setup.availability ? REVIEW : AVAILABILITY;
 }
 
 export default function OwnerRegistration({ initial, records, accounts, draft, draftKey, startAt, reload, reloadAccounts, onSave, onClose, onSupport }: {
@@ -120,10 +122,10 @@ export default function OwnerRegistration({ initial, records, accounts, draft, d
   const tabsRef = useRef<HTMLElement>(null);
   const allowedFromServer = availableStep(review.data);
   const canTest = review.data?.status === 'approved';
-  const max = Math.min(5, Math.max(visited, allowedFromServer));
-  const defaultStep = review.data?.status === 'submitted' || review.data?.status === 'rejected' ? 5
-    : canTest && (draft?.step ?? 5) >= 5 ? 6 : draft?.step ?? allowedFromServer;
-  const index = Math.min(step ?? startAt ?? defaultStep, canTest ? 6 : max);
+  const max = Math.min(REVIEW, Math.max(visited, allowedFromServer));
+  const defaultStep = review.data?.status === 'submitted' || review.data?.status === 'rejected' ? REVIEW
+    : canTest && (draft?.step ?? REVIEW) >= REVIEW ? TEST : draft?.step ?? allowedFromServer;
+  const index = Math.min(step ?? startAt ?? defaultStep, canTest ? TEST : max);
   const config = STEPS[index];
   const EditorIcon = config.icon;
   const pending = current?.review_status === 'submitted';
@@ -141,7 +143,7 @@ export default function OwnerRegistration({ initial, records, accounts, draft, d
   }, [index]);
 
   function persist(next = index, furthest = max, consoleId = id ?? draftKey, migrateFrom?: string) {
-    return onSave(consoleId, { step: next, furthest, fields: { ...fields } }, migrateFrom);
+    return onSave(consoleId, { version: 2, step: next, furthest, fields: { ...fields } }, migrateFrom);
   }
   function move(next: number, furthest = max) {
     setStep(next);
@@ -177,20 +179,21 @@ export default function OwnerRegistration({ initial, records, accounts, draft, d
     setAdvancing(true);
     try {
       const state = await get<Review>(`${path}/review`);
-      const ready = index === 2 ? state.setup?.psn : state.setup?.games;
+      const ready = index === USE ? state.setup?.psn : index === GAMES ? state.setup?.games : state.setup?.price;
       if (ready) advance();
-      else toast('error', index === 2 ? 'Vincule a conta PSN e conclua o login Sony para continuar.' : 'Salve o preço e vincule pelo menos um jogo a um período para continuar.');
+      else toast('error', index === USE ? 'Vincule a conta PSN e conclua o login Sony para continuar.'
+        : index === GAMES ? 'Vincule pelo menos um jogo a um período para continuar.' : 'Salve o preço antes de continuar.');
     } catch (error) {
       toast('error', error instanceof Error ? error.message : 'Não foi possível conferir a etapa.');
     } finally { setAdvancing(false); }
   }
 
-  const shownSteps = canTest ? STEPS : STEPS.slice(0, 6);
+  const shownSteps = canTest ? STEPS : STEPS.slice(0, TEST);
   function navigation(vertical: boolean) {
     return <nav ref={vertical ? undefined : tabsRef} className={vertical ? 'owner-wizard-rail' : 'owner-wizard-tabs'} aria-label={vertical ? 'Etapas do cadastro' : 'Progresso do cadastro'}>
       {shownSteps.map(({ title }, position) => {
-        const allowed = position <= max || (position === 6 && canTest);
-        const done = (position < max || position === 5 && (pending || canTest)) && position !== index;
+        const allowed = position <= max || (position === TEST && canTest);
+        const done = (position < max || position === REVIEW && (pending || canTest)) && position !== index;
         return <button key={title} type="button" disabled={!allowed} aria-current={position === index ? 'step' : undefined}
           className={done ? 'done' : undefined} onClick={() => move(position)}>
           <span className="owner-wizard-number">{done ? <Check size={17} aria-hidden /> : !allowed ? <LockKeyhole size={16} aria-hidden /> : position + 1}</span>
@@ -217,23 +220,25 @@ export default function OwnerRegistration({ initial, records, accounts, draft, d
           <header className="owner-wizard-step-heading"><EditorIcon size={28} aria-hidden /><h3>{index + 1}. {config.title}</h3></header>
           {review.error && <ErrorBox error={review.error} onRetry={review.reload} />}
           {id && review.loading && step == null ? <Loading /> : <>
-            {index === 0 && <ConsoleForm console={current} onSave={saveConsole} />}
-            {current && index === 1 && <OwnerConnection console={current} wizard onSaved={advance} />}
-            {current && index === 2 && (['PS4', 'PS5'].includes(current.platform_code)
+            {index === DATA && <ConsoleForm console={current} onSave={saveConsole} />}
+            {current && index === CONNECTION && <OwnerConnection console={current} wizard onSaved={advance} />}
+            {current && index === USE && (['PS4', 'PS5'].includes(current.platform_code)
               ? <OwnerPsn {...picker} wizard accounts={accounts} reloadAccounts={refresh} reloadConsoles={refresh} onSaveDraft={saveDraft} />
               : <p className="small muted">Esta plataforma não usa conta PSN.</p>)}
-            {current && index === 3 && <OwnerGames {...picker} wizard onReviewChange={refresh} onSaveDraft={saveDraft} />}
-            {current && index === 4 && <OwnerHours {...picker} wizard onReviewChange={refresh} onAdvance={advance} />}
-            {current && index === 5 && <><RegistrationSummary console={current} accounts={accounts} />
+            {current && index === GAMES && <OwnerGames {...picker} wizard onReviewChange={refresh} onSaveDraft={saveDraft} />}
+            {current && index === PRICE && <OwnerPrice console={current} onReviewChange={refresh} />}
+            {current && index === AVAILABILITY && <OwnerHours {...picker} wizard onReviewChange={refresh} onAdvance={advance} />}
+            {current && index === REVIEW && <><RegistrationSummary console={current} accounts={accounts} />
               <OwnerReviewPanel consoleId={current.id} phase="review" onChange={refresh} /></>}
-            {current && index === 6 && canTest && <OwnerReviewPanel consoleId={current.id} phase="test" onChange={refresh} />}
+            {current && index === TEST && canTest && <OwnerReviewPanel consoleId={current.id} phase="test" onChange={refresh}
+              onPublished={() => { toast('ok', 'Console publicado para aluguel.'); onClose(); }} />}
           </>}
           <footer className="spread owner-wizard-footer">
             <button type="button" className="btn" onClick={() => index > 0 ? move(index - 1) : onClose()}><ArrowLeft size={16} aria-hidden /> Voltar</button>
             <div className="row">
               <button type="button" className="btn" onClick={saveDraft}>Salvar rascunho</button>
-              {(index === 2 || index === 3) && <button type="button" className="btn primary" disabled={advancing} onClick={() => void validateAndAdvance()}>Avançar <ArrowRight size={16} aria-hidden /></button>}
-              {((index === 1 || index === 4) && pending && max > index || index === 5 && canTest) &&
+              {(index === USE || index === GAMES || index === PRICE) && <button type="button" className="btn primary" disabled={advancing} onClick={() => void validateAndAdvance()}>Avançar <ArrowRight size={16} aria-hidden /></button>}
+              {((index === CONNECTION || index === AVAILABILITY) && pending && max > index || index === REVIEW && canTest) &&
                 <button type="button" className="btn primary" onClick={() => move(index + 1)}>Avançar <ArrowRight size={16} aria-hidden /></button>}
             </div>
           </footer>

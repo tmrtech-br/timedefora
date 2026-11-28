@@ -54,6 +54,14 @@ function Diagnostics({ consoleId, onValidated }: { consoleId: string; onValidate
         ? currentTest === 'connection' && v?.network_route === 'internet_psn' ? 'Aguardando a conexão com o console pela PSN. Isso pode levar alguns minutos.' : 'Executando diagnóstico…'
         : 'Na fila de diagnósticos.'}
       error={diag.error?.message}
+      guidance={<div className="card stack small">
+        <strong>Durante os testes, não mexa no console nem no controle.</strong>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          <li><strong>Conexão</strong> — O agente usa a conta PSN vinculada para se conectar ao console.</li>
+          <li><strong>Imagem e áudio</strong> — O sistema captura a imagem da tela e verifica o áudio.</li>
+          <li><strong>Controle</strong> — O sistema executa uma ação no console para verificar se o controle responde.</li>
+        </ul>
+      </div>}
       tests={tests.map(([id, label]) => {
         const result = activeRun.results.find((item) => item.test_type === id);
         return { id, label, state: result ? (result.blocked_by ? 'Não executado' : RESULT_LABEL[result.result] ?? result.result) :
@@ -75,8 +83,8 @@ function Diagnostics({ consoleId, onValidated }: { consoleId: string; onValidate
 }
 
 /** Situação da validação do console pela equipe + ações do proprietário + filas/sessões que o console teve. */
-export default function OwnerReviewPanel({ consoleId, onChange, phase }: {
-  consoleId: string; onChange: () => void; phase: 'review' | 'test';
+export default function OwnerReviewPanel({ consoleId, onChange, phase, onPublished }: {
+  consoleId: string; onChange: () => void; phase: 'review' | 'test'; onPublished?: () => void;
 }) {
   const review = useApi<Review>(`/owner/consoles/${consoleId}/review`, 15000);
   const { run, msg, busy } = useAction();
@@ -124,7 +132,10 @@ export default function OwnerReviewPanel({ consoleId, onChange, phase }: {
           onClick={() => act('submit', 'Enviado para análise. A equipe foi avisada.')}>Enviar para análise</button>}
         {phase !== 'test' && r.status === 'submitted' && <button className="btn" disabled={busy} onClick={() => act('withdraw', 'Envio cancelado: você pode editar de novo.')}>Cancelar envio para editar</button>}
         {phase !== 'review' && r.approved_at && !r.is_published && <button className="btn primary" disabled={busy || !validated || pendingWindows} title={pendingWindows ? 'O período do jogo aguarda aprovação' : validated ? undefined : 'Rode os testes e o diagnóstico primeiro'}
-          onClick={() => act('publish', 'Console publicado para aluguel.')}>Publicar para aluguel</button>}
+          onClick={() => run(async () => {
+            await post(`/owner/consoles/${consoleId}/publish`);
+            onPublished?.();
+          })}>Publicar para aluguel</button>}
         {phase !== 'review' && r.is_published && <button className="btn" disabled={busy} onClick={() => act('unpublish', 'Console fora do ar para novas reservas.')}>Tirar do ar</button>}
       </div>
       {phase !== 'review' && r.approved_at && <Diagnostics key={consoleId} consoleId={consoleId} onValidated={() => { review.reload(); diag.reload(); onChange(); }} />}

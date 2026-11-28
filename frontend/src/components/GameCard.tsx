@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { Gamepad2, Heart, ListOrdered } from 'lucide-react';
 import type { GameCard as G } from '@/lib/types';
+import { rememberGamePreview } from '@/lib/gamePreview';
 
 export function platformLabel(g: G) {
   return g.platforms.map((p) => (p.code === 'SWITCH' ? 'Nintendo Switch' : p.code === 'XBOX_SERIES' ? 'Xbox Series' : p.code)).join(' · ') || '—';
@@ -24,7 +25,7 @@ export default function GameCard({ g, favorite, onFavorite }: { g: G; favorite?:
           <span><Gamepad2 aria-hidden />{platformLabel(g)}</span>
           <span title={g.status_label}><ListOrdered aria-hidden />Fila: {g.queue_size}</span>
         </div>
-        <Link className="btn-card" href={`/jogos/${g.slug}`} aria-label={`Ver detalhes de ${g.title}`}>Ver detalhes</Link>
+        <Link className="btn-card" href={`/jogos/${g.slug}`} onClick={() => rememberGamePreview(g)} aria-label={`Ver detalhes de ${g.title}`}>Ver detalhes</Link>
       </div>
     </article>
   );

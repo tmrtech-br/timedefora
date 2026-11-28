@@ -91,7 +91,7 @@ export default function OwnerConsoles({ consoles, accounts, reload, reloadAccoun
       <div className="stack"><div><StatusPill status={registrationStatus(view)} map={LABELS} /></div>
         <RegistrationSummary console={view} accounts={accounts} />
         <OwnerConsoleHistory consoleId={view.id} />
-        {view.is_published && <div><button className="btn" onClick={() => { setView(undefined); setOpen({ id: view.id, step: 6 }); }}>Ver testes e publicação</button></div>}
+        {view.is_published && <div><button className="btn" onClick={() => { setView(undefined); setOpen({ id: view.id, step: 7 }); }}>Ver testes e publicação</button></div>}
       </div>
     </Modal>}
     {reason && <Modal title="Motivo da reprovação" onClose={() => setReason(undefined)} allowEscape>

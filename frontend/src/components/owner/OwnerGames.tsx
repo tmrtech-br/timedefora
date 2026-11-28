@@ -1,5 +1,5 @@
 'use client';
-import { Alert, Field, StatusPill } from '@/components/ui';
+import { Alert, ErrorBox, Field, Loading, StatusPill } from '@/components/ui';
 import { patch, post, put } from '@/lib/api';
 import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
@@ -54,13 +54,21 @@ function Price({ consoleId, value, locked, approved, onSaved }: { consoleId: str
   </div>;
 }
 
-/** Jogos e preços: cadastrar o jogo (para revisão), vincular aos períodos do console e definir o preço. */
+export function OwnerPrice({ console: current, onReviewChange }: { console: OwnerConsole; onReviewChange: () => void }) {
+  const rate = useApi<Rate | null>(`/owner/consoles/${current.id}/availability`);
+  return <div className="card stack">
+    {rate.loading ? <Loading /> : rate.error ? <ErrorBox error={rate.error} onRetry={rate.reload} /> :
+      <Price consoleId={current.id} value={rate.data} locked={current.review_status === 'submitted'}
+        approved={!!current.approved_at} onSaved={() => { void rate.reload(); onReviewChange(); }} />}
+  </div>;
+}
+
+/** Cadastro de jogos e vínculo aos períodos do console. */
 export default function OwnerGames({ consoles, selected, setSelected, onReviewChange, wizard = false, onSaveDraft }: {
   consoles: OwnerConsole[] | null; selected: string; setSelected: (id: string) => void; onReviewChange: () => void; wizard?: boolean; onSaveDraft?: () => void;
 }) {
   const current = consoles?.find((c) => c.id === selected);
   const games = useApi<Games>(current ? `/owner/consoles/${current.id}/games` : null);
-  const rate = useApi<Rate | null>(current ? `/owner/consoles/${current.id}/availability` : null);
   const [gameDraft, setGameDraft] = useDraftValue<Record<string, unknown>>('game', EMPTY_GAME);
   const [win, setWin] = useDraftValue('gameWindow', { game_id: '', starts_at: '', ends_at: '' });
   const { busy, msg, run } = useAction();
@@ -117,9 +125,6 @@ export default function OwnerGames({ consoles, selected, setSelected, onReviewCh
         <DataTable rows={owned} cols={[['Jogo', (g) => g.title], ['Status', (g) => <StatusPill status={g.status ?? 'draft'} />],
           ['', (g) => !locked && <button className="btn sm danger" onClick={() => deletion.remove(`/owner/consoles/${current.id}/game-drafts/${g.id}`, `Excluir o jogo ${g.title}?`,
             (request) => run(async () => { await request(); await games.reload(); }, 'Jogo excluído.'), 'Os períodos deste jogo também são removidos.')}>Excluir jogo</button>]]} /></>}
-    </div>}
-    {current && <div className="card stack"><h2 style={{ margin: 0 }}>Preço</h2>
-      {!rate.loading && !rate.error && <Price key={current.id} consoleId={current.id} value={rate.data} locked={locked} approved={!!current.approved_at} onSaved={() => { void rate.reload(); onReviewChange(); }} />}
     </div>}
   </section>;
 }

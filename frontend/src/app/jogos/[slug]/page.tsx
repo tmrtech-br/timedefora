@@ -15,6 +15,7 @@ import { useApi, useServerClock } from '@/lib/hooks';
 import { dateTime, minutesLabel, moneyWithCents, time } from '@/lib/format';
 import type { GameCard as G, QueueItem, Reservation } from '@/lib/types';
 import { useFeatures } from '@/lib/features';
+import { getGamePreview } from '@/lib/gamePreview';
 
 type ConsoleAvail = { console_id: string; console_name: string; messages: string[]; queue_size: number; playing_now: string | null;
   current_window: { starts_at: string; ends_at: string; remaining_minutes: number } | null; next_window: { starts_at: string } | null;
@@ -32,6 +33,8 @@ export default function GamePage() {
   const router = useRouter();
   const { me } = useAuth();
   const { data: g, error, reload } = useApi<Detail>(`/catalog/games/${slug}`, 10000);
+  const [preview, setPreview] = useState<G>();
+  useEffect(() => { setPreview(getGamePreview(slug)); }, [slug]);
   const [minutes, setMinutes] = useState('');
   const [selectedMode, setMode] = useState<'queue' | 'scheduled' | null>(null);
   const [startDate, setStartDate] = useState('');
@@ -121,7 +124,13 @@ export default function GamePage() {
     setFav(!fav);
   }
   if (error) return <ErrorBox error={error} onRetry={reload} />;
-  if (!g) return <Skeleton h={420} />;
+  if (!g || g.slug !== slug && !!g.slug) return <div className="stack">
+    {preview?.slug === slug && <section className="card stack">
+      <h1 style={{ margin: 0 }}>{preview.title}</h1>
+      {preview.short_description && <p className="small muted">{preview.short_description}</p>}
+    </section>}
+    <div role="status" aria-label="Carregando disponibilidade"><Skeleton h={240} /></div>
+  </div>;
   const total = quote?.available ? quote.price_cents : byMinute && selectedMinutes > 0
     ? g.rate_cents_per_minute * selectedMinutes : undefined;
   const previousStart = quote?.starts_at ?? (mode === 'queue' && quoteResult?.key.includes('mode=queue') ? quoteResult.value.starts_at : undefined);

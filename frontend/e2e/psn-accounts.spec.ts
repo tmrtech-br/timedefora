@@ -11,6 +11,7 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
   const redirectUrl = `https://remoteplay.dl.playstation.net/remoteplay/redirect?code=${'ficticio'.repeat(32)}`;
   let submittedRedirect: unknown;
   let loginStarts = 0;
+  let price = false;
 
   await page.route('**/api/**', (route) => {
     const request = route.request();
@@ -21,10 +22,14 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
     if (path === '/api/owner/terms') return route.fulfill({ json: { accepted_at: '2026-11-01T12:00:00Z' } });
     if (path === '/api/owner/consoles') return route.fulfill({ json: [consoleRow] });
     if (path === '/api/owner/consoles/console/review') return route.fulfill({ json: { status: 'draft',
-      setup: { connection: true, psn: account.status === 'linked', games: false, availability: false },
+      setup: { connection: true, psn: account.status === 'linked', games: true, price, availability: false },
       pending: {}, pending_windows: [], missing: [],
     } });
     if (path === '/api/owner/consoles/console/games') return route.fulfill({ json: { games: [], drafts: [], assignments: [] } });
+    if (path === '/api/owner/consoles/console/availability') {
+      if (request.method() === 'PUT') price = true;
+      return route.fulfill({ body: 'null', contentType: 'application/json' });
+    }
     if (path === '/api/owner/psn-accounts') {
       if (request.method() === 'POST') {
         consoleRow.owner_requested_psn_account_id = account.id;
@@ -69,6 +74,15 @@ test('proprietário cadastra e conecta a conta PSN pelo console sem agente', asy
   expect(submittedRedirect).toEqual({ redirect_url: redirectUrl });
   await page.getByRole('button', { name: 'Avançar', exact: true }).click();
   await expect(page.getByRole('navigation', { name: 'Progresso do cadastro' }).getByRole('button', { name: 'Jogos vinculados' })).toHaveAttribute('aria-current', 'step');
+  await expect(page.getByLabel('Preço (R$)')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Avançar', exact: true }).click();
+  const tabs = page.getByRole('navigation', { name: 'Progresso do cadastro' });
+  await expect(tabs.getByRole('button', { name: 'Preço' })).toHaveAttribute('aria-current', 'step');
+  await expect(tabs.getByRole('button', { name: 'Disponibilidade' })).toBeDisabled();
+  await page.getByLabel('Preço (R$)').fill('2,00');
+  await page.getByRole('button', { name: 'Salvar preço' }).click();
+  await page.getByRole('button', { name: 'Avançar', exact: true }).click();
+  await expect(tabs.getByRole('button', { name: 'Disponibilidade' })).toHaveAttribute('aria-current', 'step');
 });
 
 test('admin gerencia contas PSN com respostas simuladas do backend', async ({ page }) => {

@@ -160,14 +160,20 @@ def earliest_in_window(conn, console_id, a: datetime, b: datetime, minutes: int,
     bounds = conn.execute('select operating_starts_at, operating_ends_at from consoles where id=%s', (console_id,)).fetchone()
     if bounds and bounds['operating_starts_at']:
         a, b = max(a, bounds['operating_starts_at']), min(b, bounds['operating_ends_at'])
-    d, block = timedelta(minutes=minutes), timedelta(minutes=minutes + setup) + extra
+    d = timedelta(minutes=minutes)
     t = _ceil_minute(max(a, not_before))
     if d > b - t:
         return None
     busy = _busy(conn, console_id, t, b + timedelta(minutes=setup) + extra, exclude_reservation)
     hours = _hours(conn, console_id)
+    return _first_free_start(t, b, minutes, setup, extra, hours, busy)
+
+
+def _first_free_start(t, end, minutes, setup, extra, hours, busy):
+    d = timedelta(minutes=minutes)
+    block = timedelta(minutes=minutes + setup) + extra
     for _ in range(500):
-        if d > b - t:
+        if d > end - t:
             return None
         if hours and not _within_hours(hours, t, t + d):
             nxt = _next_opening(hours, t, minutes)
@@ -306,18 +312,26 @@ def explain_unavailable(conn, game_id, minutes: int, mode: str, start_at: dateti
 
 
 # ------------------------------------------------------------------ preços
-def resolve_package(conn, game: dict, console_id, platform_id, minutes: int, at: datetime) -> dict | None:
-    rate = conn.execute('''
+def _console_rate(conn, console_id):
+    return conn.execute('''
         select c.owner_user_id, r.min_minutes, r.max_minutes, r.rate_unit, r.rate_cents, r.paused
         from consoles c left join owner_console_rates r on r.console_id=c.id where c.id=%s
     ''', (console_id,)).fetchone()
+
+
+def _owner_package(game, rate, minutes):
+    if (rate['paused'] or rate['min_minutes'] is None
+            or not rate['min_minutes'] <= minutes <= rate['max_minutes']
+            or not game['min_minutes'] <= minutes <= game['max_minutes']):
+        return None
+    divisor = 60 if rate['rate_unit'] == 'hour' else 1
+    return {'id': None, 'price_cents': max(1, (rate['rate_cents'] * minutes + divisor // 2) // divisor)}
+
+
+def resolve_package(conn, game: dict, console_id, platform_id, minutes: int, at: datetime) -> dict | None:
+    rate = _console_rate(conn, console_id)
     if rate and rate['owner_user_id'] is not None:
-        if (rate['paused'] or rate['min_minutes'] is None
-                or not rate['min_minutes'] <= minutes <= rate['max_minutes']
-                or not game['min_minutes'] <= minutes <= game['max_minutes']):
-            return None
-        divisor = 60 if rate['rate_unit'] == 'hour' else 1
-        return {'id': None, 'price_cents': max(1, (rate['rate_cents'] * minutes + divisor // 2) // divisor)}
+        return _owner_package(game, rate, minutes)
     per_minute = get_settings(conn)['booking_rate_cents_per_minute']
     if per_minute > 0:
         price = per_minute * minutes
@@ -661,13 +675,14 @@ def _longest_free(conn, console_id, window, setup: int, lead: datetime, maximum:
     return minimum
 
 
-def availability_summary(conn, game: dict) -> dict:
+def availability_summary(conn, game: dict, *, offers=None, viewer_id=None) -> dict:
     """Informações explícitas de disponibilidade por console para a página do jogo."""
     n = timeutil.now()
     st = get_settings(conn)
     lead = n + timedelta(minutes=int(st['queue_lead_minutes']))
     setup = int(st['setup_minutes'])
-    offers = offered_minutes(conn, game)
+    offers = offered_minutes(conn, game) if offers is None else offers
+    bonus = join_bonus(st)
     consoles_out = []
     for c in eligible_consoles(conn, game['id']):
         horizon = n + timedelta(days=st['booking_horizon_days'])
@@ -691,7 +706,8 @@ def availability_summary(conn, game: dict) -> dict:
             end = min(window['ends_at'], c['operating_ends_at'] or window['ends_at'])
             if end - start >= timedelta(minutes=1):
                 info['scheduled_windows'].append({'starts_at': start.isoformat(), 'ends_at': end.isoformat()})
-        q = public_queue(conn, c['id'])
+        q = public_queue(conn, c['id'], viewer_id)
+        info['queue'] = q
         info['queue_size'] = len(q)
         info['playing_now'] = next((x['username'] for x in q if x['status'] == 'playing'), None)
         if cur:
@@ -722,14 +738,38 @@ def availability_summary(conn, game: dict) -> dict:
                 if longest == maximum:
                     break
             info['queue_max_minutes'] = longest
+        # A disponibilidade usa os mesmos intervalos para todas as durações.
+        queue_windows = []
+        window_busy = {}
+        hours = _hours(conn, c['id']) if offers else []
+        for window in windows if offers else []:
+            if window['starts_at'] >= horizon:
+                break
+            start, end = window['starts_at'], window['ends_at']
+            if c['operating_starts_at']:
+                start, end = max(start, c['operating_starts_at']), min(end, c['operating_ends_at'])
+            start = _ceil_minute(max(start, lead))
+            if start < end:
+                queue_windows.append((start, end))
+        owner_rate = _console_rate(conn, c['id']) if offers and c['owner_user_id'] is not None else None
         for o in offers:
-            s = find_slots(conn, game['id'], o['minutes'], 'queue', console_id=c['id'])
-            pkg = resolve_package(conn, game, c['id'], c['platform_id'], o['minutes'], s[0].start if s else n)
+            minutes = o['minutes']
+            start = None
+            for a, b in queue_windows:
+                if b - a < timedelta(minutes=minutes):
+                    continue
+                if (a, b) not in window_busy:
+                    window_busy[a, b] = _busy(conn, c['id'], a, b + timedelta(minutes=setup) + bonus)
+                start = _first_free_start(a, b, minutes, setup, bonus, hours, window_busy[a, b])
+                if start is not None:
+                    break
+            pkg = (_owner_package(game, owner_rate, minutes) if owner_rate else
+                   resolve_package(conn, game, c['id'], c['platform_id'], minutes, start or n))
             if not pkg:
                 continue
-            info['packages'].append({'minutes': o['minutes'], 'price_cents': pkg['price_cents'], 'fits': bool(s),
-                                     'estimated_start_at': s[0].start.isoformat() if s else None,
-                                     'estimated_end_at': s[0].end.isoformat() if s else None})
+            info['packages'].append({'minutes': minutes, 'price_cents': pkg['price_cents'], 'fits': start is not None,
+                                     'estimated_start_at': start.isoformat() if start else None,
+                                     'estimated_end_at': (start + timedelta(minutes=minutes)).isoformat() if start else None})
         consoles_out.append(info)
     return {'server_time': n.isoformat(), 'consoles': consoles_out,
             'notice': 'Previsões dependem de reservas anteriores e de ajustes operacionais; o horário só é garantido após a confirmação do pagamento.'}

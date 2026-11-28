@@ -8,6 +8,7 @@ import { useApi } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
 import { useAction } from './common';
 import { GameSummary, type Game } from './Games';
+import LimitedScroll from '@/components/LimitedScroll';
 
 type Window = { id: string; game_id: string; status: string; starts_at: string; ends_at: string; title: string; game_status: string; slug: string;
   cover_url: string | null; banner_url: string | null; short_description: string; age_rating: string | null; min_minutes: number; max_minutes: number };
@@ -119,16 +120,40 @@ function ReviewCard({ r, agents, onDone, superadmin }: { r: Review; agents: { id
 
 export default function OwnerReviews() {
   const list = useApi<Review[]>('/admin/owner-reviews', 20000);
+  const [query, setQuery] = useState('');
+  const [status, setStatus] = useState('');
+  const [opened, setOpened] = useState<string>();
   const agents = useApi<{ id: string; name: string }[]>('/admin/agents').data || [];
   const { me } = useAuth();
   const superadmin = !!me?.roles.includes('superadmin');
+  const normalized = query.trim().toLocaleLowerCase('pt-BR');
+  const rows = list.data?.filter((r) => (!status || r.status === status) && (!normalized
+    || [r.name, r.code, r.owner_name, r.owner_username, r.owner_email].some((value) => value?.toLocaleLowerCase('pt-BR').includes(normalized))));
+  const selected = list.data?.find((r) => r.id === opened);
   return (
     <div className="stack">
       <PageHeader title="Aprovação de consoles" subtitle="O proprietário configura tudo. Aqui a equipe apenas confere, vincula o agente e aprova a conta PSN — ou recusa explicando o motivo." />
-      <div><button className="btn" onClick={() => void list.reload()}>Atualizar status</button></div>
+      <section className="card stack">
+        <div className="grid2">
+          <Field label="Buscar cadastro"><input type="search" placeholder="Console, código ou proprietário" value={query} onChange={(e) => setQuery(e.target.value)} /></Field>
+          <Field label="Situação"><select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">Todas</option>
+            {Object.entries(REVIEW_STATUS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select></Field>
+        </div>
+        <div className="row"><button className="btn" onClick={() => void list.reload()}>Atualizar status</button>
+          {(status || query) && <button className="btn" onClick={() => { setQuery(''); setStatus(''); }}>Limpar filtros</button>}</div>
+      </section>
       {list.error && <Alert kind="error">{list.error.message}</Alert>}
-      {list.data?.length === 0 && <section className="card"><p className="muted" style={{ margin: 0 }}>Nenhum console aguardando análise.</p></section>}
-      {list.data?.map((r) => <ReviewCard key={r.id} r={r} agents={agents} superadmin={superadmin} onDone={list.reload} />)}
+      {rows?.length === 0 && <section className="card"><p className="muted" style={{ margin: 0 }}>{status || normalized
+        ? 'Nenhum cadastro corresponde aos filtros.' : 'Nenhum console aguardando análise.'}</p></section>}
+      {!!rows?.length && <LimitedScroll label="Cadastros para aprovação" limit={5}>
+        {rows.map((r) => <div key={r.id} className="card spread"><strong>{r.name}</strong>
+          <button className="btn sm" aria-label={`Ver cadastro de ${r.name}`} onClick={() => setOpened(r.id)}>Ver</button></div>)}
+      </LimitedScroll>}
+      {selected && <Modal title="Análise do cadastro" onClose={() => setOpened(undefined)} allowEscape>
+        <ReviewCard key={selected.id} r={selected} agents={agents} superadmin={superadmin} onDone={list.reload} />
+      </Modal>}
     </div>
   );
 }

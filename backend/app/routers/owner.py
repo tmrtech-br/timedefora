@@ -535,7 +535,7 @@ def review_state(console_id: UUID, p: Principal = Depends(enrolled_owner)):
                        or bool(one(conn, 'select 1 from console_operating_hours where console_id=%s', (console_id,))))
         return jsonable({**c, 'missing': list(issues.values()), 'pending_windows': pending_windows,
                          'setup': {'connection': 'connection' not in issues, 'psn': 'psn' not in issues,
-                                   'games': 'games' not in issues and 'rate' not in issues, 'availability': hours_saved},
+                                   'games': 'games' not in issues, 'price': 'rate' not in issues, 'availability': hours_saved},
                          'agent_linked': bool(row['agent_id'])})
 
 
