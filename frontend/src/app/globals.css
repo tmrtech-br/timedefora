@@ -950,3 +950,20 @@ html:has(.policy-dialog[open]) { overflow: hidden; }
 .owner-calendar .cal2-ev.reservation { top: 3px; }
 .cal2-ev.assignment.owner-calendar-pending, .cal2-legend i.owner-calendar-pending { background: transparent; border-style: dashed; }
 .owner-calendar-empty { display: inline-block; padding: 5px 8px; color: var(--muted); }
+
+/* Roteiros de abertura */
+.launch-steps { display: grid; gap: 8px; margin: 0; padding-left: 22px; }
+.launch-step { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); }
+.launch-step-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.launch-step-fields select, .launch-step-fields input:not([type="number"]) { flex: 1 1 180px; min-width: 0; }
+.launch-inline { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.launch-inline input { width: 76px; }
+.launch-step-actions { gap: 4px; }
+.launch-images { display: flex; flex-wrap: wrap; gap: 10px; }
+.launch-images figure { margin: 0; display: grid; gap: 4px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; max-width: 220px; }
+.launch-images img { max-width: 100%; max-height: 90px; object-fit: contain; background: #000; }
+.launch-images figcaption { display: flex; gap: 6px; align-items: center; justify-content: space-between; font-size: 12px; overflow-wrap: anywhere; }
+.launch-snapshot-frame { position: relative; user-select: none; touch-action: none; cursor: crosshair; max-width: 100%; }
+.launch-snapshot-frame img { display: block; width: 100%; height: auto; border-radius: 8px; }
+.launch-snapshot-box { position: absolute; border: 2px solid var(--cyan); background: rgba(41, 214, 240, .15); pointer-events: none; }
+.launch-ocr { flex-wrap: wrap; gap: 6px; }

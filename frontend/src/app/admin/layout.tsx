@@ -4,7 +4,7 @@ import { useState } from 'react';
 import {
   Bell, CalendarDays, ClipboardList, CreditCard, FileCheck, Gamepad2, Headphones,
   LayoutDashboard, ListOrdered, Monitor, Network, PanelLeftClose, PanelLeftOpen,
-  Radio, Server, Settings2, Shield, SlidersHorizontal, Tags, UserCheck, Users, type LucideIcon,
+  ListChecks, Radio, Server, Settings2, Shield, SlidersHorizontal, Tags, UserCheck, Users, type LucideIcon,
 } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import RequireAuth from '@/components/RequireAuth';
@@ -21,6 +21,7 @@ const SECTIONS: [string, string, string][] = [
   ['notificacoes', 'Notificações', 'admin'], ['suporte', 'Suporte', 'operator'], ['lgpd', 'Solicitações LGPD', 'admin'],
   ['auditoria', 'Auditoria', 'admin'], ['parametros', 'Parâmetros', 'admin'], ['configuracoes', 'Configurações avançadas e políticas', 'admin'],
   ['aprovacoes', 'Aprovação de consoles', 'admin'], ['repasses', 'Repasses a proprietários', 'admin'],
+  ['roteiros', 'Roteiros de abertura', 'operator'],
 ];
 const ORDERED_SECTIONS = [...SECTIONS.slice(0, 2), ...SECTIONS.slice(2).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'))];
 const RANK: Record<string, number> = { client: 0, operator: 1, admin: 2, superadmin: 3 };
@@ -30,7 +31,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   jogos: Gamepad2, agenda: CalendarDays, agentes: Server, precos: Tags, filas: ListOrdered,
   reservas: ClipboardList, sessoes: Monitor, transmissoes: Radio, financeiro: CreditCard,
   usuarios: Users, notificacoes: Bell, suporte: Headphones, lgpd: Shield,
-  auditoria: FileCheck, parametros: SlidersHorizontal, configuracoes: Settings2, aprovacoes: UserCheck, repasses: CreditCard,
+  auditoria: FileCheck, parametros: SlidersHorizontal, configuracoes: Settings2, aprovacoes: UserCheck, repasses: CreditCard, roteiros: ListChecks,
 };
 
 function Guard({ children }: { children: React.ReactNode }) {

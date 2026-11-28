@@ -1,0 +1,249 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, Camera, FlaskConical, Plus, Save, Trash2, Wand2, X } from 'lucide-react';
+import { Alert, ErrorBox, Field, Loading, StatusPill } from '@/components/ui';
+import { del, get, post, put } from '@/lib/api';
+import { dateTime } from '@/lib/format';
+import { useApi } from '@/lib/hooks';
+import { useAction } from '@/components/admin/common';
+
+type RefImage = { png: string; width: number };
+type GameScript = { game_id: string; title: string; slug: string; steps: string[]; images: Record<string, RefImage>; updated_at: string | null };
+type ScriptList = { console: { id: string; name: string; platform_code: string }; games: GameScript[]; agent_ready: boolean; buttons: string[] };
+type AgentResult = { ok: boolean; message: string; state: string | null; data: Record<string, unknown> };
+
+const BUTTON_LABEL: Record<string, string> = {
+  cross: '✕ (X)', circle: '○ (Bola)', square: '□ (Quadrado)', triangle: '△ (Triângulo)', ps: 'PS', options: 'Options', share: 'Share',
+  touchpad: 'Touchpad', l1: 'L1', r1: 'R1', l2: 'L2', r2: 'R2', l3: 'L3', r3: 'R3',
+  dpad_up: '↑ Cima', dpad_down: '↓ Baixo', dpad_left: '← Esquerda', dpad_right: '→ Direita',
+};
+const BUTTONS = Object.keys(BUTTON_LABEL);
+
+/** Um passo do roteiro em campos editáveis (o servidor e o agente usam o texto "tipo:valor:…"). */
+type Kind = 'press' | 'wait' | 'hold' | 'wait_text' | 'wait_image' | 'press_until_text' | 'press_until_image' | 'press_if_text' | 'press_if_image';
+type Step = { kind: Kind; button: string; seconds: string; max: string; target: string };
+const KINDS: { kind: Kind; label: string; help: string }[] = [
+  { kind: 'press', label: 'Apertar botão', help: 'Um toque no botão.' },
+  { kind: 'wait', label: 'Esperar', help: 'Pausa fixa, em segundos.' },
+  { kind: 'hold', label: 'Segurar botão', help: 'Mantém o botão apertado pelos segundos informados.' },
+  { kind: 'press_if_text', label: 'Apertar se o texto aparecer', help: 'Ex.: "Seja bem-vindo" ou a seleção de usuário: só aperta se a tela estiver lá.' },
+  { kind: 'press_until_text', label: 'Apertar até o texto aparecer', help: 'Navega (ex.: → Direita) até o nome do jogo aparecer na tela.' },
+  { kind: 'wait_text', label: 'Esperar o texto aparecer', help: 'Confirma a tela. Se não aparecer no prazo, a preparação falha.' },
+  { kind: 'press_if_image', label: 'Apertar se a imagem aparecer', help: 'Como o de texto, usando um recorte da tela.' },
+  { kind: 'press_until_image', label: 'Apertar até a imagem aparecer', help: 'Navega até o recorte (ex.: ícone do jogo) aparecer.' },
+  { kind: 'wait_image', label: 'Esperar a imagem aparecer', help: 'Confirma que está no jogo certo (ex.: logo ou menu do jogo).' },
+];
+
+function parse(raw: string): Step {
+  const parts = raw.split(':');
+  const base: Step = { kind: 'press', button: 'cross', seconds: '2', max: '15', target: '' };
+  const head = parts[0];
+  if (head === 'wait') return { ...base, kind: 'wait', seconds: parts[1] ?? '2' };
+  if (head === 'hold') return { ...base, kind: 'hold', button: parts[1] ?? 'cross', seconds: parts[2] ?? '1' };
+  if (head === 'wait_text' || head === 'wait_image') return { ...base, kind: head, seconds: parts[1] ?? '30', target: parts.slice(2).join(':') };
+  if (head === 'press_until_text' || head === 'press_until_image')
+    return { ...base, kind: head, button: parts[1] ?? 'dpad_right', max: parts[2] ?? '15', target: parts.slice(3).join(':') };
+  if (head === 'press_if_text' || head === 'press_if_image') return { ...base, kind: head, button: parts[1] ?? 'cross', target: parts.slice(2).join(':') };
+  return { ...base, button: head };
+}
+
+function format(s: Step): string {
+  switch (s.kind) {
+    case 'press': return s.button;
+    case 'wait': return `wait:${s.seconds}`;
+    case 'hold': return `hold:${s.button}:${s.seconds}`;
+    case 'wait_text': case 'wait_image': return `${s.kind}:${s.seconds}:${s.target}`;
+    case 'press_until_text': case 'press_until_image': return `${s.kind}:${s.button}:${s.max}:${s.target}`;
+    default: return `${s.kind}:${s.button}:${s.target}`;
+  }
+}
+
+/** Modelo para PS4: sai da tela de boas-vindas/usuário, vai ao início, procura o jogo pelo nome e confirma. */
+function ps4Template(title: string): string[] {
+  return ['ps', 'wait:4', 'press_if_text:cross:Seja bem-vindo', 'wait:3', 'press_if_text:cross:Quem está usando', 'wait:5',
+    'ps', 'wait:3', 'dpad_up', 'dpad_down', `press_until_text:dpad_right:20:${title}`, 'cross', 'wait:20'];
+}
+
+function SnapshotCropper({ shot, onCancel, onSave, onUseText }: {
+  shot: { png: string; width: number; height: number; text: string[]; ocr_error: string | null };
+  onCancel: () => void; onSave: (name: string, image: RefImage) => void; onUseText: (text: string) => void;
+}) {
+  const img = useRef<HTMLImageElement>(null);
+  const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const [name, setName] = useState('');
+  const point = (e: React.PointerEvent) => {
+    const r = img.current!.getBoundingClientRect();
+    return { x: Math.max(0, Math.min(r.width, e.clientX - r.left)), y: Math.max(0, Math.min(r.height, e.clientY - r.top)) };
+  };
+  function crop() {
+    const el = img.current;
+    if (!el || !box || box.w < 6 || box.h < 6) return;
+    const k = el.naturalWidth / el.getBoundingClientRect().width;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(box.w * k); canvas.height = Math.round(box.h * k);
+    canvas.getContext('2d')!.drawImage(el, box.x * k, box.y * k, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    onSave(name, { png: canvas.toDataURL('image/png').split(',')[1], width: el.naturalWidth });
+  }
+  return <div className="card stack launch-snapshot">
+    <div className="spread"><strong>Tela atual do console</strong><button className="btn sm" onClick={onCancel}><X size={15} aria-hidden /> Fechar</button></div>
+    <p className="small muted" style={{ margin: 0 }}>Arraste sobre a imagem para recortar um elemento que identifica a tela (logo do jogo, menu, ícone).
+      Prefira algo que não muda entre uma abertura e outra.</p>
+    <div className="launch-snapshot-frame"
+      onPointerDown={(e) => { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); start.current = point(e); setBox(null); }}
+      onPointerMove={(e) => {
+        if (!start.current) return;
+        const p = point(e), s = start.current;
+        setBox({ x: Math.min(s.x, p.x), y: Math.min(s.y, p.y), w: Math.abs(p.x - s.x), h: Math.abs(p.y - s.y) });
+      }}
+      onPointerUp={() => { start.current = null; }}>
+      <img ref={img} src={`data:image/png;base64,${shot.png}`} alt="Tela atual do console" draggable={false} />
+      {box && <span className="launch-snapshot-box" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />}
+    </div>
+    <div className="row">
+      <Field label="Nome do recorte"><input value={name} maxLength={40} placeholder="ex.: menu-jogo"
+        onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, '-'))} /></Field>
+      <button className="btn primary" disabled={!box || box.w < 6 || box.h < 6 || !/^[a-z0-9][a-z0-9_-]*$/.test(name)} onClick={crop}>Salvar recorte</button>
+    </div>
+    <div className="stack small">
+      <strong>Textos lidos na tela</strong>
+      {shot.ocr_error ? <Alert kind="warn">{shot.ocr_error}</Alert> : shot.text.length === 0 ? <span className="muted">Nenhum texto reconhecido.</span>
+        : <div className="row launch-ocr">{shot.text.map((t, i) => <button key={`${t}-${i}`} className="btn sm" title="Adicionar passo que espera este texto"
+          onClick={() => onUseText(t)}>{t}</button>)}</div>}
+    </div>
+  </div>;
+}
+
+function Editor({ base, game, buttons, onSaved, onClose }: {
+  base: string; game: GameScript; buttons: string[]; onSaved: () => Promise<void>; onClose: () => void;
+}) {
+  const [steps, setSteps] = useState<Step[]>(() => game.steps.map(parse));
+  const [images, setImages] = useState<Record<string, RefImage>>(game.images);
+  const [raw, setRaw] = useState<string | null>(null);
+  const [shot, setShot] = useState<{ png: string; width: number; height: number; text: string[]; ocr_error: string | null }>();
+  const [test, setTest] = useState<AgentResult>();
+  const { busy, msg, run } = useAction();
+  const list = raw !== null ? raw.split('\n').map((l) => l.trim()).filter(Boolean) : steps.map(format);
+  const knownButtons = buttons.length ? buttons : BUTTONS;
+  const polling = test?.state === 'connecting';
+  useEffect(() => {
+    if (!polling) return;
+    const timer = window.setInterval(() => {
+      get<AgentResult>(`${base}/launch-test`).then(setTest).catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [polling, base]);
+
+  const update = (i: number, patch: Partial<Step>) => setSteps((all) => all.map((s, j) => j === i ? { ...s, ...patch } : s));
+  const move = (i: number, d: number) => setSteps((all) => {
+    const next = [...all]; const [item] = next.splice(i, 1); next.splice(i + d, 0, item); return next;
+  });
+  const applyRaw = () => { if (raw !== null) { setSteps(list.map(parse)); setRaw(null); } };
+  const body = () => ({ steps: list, images });
+
+  return <div className="card stack launch-editor">
+    <div className="spread"><h3 style={{ margin: 0 }}>Roteiro de “{game.title}”</h3>
+      <button className="btn sm" onClick={onClose}><X size={15} aria-hidden /> Fechar</button></div>
+    {msg}
+    <p className="small muted" style={{ margin: 0 }}>O agente executa os passos em ordem ao preparar o console para cada reserva.
+      Use os passos de <b>texto</b> e <b>imagem</b> para conferir a tela: se o jogo não for confirmado, a preparação falha e a equipe é avisada,
+      em vez de liberar o jogador no menu do console.</p>
+    <div className="row">
+      <button className="btn sm" onClick={() => { setRaw(null); setSteps(ps4Template(game.title).map(parse)); }}><Wand2 size={15} aria-hidden /> Usar modelo PS4</button>
+      <button className="btn sm" onClick={() => raw === null ? setRaw(steps.map(format).join('\n')) : applyRaw()}>
+        {raw === null ? 'Editar como texto' : 'Voltar aos campos'}</button>
+    </div>
+    {raw !== null ? <Field label="Passos (um por linha)" hint="Formatos: cross · wait:3 · hold:ps:2 · wait_text:30:Texto · press_until_text:dpad_right:20:Nome do jogo · press_if_text:cross:Seja bem-vindo · wait_image:60:recorte">
+      <textarea rows={Math.max(8, list.length + 2)} value={raw} onChange={(e) => setRaw(e.target.value)} spellCheck={false} />
+    </Field> : <ol className="launch-steps">
+      {steps.map((s, i) => {
+        const info = KINDS.find((k) => k.kind === s.kind)!;
+        const usesButton = !['wait', 'wait_text', 'wait_image'].includes(s.kind);
+        const isImage = s.kind.endsWith('_image');
+        const isText = s.kind.endsWith('_text');
+        return <li key={i} className="launch-step">
+          <div className="launch-step-fields">
+            <select aria-label={`Tipo do passo ${i + 1}`} value={s.kind} onChange={(e) => update(i, { kind: e.target.value as Kind })}>
+              {KINDS.map((k) => <option key={k.kind} value={k.kind}>{k.label}</option>)}
+            </select>
+            {usesButton && <select aria-label="Botão" value={s.button} onChange={(e) => update(i, { button: e.target.value })}>
+              {knownButtons.map((b) => <option key={b} value={b}>{BUTTON_LABEL[b] ?? b}</option>)}</select>}
+            {['wait', 'hold', 'wait_text', 'wait_image'].includes(s.kind) && <label className="launch-inline">
+              <input type="number" min={0.5} max={180} step={0.5} value={s.seconds} onChange={(e) => update(i, { seconds: e.target.value })} /> s</label>}
+            {s.kind.startsWith('press_until') && <label className="launch-inline">até
+              <input type="number" min={1} max={60} value={s.max} onChange={(e) => update(i, { max: e.target.value })} /> toques</label>}
+            {isText && <input aria-label="Texto na tela" placeholder="Texto que aparece na tela" value={s.target} maxLength={80}
+              onChange={(e) => update(i, { target: e.target.value.replace(/\n/g, ' ') })} />}
+            {isImage && <select aria-label="Imagem de referência" value={s.target} onChange={(e) => update(i, { target: e.target.value })}>
+              <option value="">Escolha o recorte</option>
+              {Object.keys(images).map((n) => <option key={n} value={n}>{n}</option>)}</select>}
+          </div>
+          <div className="row launch-step-actions">
+            <button className="btn sm" aria-label="Subir passo" disabled={i === 0} onClick={() => move(i, -1)}><ArrowUp size={14} aria-hidden /></button>
+            <button className="btn sm" aria-label="Descer passo" disabled={i === steps.length - 1} onClick={() => move(i, 1)}><ArrowDown size={14} aria-hidden /></button>
+            <button className="btn sm danger" aria-label="Remover passo" onClick={() => setSteps((all) => all.filter((_, j) => j !== i))}><Trash2 size={14} aria-hidden /></button>
+          </div>
+          <small className="muted">{info.help}</small>
+        </li>;
+      })}
+      <li><button className="btn sm" onClick={() => setSteps((all) => [...all, parse('cross')])}><Plus size={15} aria-hidden /> Adicionar passo</button></li>
+    </ol>}
+
+    <div className="stack">
+      <div className="spread"><strong>Imagens de referência</strong>
+        <button className="btn sm" disabled={busy} onClick={() => void run(async () => {
+          const r = await post<AgentResult>(`${base}/screen`);
+          if (!r.ok) throw new Error(r.message);
+          setShot(r.data as typeof shot & object);
+        })}><Camera size={15} aria-hidden /> Capturar tela do console</button></div>
+      {Object.keys(images).length === 0 ? <p className="small muted" style={{ margin: 0 }}>Nenhuma. Abra o jogo no console, capture a tela e recorte um elemento do jogo para confirmar que ele abriu.</p>
+        : <div className="launch-images">{Object.entries(images).map(([n, im]) => <figure key={n}>
+          <img src={`data:image/png;base64,${im.png}`} alt={`Recorte ${n}`} />
+          <figcaption>{n} <button className="btn sm danger" aria-label={`Remover ${n}`} onClick={() => setImages((all) => {
+            const next = { ...all }; delete next[n]; return next;
+          })}><Trash2 size={13} aria-hidden /></button></figcaption></figure>)}</div>}
+      {shot && <SnapshotCropper shot={shot} onCancel={() => setShot(undefined)}
+        onUseText={(t) => { applyRaw(); setSteps((all) => [...all, { ...parse('cross'), kind: 'wait_text', seconds: '30', target: t }]); }}
+        onSave={(n, im) => { setImages((all) => ({ ...all, [n]: im })); setShot(undefined); }} />}
+    </div>
+
+    {test && <Alert kind={test.ok ? 'ok' : polling ? 'info' : 'error'}>{test.message}</Alert>}
+    <div className="row">
+      <button className="btn primary" disabled={busy} onClick={() => void run(async () => {
+        await put(`${base}/launch-scripts/${game.game_id}`, body()); await onSaved();
+      }, 'Roteiro salvo. Ele será usado nas próximas preparações deste console.')}><Save size={16} aria-hidden /> Salvar roteiro</button>
+      <button className="btn" disabled={busy || polling || list.length === 0} onClick={() => void run(async () => {
+        setTest(await post<AgentResult>(`${base}/launch-scripts/${game.game_id}/test`, body()));
+      })}><FlaskConical size={16} aria-hidden /> {polling ? 'Testando…' : 'Testar no console'}</button>
+      {game.steps.length > 0 && <button className="btn danger" disabled={busy} onClick={() => void run(async () => {
+        await del(`${base}/launch-scripts/${game.game_id}`); await onSaved(); onClose();
+      }, 'Roteiro excluído.')}>Excluir roteiro</button>}
+    </div>
+  </div>;
+}
+
+/** Roteiros de abertura dos jogos de um console (proprietário: base /owner/consoles/ID; equipe: /admin/consoles/ID). */
+export default function LaunchScripts({ base }: { base: string }) {
+  const data = useApi<ScriptList>(`${base}/launch-scripts`);
+  const [editing, setEditing] = useState<string>();
+  const d = data.data;
+  const game = d?.games.find((g) => g.game_id === editing);
+  if (data.loading && !d) return <Loading />;
+  if (data.error) return <ErrorBox error={data.error} onRetry={data.reload} />;
+  if (!d) return null;
+  return <div className="stack">
+    {!d.agent_ready && <Alert kind="info">O teste no console e a captura de tela ficam disponíveis depois que o console for aprovado e a conexão for aplicada a um agente.
+      Você já pode montar e salvar os roteiros.</Alert>}
+    {game ? <Editor key={game.game_id} base={base} game={game} buttons={d.buttons} onSaved={data.reload} onClose={() => setEditing(undefined)} />
+      : d.games.length === 0 ? <p className="muted">Nenhum jogo vinculado a este console. Vincule os jogos no cadastro do console.</p>
+      : <div className="card table-wrap"><table className="table"><thead><tr><th>Jogo</th><th>Roteiro</th><th>Atualizado</th><th /></tr></thead>
+        <tbody>{d.games.map((g) => <tr key={g.game_id}>
+          <td>{g.title}</td>
+          <td>{g.steps.length ? <StatusPill status="ok" map={{ ok: `${g.steps.length} passos` }} tone="green" />
+            : <StatusPill status="missing" map={{ missing: 'Sem roteiro' }} tone="red" />}</td>
+          <td className="small muted">{g.updated_at ? dateTime(g.updated_at) : '—'}</td>
+          <td><button className="btn sm" onClick={() => setEditing(g.game_id)}>{g.steps.length ? 'Editar roteiro' : 'Criar roteiro'}</button></td>
+        </tr>)}</tbody></table></div>}
+  </div>;
+}

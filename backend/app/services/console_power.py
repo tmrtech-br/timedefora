@@ -100,7 +100,10 @@ def wake_for_reservation(reservation_id) -> None:
         adapter = get_adapter(ref.method)
         # Acorda, conecta e abre o jogo (roteiro). A preparação oficial (após o pagamento) reaproveita o trabalho:
         # o agente responde "já conectado com este jogo aberto" ou devolve o andamento em curso.
-        res = adapter.prepare_console(ref, {'id': str(r['game_id']), 'slug': r['slug'], 'title': r['title']})
+        from . import launch_scripts
+        with tx() as conn:
+            game = launch_scripts.game_payload(conn, r['console_id'], {'id': r['game_id'], 'slug': r['slug'], 'title': r['title']})
+        res = adapter.prepare_console(ref, game)
         log.info('reserva %s: console sendo preparado já no checkout (%s)', reservation_id, res.message[:120])
     except AdapterError as e:
         log.warning('reserva %s: não foi possível acordar o console ao reservar: %s', reservation_id, e.message)

@@ -104,8 +104,18 @@ class AgentDelegatingAdapter(ConsoleStreamingAdapter):
     def test_controls(self, ref): return self._res(self._call(ref, 'test/controls'))
 
     def prepare_console(self, ref, game):
-        return self._res(self._call(ref, 'console/prepare', {'game': {k: game.get(k) for k in ('id', 'slug', 'title')},
+        return self._res(self._call(ref, 'console/prepare', {'game': {k: game.get(k) for k in ('id', 'slug', 'title', 'launch') if k in game},
                                                             'settings': ref.settings}))
+
+    # Roteiros de abertura (painel): testar no console, acompanhar e capturar a tela para montar o roteiro.
+    def script_test(self, ref, game):
+        return self._call(ref, 'script/test', {'game': game, 'settings': ref.settings})
+
+    def script_status(self, ref):
+        return self._call(ref, 'script/status', {'settings': ref.settings})
+
+    def screen_snapshot(self, ref):
+        return self._call(ref, 'screen/snapshot', {'settings': ref.settings}, timeout=30.0)
 
 
 class ChiakiWebRemotePlayAdapter(AgentDelegatingAdapter):

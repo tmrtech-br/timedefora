@@ -35,7 +35,7 @@ class AgentConfig:
     psn_connect_attempts: int = 3              # rota PSN: tentativas (a 1ª costuma falhar com o console em repouso)
     chiaki_hide_window: bool = True            # janela do chiaki-ng fora da tela e fora da barra de tarefas
     stop_chiaki_after_session: bool = False    # padrão: mantém a conexão para o próximo jogador
-    require_game_script: bool = False          # True: sem roteiro de abertura do jogo a preparação falha
+    require_game_script: bool = True           # sem roteiro de abertura (painel ou config.json) a preparação falha
     control_test_button: str = ''              # botão "inofensivo" apertado no teste de controles (vazio = teste não aprova)
     # ---- Vídeo no navegador (WebRTC). Use os MESMOS servidores STUN/TURN configurados na API (WEBRTC_ICE_SERVERS).
     ice_servers: list = field(default_factory=lambda: [{'urls': 'stun:stun.l.google.com:19302'}])

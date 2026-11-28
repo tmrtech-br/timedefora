@@ -11,11 +11,12 @@ import Params from '@/components/admin/Params';
 import OwnerReviews from '@/components/admin/OwnerReviews';
 import OwnerPayouts from '@/components/admin/OwnerPayouts';
 import Pricing from '@/components/admin/Pricing';
+import AdminScripts from '@/components/admin/AdminScripts';
 import { Alert } from '@/components/ui';
 
 const MAP: Record<string, React.ComponentType> = { consoles: Consoles, jogos: Games, agenda: Agenda, agentes: Agents, precos: Pricing, filas: Queues,
   reservas: Reservations, sessoes: Sessions, transmissoes: Channels, financeiro: Finance, usuarios: Users, notificacoes: Notifications,
-  suporte: Support, lgpd: Lgpd, auditoria: Audit, parametros: Params, aprovacoes: OwnerReviews, repasses: OwnerPayouts, configuracoes: Settings };
+  suporte: Support, lgpd: Lgpd, auditoria: Audit, parametros: Params, aprovacoes: OwnerReviews, repasses: OwnerPayouts, configuracoes: Settings, roteiros: AdminScripts };
 
 export default function Section() {
   const { section } = useParams<{ section: string }>();

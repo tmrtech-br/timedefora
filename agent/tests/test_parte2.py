@@ -183,6 +183,21 @@ def test_preparar_rota_direta_acorda_conecta_e_abre_o_jogo():
     assert r2['ok'] and len(w.chiaki.started) == 1 and len([e for e in w.pad.events if e[0] == 'press']) == 3
 
 
+def test_roteiro_do_painel_tem_prioridade_e_sem_roteiro_a_preparacao_falha():
+    w = World(power='ligado')
+    c = make(w)
+    game = {'slug': 'gta-v', 'title': 'GTA V', 'launch': {'steps': ['ps', 'cross'], 'images': {}}}
+    r = until_done(c, 'console/prepare', {**LAN, 'game': game})
+    assert r['ok'] is True and 'roteiro do painel' in r['message'], r
+    assert [e for e in w.pad.events if e[0] == 'press'] == [('press', 'ps'), ('press', 'cross')]
+    # teste do roteiro pelo painel roda de novo mesmo com o jogo já aberto
+    r = until_done(c, 'script/test', {**LAN, 'game': game})
+    assert r['ok'] is True and len([e for e in w.pad.events if e[0] == 'press']) == 4
+    # jogo sem roteiro (nem no painel nem no config.json): não libera o console
+    r = until_done(make(World(power='ligado')), 'console/prepare', {**LAN, 'game': {'slug': 'outro', 'title': 'Outro'}})
+    assert r['ok'] is False and 'Sem roteiro para abrir "Outro"' in r['message'], r
+
+
 def test_sem_registro_no_chiaki_falha_com_instrucao():
     w = World(chiaki=FakeChiaki(registered=()))
     r = until_done(make(w), 'connect', LAN)

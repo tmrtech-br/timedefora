@@ -104,7 +104,8 @@ def ensure(conn, r: dict, n=None) -> str:
     game = conn.execute('select id, slug, title from games where id=%s', (r['game_id'],)).fetchone() or {}
     attempts = p['attempts'] + 1
     try:
-        res = adapter.prepare_console(ref, {'id': str(game.get('id', '')), 'slug': game.get('slug'), 'title': game.get('title')})
+        from . import launch_scripts
+        res = adapter.prepare_console(ref, launch_scripts.game_payload(conn, r['console_id'], game))
         if res.ok and (adapter.simulated or not res.simulated):
             conn.execute("""update console_preparations set status='ready', attempts=%s, simulated=%s, last_message=%s, ready_at=%s
                             where id=%s""", (attempts, adapter.simulated or res.simulated, res.message[:500], n, p['id']))

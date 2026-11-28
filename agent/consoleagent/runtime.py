@@ -142,9 +142,11 @@ class ConsoleRuntime:
             reusable = j and j.kind in (kind, 'prepare') and j.game_slug == slug
             if j and j.state == 'running':
                 return j                                           # já em andamento
-            if reusable and j.state == 'ok' and self.streaming:
+            force = bool((game or {}).get('force'))                # teste do roteiro: sempre roda de novo
+            if reusable and j.state == 'ok' and self.streaming and not force:
                 return j                                           # pronto (idempotente)
-            if kind == 'prepare' and self.streaming and self.ready_game is not None and slug == self.ready_game:
+            if (kind == 'prepare' and not force and self.streaming and self.ready_game is not None
+                    and slug == self.ready_game):
                 self.job = Job(kind, slug, 'ok', 'pronto', 'Console já conectado com este jogo aberto.')
                 return self.job
             self.job = j = Job(kind, slug)
@@ -295,21 +297,39 @@ class ConsoleRuntime:
 
     def _open_game(self, t: Target, j: Job, game: dict) -> str:
         slug, title = game.get('slug'), game.get('title') or game.get('slug') or 'jogo'
-        steps = t.games.get(slug) if slug else None
-        if not steps:
-            self.ready_game = slug
-            if self.cfg.require_game_script:
-                raise Fail(f'Sem roteiro para abrir "{title}" (games.{slug} no config.json do agente).')
-            return f'Jogo "{title}": sem roteiro de abertura configurado; confirme na tela que ele está aberto.'
+        launch = game.get('launch') if isinstance(game.get('launch'), dict) else {}
+        # Roteiro do painel (proprietário/equipe) tem prioridade; senão o do config.json deste agente.
+        steps = list(launch.get('steps') or []) or (t.games.get(slug) if slug else None)
+        source = 'do painel' if launch.get('steps') else 'do agente'
         j.step = f'abrindo "{title}"'
+        if not steps:
+            if self.cfg.require_game_script:
+                raise Fail(f'Sem roteiro para abrir "{title}": cadastre o roteiro no menu Roteiros do painel '
+                           f'(ou games.{slug} no config.json do agente).')
+            self.ready_game = slug
+            return f'Jogo "{title}": sem roteiro de abertura configurado; confirme na tela que ele está aberto.'
+        refs = {}
+        for name, data in (launch.get('images') or {}).items():
+            try:
+                from .vision import decode_reference
+                refs[name] = decode_reference(name, data)
+            except Exception as e:
+                raise Fail(f'Imagem de referência "{name}" inválida: {e}')
         pad = self.ensure_pad()
-        run_pad_steps(pad, steps, self.d.sleep)
+        screen = Screen(self.link, refs)
+
+        def progress(i: int, raw: str) -> None:
+            j.step = f'abrindo "{title}" — passo {i} de {len(steps)}: {raw}'
+
+        run_pad_steps(pad, steps, self.d.sleep, screen=screen, on_step=progress)
+        j.step = f'conferindo "{title}"'
         self.d.sleep(2)
         f = self.link.frame()
         if not f.ok:
             raise Fail(f'Após o roteiro de "{title}" a imagem sumiu: {f.message}')
         self.ready_game = slug
-        return f'Roteiro de abertura de "{title}" executado ({len(steps)} passos).'
+        checked = ' Jogo confirmado na tela.' if screen.confirmed else ' (roteiro sem confirmação visual do jogo)'
+        return f'Roteiro de abertura de "{title}" executado ({len(steps)} passos, roteiro {source}).{checked}'
 
     # ------------------------------------------------------------ sessão do jogador
     def start_session(self, session_id: str) -> tuple[bool, str]:
@@ -375,15 +395,96 @@ class ConsoleRuntime:
         return ok, 'Console colocado em repouso.' if ok else 'O console não confirmou o repouso; conexão encerrada.'
 
 
-def run_pad_steps(pad, steps: list, sleep=time.sleep) -> None:
-    """Roteiro interno: nomes de botão ("ps", "cross", "dpad_right"), "wait:N" ou "hold:botão:segundos"."""
-    for raw in steps:
-        s = str(raw).strip().lower()
+class Screen:
+    """O que está na tela agora: texto (OCR) e imagens de referência. Usado pelos passos visuais do roteiro."""
+
+    def __init__(self, link, refs: dict | None = None):
+        self.link, self.refs = link, refs or {}
+        self.confirmed = False                  # algum passo de espera/confirmação visual passou
+        self.last_text = ''
+
+    def _image(self):
+        f = self.link.frame()
+        if f.image is None:
+            raise Fail(f'Sem imagem do console para conferir a tela: {f.message}')
+        return f.image
+
+    def has_text(self, wanted: str) -> bool:
+        from .vision import VisionUnavailable, contains_text, read_text
+        try:
+            lines = read_text(self._image())
+        except VisionUnavailable as e:
+            raise Fail(str(e))
+        self.last_text = ' | '.join(lines)[:300]
+        return contains_text(' '.join(lines), wanted)
+
+    def has_image(self, name: str) -> bool:
+        from .vision import MATCH_THRESHOLD, match_score
+        ref = self.refs.get(name)
+        if ref is None:
+            raise Fail(f'Imagem de referência "{name}" não cadastrada neste roteiro.')
+        return match_score(self._image(), ref) >= MATCH_THRESHOLD
+
+    def seen(self, kind: str, target: str) -> bool:
+        return self.has_text(target) if kind == 'text' else self.has_image(target)
+
+    def describe(self, kind: str, target: str) -> str:
+        what = f'o texto "{target}"' if kind == 'text' else f'a imagem "{target}"'
+        shown = f' Texto na tela: {self.last_text}.' if kind == 'text' and self.last_text else ''
+        return what + shown
+
+
+def _visual(screen: Screen | None, raw: str) -> Screen:
+    if screen is None:
+        raise Fail(f'Passo "{raw}" precisa da leitura de tela (indisponível neste roteiro).')
+    return screen
+
+
+def run_pad_steps(pad, steps: list, sleep=time.sleep, screen: Screen | None = None, on_step=None) -> None:
+    """Roteiro de abertura. Passos (um por linha):
+    - botão: "ps", "cross", "dpad_right"…; "wait:SEGUNDOS"; "hold:BOTÃO:SEGUNDOS"
+    - "wait_text:SEGUNDOS:TEXTO" / "wait_image:SEGUNDOS:NOME" — espera aparecer na tela (senão falha)
+    - "press_until_text:BOTÃO:MÁX:TEXTO" / "press_until_image:BOTÃO:MÁX:NOME" — aperta até aparecer (navegar até o jogo)
+    - "press_if_text:BOTÃO:TEXTO" / "press_if_image:BOTÃO:NOME" — aperta só se estiver na tela (ex.: "Seja bem-vindo")
+    """
+    for i, raw in enumerate(steps, 1):
+        text = str(raw).strip()
+        s = text.lower()
+        if on_step:
+            on_step(i, text)
         if s.startswith('wait:'):
             sleep(float(s.split(':', 1)[1]))
         elif s.startswith('hold:'):
             _, name, secs = s.split(':')
             pad.press(name, float(secs))
+        elif s.startswith(('wait_text:', 'wait_image:')):
+            kind = 'text' if s.startswith('wait_text:') else 'image'
+            _, secs, target = text.split(':', 2)
+            sc = _visual(screen, text)
+            deadline = time.monotonic() + float(secs)
+            while not sc.seen(kind, target):
+                if time.monotonic() >= deadline:
+                    raise Fail(f'Não apareceu {sc.describe(kind, target)} em {secs} s.')
+                sleep(1.0)
+            sc.confirmed = True
+        elif s.startswith(('press_until_text:', 'press_until_image:')):
+            kind = 'text' if s.startswith('press_until_text:') else 'image'
+            _, button, limit, target = text.split(':', 3)
+            sc = _visual(screen, text)
+            presses = 0
+            while not sc.seen(kind, target):
+                if presses >= int(limit):
+                    raise Fail(f'Não encontrou {sc.describe(kind, target)} após {limit} toques em "{button}".')
+                pad.press(button.lower())
+                presses += 1
+                sleep(1.0)
+            sc.confirmed = True
+        elif s.startswith(('press_if_text:', 'press_if_image:')):
+            kind = 'text' if s.startswith('press_if_text:') else 'image'
+            _, button, target = text.split(':', 2)
+            if _visual(screen, text).seen(kind, target):
+                pad.press(button.lower())
+                sleep(1.0)
         else:
             pad.press(s)
         sleep(0.4)

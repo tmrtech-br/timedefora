@@ -15,7 +15,7 @@ from .core.db import close_pool, get_pool
 from .core.deps import CSRF_COOKIE, SESSION_COOKIE, client_ip, load_principal
 from .core.errors import AppError
 from .gamebridge import CONTRACT_VERSION
-from .routers import admin, auth, catalog, me, owner, play, psn_accounts
+from .routers import admin, auth, catalog, launch_scripts, me, owner, play, psn_accounts
 from .routers.me import MEDIA_DIR
 
 log = logging.getLogger('locaplay')
@@ -113,7 +113,8 @@ def health():
             'real_consoles_validated': False}
 
 
-for r in (auth.router, me.router, catalog.router, play.router, admin.router, psn_accounts.router, owner.router):
+for r in (auth.router, me.router, catalog.router, play.router, admin.router, psn_accounts.router, owner.router,
+          launch_scripts.owner_router, launch_scripts.admin_router):
     app.include_router(r)
 
 MEDIA_DIR.mkdir(parents=True, exist_ok=True)

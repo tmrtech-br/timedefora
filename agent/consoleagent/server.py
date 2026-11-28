@@ -183,6 +183,17 @@ def create_app(cfg: AgentConfig, discover_fn: Callable = discovery.discover, dep
             if action == 'connect' and body.get('poll_only') is True:
                 return _job(r.job) if r.job else _result(False, 'A tentativa de conexão não está mais disponível.', 'stopped')
             return _job(r.start_job(t, 'prepare' if action == 'console/prepare' else 'connect', body.get('game')))
+        if action == 'script/test':
+            # Teste do roteiro pelo painel: nunca com jogador no console.
+            if r.session_id:
+                return _error(409, 'session_active', 'Há uma sessão de jogo em andamento neste console.')
+            game = dict(body.get('game') or {})
+            game['force'] = True
+            return _job(r.start_job(t, 'prepare', game))
+        if action == 'script/status':
+            return _job(r.job) if r.job else _result(False, 'Nenhum teste de roteiro em andamento.', 'stopped')
+        if action == 'screen/snapshot':
+            return _snapshot(t, r)
         if action == 'stream/start':
             ok, msg = r.start_session(sid)
             if not ok:
@@ -259,6 +270,26 @@ def _job(j) -> dict:
         return _result(False, j.message, 'error', {'step': j.step})
     secs = int(time.monotonic() - j.started)
     return _result(False, f'Em andamento ({secs}s): {j.step}…', 'connecting', {'step': j.step, 'running': True})
+
+
+def _snapshot(t, r: ConsoleRuntime) -> dict:
+    """Imagem atual do console (tons de cinza, PNG) e o texto lido nela, para montar o roteiro no painel."""
+    if not r.streaming:
+        if r.session_id is None:
+            r.start_job(t, 'connect', None, 0)                   # conecta em segundo plano; o painel tenta de novo
+        return _result(False, 'Conectando ao console para capturar a tela. Tente de novo em alguns segundos.', 'connecting')
+    f = r.link.frame()
+    if f.image is None:
+        return _result(False, f'Sem imagem do console: {f.message}', 'degraded')
+    from .vision import VisionUnavailable, png_base64, read_text
+    try:
+        lines, ocr = read_text(f.image), None
+    except VisionUnavailable as e:
+        lines, ocr = [], str(e)
+    except Exception as e:  # OCR é auxiliar: a captura vale mesmo sem ele
+        lines, ocr = [], f'Falha na leitura de texto: {e}'
+    return _result(True, f.message, 'streaming', {'png': png_base64(f.image), 'width': f.image.width,
+                                                  'height': f.image.height, 'text': lines, 'ocr_error': ocr})
 
 
 def _test_video_audio(r: ConsoleRuntime) -> dict:
