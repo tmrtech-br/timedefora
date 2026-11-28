@@ -466,6 +466,16 @@ def save_payout_destination(body: PayoutIn, p: Principal = Depends(enrolled_owne
     return jsonable({key: row[key] for key in ('kind', 'masked', 'updated_at')})
 
 
+@router.get('/payouts')
+def my_payouts(p: Principal = Depends(enrolled_owner)):
+    with tx() as conn:
+        return jsonable(all_(conn, '''
+            select po.id, po.amount_cents, po.status, po.destination_masked, po.scheduled_for, po.paid_at, po.proof_url, g.title game
+            from owner_payouts po join owner_settlements st on st.id=po.settlement_id
+            join reservations r on r.id=st.reservation_id join games g on g.id=r.game_id
+            where po.owner_user_id=%s order by po.created_at desc limit 100''', (p.user_id,)))
+
+
 # ------------------------------------------------------------------ validação pela equipe
 def _checklist(conn, console_id) -> list[str]:
     """O que falta para enviar o console para análise."""

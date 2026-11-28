@@ -7,6 +7,7 @@ import { dateTime, money } from '@/lib/format';
 import { useApi } from '@/lib/hooks';
 import { useAuth } from '@/lib/auth';
 import { useAction } from './common';
+import OwnerPayouts from './OwnerPayouts';
 
 type Window = { id: string; status: string; starts_at: string; ends_at: string; title: string; game_status: string; slug: string };
 type Review = {
@@ -76,6 +77,7 @@ export default function OwnerReviews() {
       {list.error && <Alert kind="error">{list.error.message}</Alert>}
       {list.data?.length === 0 && <section className="card"><p className="muted" style={{ margin: 0 }}>Nenhum console aguardando análise.</p></section>}
       {list.data?.map((r) => <ReviewCard key={r.id} r={r} agents={agents} superadmin={superadmin} onDone={list.reload} />)}
+      <OwnerPayouts />
     </div>
   );
 }

@@ -21,6 +21,8 @@ type Dashboard = { totals: { sessions: number; seconds_used: number; rented_minu
 type Settlement = { id: string; owner_cents: number; status: string; updated_at: string };
 type Destination = { kind: 'pix' | 'bank'; masked: string; updated_at: string };
 const SETTLEMENT_STATUS: Record<string, string> = { held: 'Retido', eligible: 'Aguardando repasse', cancelled: 'Cancelado', paid: 'Pago' };
+const PAYOUT_LABEL: Record<string, string> = { scheduled: 'Agendado', waiting_destination: 'Cadastre seu Pix/conta', awaiting_manual: 'Em pagamento',
+  processing: 'Enviando', paid: 'Pago', failed: 'Em análise pela equipe' };
 const DEFAULT_RATE: Rate = { min_minutes: 10, max_minutes: 120, rate_unit: 'minute', rate_cents: 100 };
 
 function Rates({ consoleId, value, locked, onSaved }: { consoleId: string; value: Rate | null; locked: boolean; onSaved: () => void }) {
@@ -65,6 +67,8 @@ export default function OwnerInventory() {
   const dashboard = useApi<Dashboard>('/owner/dashboard');
   const settlements = useApi<Settlement[]>('/owner/settlements');
   const destination = useApi<Destination>('/owner/payout-destination');
+  const payouts = useApi<{ id: string; amount_cents: number; status: string; destination_masked: string | null; paid_at: string | null;
+    proof_url: string | null; game: string }[]>('/owner/payouts', 60000);
   const [consoleId, setConsoleId] = useState('');
   const [newConsole, setNewConsole] = useState(EMPTY_CONSOLE);
   const [psnConsole, setPsnConsole] = useState('');
@@ -259,6 +263,12 @@ export default function OwnerInventory() {
         {!current && <p>Selecione um console para configurar a duração e a tarifa.</p>}
       </section>
       <section className="card stack" id="recebimento"><h2>Recebimento</h2>
+        <p className="small muted" style={{ margin: 0 }}>Sua parte de cada sessão concluída sem problemas é enviada para o Pix ou a conta abaixo
+          a partir de 10 minutos após o fim da sessão (Pix e transferência sem custo).</p>
+        <DataTable limit={6} rows={payouts.data} error={payouts.error?.message} empty="Nenhum repasse ainda."
+          cols={[['Valor', (r) => money(r.amount_cents)], ['Sessão', (r) => r.game], ['Destino', (r) => r.destination_masked ?? '—'],
+            ['Situação', (r) => PAYOUT_LABEL[r.status] ?? r.status], ['Pago em', (r) => (r.paid_at ? dateTime(r.paid_at) : '—')],
+            ['', (r) => (r.proof_url ? <a className="link-purple" href={r.proof_url} target="_blank" rel="noopener noreferrer">Comprovante</a> : null)]]} />
         
         {destination.data && <p>{destination.data.kind === 'pix' ? 'PIX' : 'Conta bancária'} · {destination.data.masked}</p>}
         <PayoutForm onSaved={destination.reload} />

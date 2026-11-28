@@ -2369,6 +2369,10 @@ def put_setting(key: str, body: SettingIn, p: Principal = Depends(ADMIN)):
         raise unprocessable('validation_error', 'Tipo de valor inválido para esta configuração.')
     if key == 'booking_rate_cents_per_minute' and (type(body.value) is not int or not 0 <= body.value <= 49000):
         raise unprocessable('validation_error', 'Informe de 0 a 49000 centavos por minuto.')
+    if key == 'payout_provider':
+        from ..services.owner_payouts import PROVIDERS
+        if body.value not in PROVIDERS:
+            raise unprocessable('validation_error', 'Provedor de repasse desconhecido: ' + ', '.join(PROVIDERS))
     if key == 'join_bonus_seconds' and not 0 <= body.value <= 300:
         raise unprocessable('validation_error', 'Tempo extra do jogador: use de 0 a 300 segundos.')
     if key == 'prep_lead_minutes' and not 1 <= body.value <= 60:
@@ -2515,3 +2519,39 @@ def reject_owner_console(cid: uuid.UUID, body: OwnerReviewIn, p: Principal = Dep
         audit_event(conn, 'owner.console_rejected', 'consoles', cid, reason=body.notes)
         _notify_owner_review(conn, cid, False, body.notes.strip())
     return {'ok': True, 'status': status}
+
+
+# ================================================================== repasses aos proprietários
+@router.get('/owner-payouts')
+def owner_payouts_list(status: str = 'open', p: Principal = Depends(ADMIN)):
+    """Repasses. 'open' = aguardando pagamento manual, sem destino ou com falha; mostra o destino completo para pagar."""
+    from ..services import owner_payouts as op
+    statuses = ['awaiting_manual', 'waiting_destination', 'failed', 'scheduled'] if status == 'open' else [status]
+    with tx() as conn:
+        rows = all_(conn, '''
+            select po.*, u.username owner_username, u.email owner_email, g.title game, s.ended_at session_ended_at, r.code reservation_code
+            from owner_payouts po join users u on u.id=po.owner_user_id join owner_settlements st on st.id=po.settlement_id
+            join reservations r on r.id=st.reservation_id join games g on g.id=r.game_id join game_sessions s on s.id=st.session_id
+            where po.status = any(%s) order by po.scheduled_for limit 300''', (statuses,))
+        for row in rows:
+            if row['status'] in ('awaiting_manual', 'failed'):
+                d = op.destination(conn, row['owner_user_id'])
+                row['destination'] = d['data'] if d else None
+        if any(r['status'] in ('awaiting_manual', 'failed') for r in rows):
+            audit_event(conn, 'owner.payout_destinations_viewed', 'owner_payouts', None, details={'count': len(rows)})
+        return jsonable(rows)
+
+
+class PayoutPaidIn(BaseModel):
+    proof_url: str | None = Field(default=None, max_length=500)
+    notes: str = Field(default='', max_length=500)
+
+
+@router.post('/owner-payouts/{pid}/mark-paid')
+def owner_payout_paid(pid: uuid.UUID, body: PayoutPaidIn, p: Principal = Depends(ADMIN)):
+    from ..services import owner_payouts as op
+    if body.proof_url and not body.proof_url.lower().startswith('https://'):
+        raise unprocessable('invalid_proof', 'Informe o link do comprovante (https).')
+    with tx(p.user_id) as conn:
+        op.mark_paid(conn, pid, p.user_id, body.proof_url, body.notes)
+    return {'ok': True}

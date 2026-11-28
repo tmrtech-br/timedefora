@@ -33,7 +33,8 @@ DEFAULTS = {
     'public_streams_enabled': True,           # botão/links "Assistir ao vivo"
     'support_tickets_enabled': True,          # abertura de novos chamados (mensagens em chamados abertos continuam)
     'share_button_enabled': False,            # botão Share do controle (compartilhar/transmitir pela conta do console)
-    'card_payments_enabled': False,           # pagamento com cartão (desligado: só Pix, estorno sem custo)
+    'card_payments_enabled': False,
+    'payout_provider': 'manual',              # envio do repasse ao proprietário ('manual' = equipe paga e marca como pago)           # pagamento com cartão (desligado: só Pix, estorno sem custo)
     # ---- Energia do console (ver services/console_power.py). Valem junto com o cadastro de cada console.
     'console_standby_enabled': True,          # hibernar ao fim da sessão e quando o console ficar ocioso
     'keep_awake_for_next_enabled': True,      # não hibernar se houver reserva começando em breve (keep_awake_minutes do console)

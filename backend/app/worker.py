@@ -13,7 +13,7 @@ from .core import timeutil
 from .core.db import get_pool, insert, tx
 from .diagnostic_worker import DiagnosticWorker
 from .gamebridge import AdapterError, get_adapter
-from .services import console_power, notifications, payments, preparation, scheduling, sessions
+from .services import console_power, notifications, owner_payouts, payments, preparation, scheduling, sessions
 from .services.consoles import console_ref
 from .services.settings_store import get_settings
 
@@ -200,6 +200,9 @@ def tick() -> dict:
                                         (n - timedelta(minutes=5),)).fetchall()
                 for c in consoles:
                     scheduling.recompute_queue(conn, c['console_id'])
+            with tx() as conn:   # repasses: agenda 10 min após a sessão e envia pelo provedor (ou fila manual)
+                out['payouts_scheduled'] = owner_payouts.schedule_due(conn, n)
+                out['payouts_dispatched'] = owner_payouts.dispatch(conn, n)
             with tx() as conn:
                 out['reminders'] = _remind_before_start(conn, n)
                 _session_warnings(conn, n)
