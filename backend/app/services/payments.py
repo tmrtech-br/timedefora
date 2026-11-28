@@ -8,6 +8,7 @@ from ..core.db import audit_event, insert, tx
 from ..core.errors import AppError, bad_request, conflict, forbidden, not_found
 from . import notifications, scheduling
 from .payment_providers import get_provider
+from .settings_store import get_settings
 
 FINAL = {'approved', 'rejected', 'cancelled', 'expired', 'refunded', 'charged_back'}
 ALLOWED = {
@@ -25,6 +26,8 @@ def start_checkout(user, reservation_id, method: str) -> dict:
     if method not in ('pix', 'card'):
         raise bad_request('invalid_method', 'Escolha Pix ou cartão.')
     with tx() as conn:
+        if method == 'card' and not get_settings(conn).get('card_payments_enabled', False):
+            raise bad_request('card_disabled', 'No momento aceitamos apenas Pix.')
         r = conn.execute('select r.*, g.title from reservations r join games g on g.id=r.game_id where r.id=%s for update',
                          (reservation_id,)).fetchone()
         if not r or str(r['user_id']) != user.user_id:
@@ -55,7 +58,8 @@ def start_checkout(user, reservation_id, method: str) -> dict:
 
 
 def apply_status(conn, payment_id, new_status: str, source: str, details: dict | None = None,
-                 provider_payment_id: str | None = None, amount_cents: int | None = None, method: str | None = None) -> str:
+                 provider_payment_id: str | None = None, amount_cents: int | None = None, method: str | None = None,
+                 approved_at=None) -> str:
     p = conn.execute('select * from payments where id=%s for update', (payment_id,)).fetchone()
     if not p:
         raise not_found('Pagamento não encontrado.')
@@ -73,7 +77,8 @@ def apply_status(conn, payment_id, new_status: str, source: str, details: dict |
     if method:
         upd['method'] = method
     if new_status == 'approved':
-        upd['approved_at'] = timeutil.now()
+        # Horário real da aprovação no provedor (o aviso pode chegar atrasado); nunca no futuro.
+        upd['approved_at'] = min(approved_at, timeutil.now()) if approved_at else timeutil.now()
     sets = ', '.join(f'{k}=%s' for k in upd)
     conn.execute(f'update payments set {sets} where id=%s', (*upd.values(), p['id']))
     insert(conn, 'payment_events', {'payment_id': p['id'], 'from_status': p['status'], 'to_status': new_status,
@@ -82,7 +87,7 @@ def apply_status(conn, payment_id, new_status: str, source: str, details: dict |
                      'join consoles c on c.id=r.console_id where r.id=%s', (p['reservation_id'],)).fetchone()
     uid = str(p['user_id'])
     if new_status == 'approved':
-        outcome = scheduling.confirm_reservation(conn, r['id'], source)
+        outcome = scheduling.confirm_reservation(conn, r['id'], source, approved_at=upd['approved_at'])
         if outcome == 'confirmed':
             r2 = conn.execute('select starts_at, ends_at from reservations where id=%s', (r['id'],)).fetchone()
             notifications.notify(conn, uid, 'payment_approved', {
@@ -159,7 +164,8 @@ def process_mp_notification(data_id: str, webhook_id=None) -> str:
                              (timeutil.now(), webhook_id))
             return 'ignored'
         result = apply_status(conn, info.external_reference, info.status, 'webhook',
-                              {'status_detail': info.status_detail}, info.provider_payment_id, info.amount_cents, info.method)
+                              {'status_detail': info.status_detail}, info.provider_payment_id, info.amount_cents, info.method,
+                              approved_at=info.approved_at)
         if webhook_id:
             conn.execute("update webhook_events set processing_status='processed', processed_at=%s where id=%s",
                          (timeutil.now(), webhook_id))

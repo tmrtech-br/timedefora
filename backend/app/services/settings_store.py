@@ -33,6 +33,7 @@ DEFAULTS = {
     'public_streams_enabled': True,           # botão/links "Assistir ao vivo"
     'support_tickets_enabled': True,          # abertura de novos chamados (mensagens em chamados abertos continuam)
     'share_button_enabled': False,            # botão Share do controle (compartilhar/transmitir pela conta do console)
+    'card_payments_enabled': False,           # pagamento com cartão (desligado: só Pix, estorno sem custo)
     # ---- Energia do console (ver services/console_power.py). Valem junto com o cadastro de cada console.
     'console_standby_enabled': True,          # hibernar ao fim da sessão e quando o console ficar ocioso
     'keep_awake_for_next_enabled': True,      # não hibernar se houver reserva começando em breve (keep_awake_minutes do console)
@@ -44,7 +45,7 @@ DEFAULTS = {
 # Parâmetros expostos ao público (para a interface esconder o que estiver desligado).
 PUBLIC_FLAGS = ('sales_paused', 'sales_paused_reason', 'signup_enabled', 'google_login_enabled', 'queue_mode_enabled',
                 'scheduled_mode_enabled', 'coupons_enabled', 'keyboard_mouse_enabled', 'controls_menu_enabled', 'public_streams_enabled',
-                'support_tickets_enabled', 'share_button_enabled', 'disabled_platforms')
+                'support_tickets_enabled', 'share_button_enabled', 'card_payments_enabled', 'disabled_platforms')
 
 
 def disabled_platforms(conn) -> list[str]:

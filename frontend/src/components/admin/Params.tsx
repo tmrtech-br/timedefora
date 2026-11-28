@@ -20,6 +20,7 @@ const TOGGLES: { key: string; title: string; desc: string; invert?: boolean }[] 
   { key: 'controls_menu_enabled', title: 'Menu Teclado e mouse', desc: 'Exibe o menu do jogador e permite personalizar o mapeamento de teclas e mouse.' },
   { key: 'public_streams_enabled', title: 'Transmissões ao vivo (Assistir ao vivo)', desc: 'Mostra/oculta os links para Twitch/Kick nas páginas dos jogos e na home.' },
   { key: 'support_tickets_enabled', title: 'Abertura de chamados no suporte', desc: 'Desligado: novos chamados bloqueados; respostas em chamados abertos continuam.' },
+  { key: 'card_payments_enabled', title: 'Pagamento com cartão', desc: 'Desligado (padrão): o cliente paga só com Pix (estorno sem custo). Ligado: mostra "Pagar com cartão" no checkout; estornos de cartão seguem regras e verificações adicionais.' },
   { key: 'share_button_enabled', title: 'Botão Share do controle', desc: 'Desligado (recomendado): o cliente não abre o menu de compartilhar/transmitir nem publica capturas pela conta do console.' },
 ];
 

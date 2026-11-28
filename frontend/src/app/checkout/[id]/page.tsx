@@ -9,6 +9,7 @@ import { ApiError, post } from '@/lib/api';
 import { useApi, useServerClock } from '@/lib/hooks';
 import { dateTime, duration, moneyWithCents, RESERVATION_STATUS } from '@/lib/format';
 import type { Reservation } from '@/lib/types';
+import { useFeatures } from '@/lib/features';
 
 function Checkout() {
   const { id } = useParams<{ id: string }>();
@@ -17,6 +18,8 @@ function Checkout() {
   const now = useServerClock(r?.server_time);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // Cartão só com o parâmetro ligado (Parâmetros → Pagamento com cartão); por padrão apenas Pix.
+  const cardEnabled = useFeatures()?.card_payments_enabled === true;
   const [method, setMethod] = useState<'pix' | 'card' | null>(null);
   if (error) return <ErrorBox error={error} onRetry={reload} />;
   if (!r) return <Skeleton h={300} />;
@@ -66,7 +69,7 @@ function Checkout() {
       {r.status === 'pending_payment' && left > 0 && (
         <div className="grid2">
           <button className="btn primary" style={{ height: 56 }} disabled={busy} onClick={() => choosePayment('pix')}><QrCode aria-hidden />Pagar com Pix</button>
-          <button className="btn" style={{ height: 56 }} disabled={busy} onClick={() => choosePayment('card')}><CreditCard aria-hidden />Pagar com cartão</button>
+          {cardEnabled && <button className="btn" style={{ height: 56 }} disabled={busy} onClick={() => choosePayment('card')}><CreditCard aria-hidden />Pagar com cartão</button>}
         </div>
       )}
       {r.status === 'pending_payment' && <button className="btn danger" onClick={cancel}>Cancelar reserva provisória</button>}

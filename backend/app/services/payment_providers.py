@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 import httpx
 
@@ -24,6 +25,7 @@ class ProviderPayment:
     external_reference: str | None
     amount_cents: int
     method: str
+    approved_at: datetime | None = None     # horário de aprovação informado pelo provedor (não o da chegada do aviso)
 
 
 class SimulatedProvider:
@@ -90,9 +92,13 @@ class MercadoPagoProvider:
             raise AppError(502, 'mp_error', f'Consulta ao Mercado Pago falhou (HTTP {r.status_code}).')
         d = r.json()
         ptype = d.get('payment_type_id') or ''
+        try:
+            approved = datetime.fromisoformat(d['date_approved']) if d.get('date_approved') else None
+        except (TypeError, ValueError):
+            approved = None
         return ProviderPayment(str(d['id']), MP_STATUS.get(d.get('status'), 'pending'), d.get('status_detail') or '',
                                d.get('external_reference'), int(round(float(d.get('transaction_amount') or 0) * 100)),
-                               'pix' if ptype == 'bank_transfer' else ('card' if 'card' in ptype else 'unknown'))
+                               'pix' if ptype == 'bank_transfer' else ('card' if 'card' in ptype else 'unknown'), approved)
 
     def refund(self, provider_payment_id: str, amount_cents: int, idempotency_key: str) -> str:
         try:

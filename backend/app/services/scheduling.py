@@ -519,7 +519,7 @@ def _start_at_payment(conn, r: dict, n) -> None:
                      (r['starts_at'] + delta, r['ends_at'] + delta, r['blocked_until'] + delta, r['id']))
 
 
-def confirm_reservation(conn, reservation_id, source: str) -> str:
+def confirm_reservation(conn, reservation_id, source: str, approved_at=None) -> str:
     """Chamado pelo processamento de pagamento aprovado. Retorna o estado final.
     Pagamento tardio: se o hold expirou e o horário ainda está livre, reconfirma; se não, NÃO fura a fila:
     vai para needs_resolution (remarcação/reembolso)."""
@@ -528,8 +528,9 @@ def confirm_reservation(conn, reservation_id, source: str) -> str:
     if r['status'] in ('confirmed', 'active', 'completed'):
         return r['status']
     conn.execute('select id from consoles where id=%s for update', (r['console_id'],))
-    if r['status'] == 'pending_payment' and r['hold_expires_at'] > n:
-        _start_at_payment(conn, r, n)
+    paid_at = min(approved_at, n) if approved_at else n     # aprovação no provedor (aviso pode atrasar)
+    if r['status'] == 'pending_payment' and r['hold_expires_at'] > paid_at:
+        _start_at_payment(conn, r, paid_at)
         conn.execute("update reservations set status='confirmed', confirmed_at=%s, hold_expires_at=null where id=%s", (n, r['id']))
         conn.execute("update reservation_holds set released_at=%s, release_reason='paid' where reservation_id=%s and released_at is null", (n, r['id']))
         conn.execute("update coupon_redemptions set status='redeemed' where reservation_id=%s", (r['id'],))

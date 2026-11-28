@@ -171,3 +171,27 @@ def test_simulado_bloqueado_quando_provedor_real(world, freeze, monkeypatch):
     co = api.post(f"/reservations/{r['id']}/checkout", json={'method': 'pix'}).json()
     monkeypatch.setattr(settings, 'payment_provider', 'mercadopago')
     assert api.post(f"/payments/simulated/{co['payment_id']}/notify", json={'outcome': 'approved'}).status_code == 403
+
+
+def test_cartao_desligado_por_padrao(world, freeze):
+    freeze(at(2, 8, 0))
+    u = login(make_user('so_pix'))
+    rid = reserve(u, world, 10).json()['id']
+    r = u.post(f'/reservations/{rid}/checkout', json={'method': 'card'})
+    assert r.status_code == 400 and r.json()['code'] == 'card_disabled'
+    assert u.post(f'/reservations/{rid}/checkout', json={'method': 'pix'}).status_code == 200
+
+
+def test_aviso_atrasado_usa_horario_de_aprovacao(world, freeze):
+    """Fila paga às 08:01 (aprovação no provedor), aviso chega às 08:04: a vez começa às 08:01."""
+    from datetime import timedelta
+    from app.services import payments
+    freeze(at(2, 8, 0))
+    u = login(make_user('aviso_atrasado'))
+    rid = reserve(u, world, 10).json()['id']
+    pid = u.post(f'/reservations/{rid}/checkout', json={'method': 'pix'}).json()['payment_id']
+    freeze(at(2, 8, 4))
+    with tx() as conn:
+        payments.apply_status(conn, pid, 'approved', 'webhook', {}, 'mp-1', None, 'pix', approved_at=at(2, 8, 1))
+        r = one(conn, 'select status, starts_at, ends_at from reservations where id=%s', (rid,))
+    assert r['status'] == 'confirmed' and r['starts_at'] == at(2, 8, 1) and r['ends_at'] == at(2, 8, 11)
