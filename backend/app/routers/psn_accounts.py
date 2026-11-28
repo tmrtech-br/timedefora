@@ -4,6 +4,7 @@ Admin endpoints use existing cookie auth, CSRF protection and audit trail.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -16,6 +17,7 @@ from ..core import security
 from ..core.db import all_, audit_event, insert, one, tx, update
 from ..core.deps import Principal, require_role
 from ..core.errors import AppError, conflict, forbidden, not_found, unprocessable
+from ..services import psn_oauth
 from .common import DeleteIn, jsonable
 
 router = APIRouter(prefix='/admin/psn-accounts', tags=['admin-psn'])
@@ -191,12 +193,55 @@ def _locked_account(conn, account_id, owner_user_id, disabled_message):
 
 
 def start_account_login(account_id: uuid.UUID, owner_user_id: str | None = None):
+    if (server := _server_login_account(account_id, owner_user_id, 'Ative a conta antes de iniciar o login.')):
+        with tx() as conn:
+            conn.execute('update psn_accounts set login_started_at=now() where id=%s', (server['id'],))
+            audit_event(conn, 'psn.login_started', 'psn_accounts', account_id, details={'via': 'server'})
+        return {'login_url': psn_oauth.login_url(),
+                'message': 'Abra a página Sony, entre na conta e cole a URL final aqui em até 10 minutos.'}
     row, target = _ready_account(account_id, owner_user_id, 'Ative a conta antes de iniciar o login.')
     response = _send_agent(target, '/login/start', {'label': row['label']})
     with tx() as conn:
         _account(conn, account_id, owner_user_id=owner_user_id)
         audit_event(conn, 'psn.login_started', 'psn_accounts', account_id)
     return {'login_url': response['login_url'], 'message': response.get('message', '')}
+
+
+def _server_login_account(account_id, owner_user_id, disabled_message):
+    """O login do proprietário usa o servidor, independentemente do vínculo com o agente."""
+    if owner_user_id is None:
+        return None
+    with tx() as conn:
+        row = _account(conn, account_id, owner_user_id=owner_user_id)
+        if row['status'] == 'disabled':
+            raise conflict('account_disabled', disabled_message)
+        return row
+
+
+def _store_server_credentials(conn, account_id, credentials: dict, profile: dict):
+    return update(conn, 'psn_accounts', account_id, {
+        'credentials_enc': security.encrypt(json.dumps({**credentials, **profile})),
+        'online_id': profile.get('online_id'), 'account_id': profile.get('account_id'), 'status': 'linked',
+        'last_error': '', 'last_check_at': datetime.now(timezone.utc), 'login_started_at': None})
+
+
+def push_server_credentials(account_id) -> bool:
+    """Repassa ao cofre do agente o login Sony guardado no servidor e o apaga daqui.
+
+    Chamado antes dos testes; falhas deixam o
+    acesso cifrado no banco para nova tentativa."""
+    with tx() as conn:
+        row = one(conn, 'select * from psn_accounts where id=%s', (account_id,))
+        if not row or row['agent_id'] is None or not row['credentials_enc']:
+            return False
+        target = _agent_target(conn, row)
+        credentials = json.loads(security.decrypt(row['credentials_enc']))
+    _send_agent(target, '/import/credentials', {'label': row['label'], **credentials})
+    with tx() as conn:
+        conn.execute('update psn_accounts set credentials_enc=null where id=%s and credentials_enc=%s',
+                     (account_id, row['credentials_enc']))
+        audit_event(conn, 'psn.credentials_pushed', 'psn_accounts', account_id, details={'agent_id': str(row['agent_id'])})
+    return True
 
 
 @router.post('/{account_id}/login/finish')
@@ -206,13 +251,23 @@ def finish_login(account_id: uuid.UUID, body: FinishLogin, p: Principal = Depend
 
 def finish_account_login(account_id: uuid.UUID, body: FinishLogin, owner_user_id: str | None = None):
     message = 'Ative a conta antes de concluir o login.'
+    if (server := _server_login_account(account_id, owner_user_id, message)):
+        started = server['login_started_at']
+        if started is None or (datetime.now(timezone.utc) - started).total_seconds() > 600:
+            raise conflict('login_expired', 'Clique em "Fazer login Sony" de novo (prazo: 10 minutos).')
+        credentials, profile = psn_oauth.login(body.redirect_url)
+        with tx() as conn:
+            _locked_account(conn, account_id, owner_user_id, message)
+            updated = _store_server_credentials(conn, account_id, credentials, profile)
+            audit_event(conn, 'psn.login_linked', 'psn_accounts', account_id, details={'via': 'server'})
+        return jsonable(updated)
     row, target = _ready_account(account_id, owner_user_id, message)
     response = _send_agent(target, '/login/finish', {'label': row['label'], 'redirect_url': body.redirect_url})
     with tx() as conn:
         _locked_account(conn, account_id, owner_user_id, message)
         profile = response['account']
         updated = update(conn, 'psn_accounts', account_id, {'online_id': profile.get('online_id'),
-                         'account_id': profile.get('account_id'), 'status': 'linked',
+                         'account_id': profile.get('account_id'), 'status': 'linked', 'credentials_enc': None,
                          'last_error': '', 'last_check_at': datetime.now(timezone.utc)})
         audit_event(conn, 'psn.login_linked', 'psn_accounts', account_id)
         return jsonable(updated)
@@ -225,6 +280,28 @@ def test_account(account_id: uuid.UUID, p: Principal = Depends(ADMIN)):
 
 def test_account_login(account_id: uuid.UUID, owner_user_id: str | None = None):
     message = 'Esta conta está desativada.'
+    if (server := _server_login_account(account_id, owner_user_id, message)) and server['agent_id'] is None:
+        if not server['credentials_enc']:
+            return {'ok': False, 'message': 'Faça o login Sony desta conta primeiro.'}
+        saved = json.loads(security.decrypt(server['credentials_enc']))
+        try:
+            credentials, profile = psn_oauth.refresh(saved.get('refresh_token') or '')
+        except AppError as e:
+            if e.code != 'psn_token_expired':
+                raise
+            with tx() as conn:
+                _locked_account(conn, account_id, owner_user_id, message)
+                update(conn, 'psn_accounts', account_id, {'status': 'expired', 'credentials_enc': None, 'last_error': e.message})
+            return {'ok': False, 'message': e.message}
+        with tx() as conn:
+            _locked_account(conn, account_id, owner_user_id, message)
+            _store_server_credentials(conn, account_id, credentials, profile)
+            audit_event(conn, 'psn.token_validated', 'psn_accounts', account_id, details={'via': 'server'})
+        return {'ok': True, 'message': 'Conta verificada na Sony.'}
+    with tx() as conn:   # conta já no agente com acesso pendente de repasse
+        pending = one(conn, 'select credentials_enc from psn_accounts where id=%s', (account_id,))
+    if pending and pending['credentials_enc']:
+        push_server_credentials(account_id)
     _, target = _ready_account(account_id, owner_user_id, message)
     try:
         response = _send_agent(target, '/test')

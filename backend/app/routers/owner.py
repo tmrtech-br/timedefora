@@ -808,9 +808,17 @@ def owner_run_diagnostics(console_id: UUID, p: Principal = Depends(enrolled_owne
         acc = _psn_for(conn, console_id)
         needs_psn = (pending or {}).get('network_route') == 'internet_psn'
         if needs_psn and (not acc or acc['status'] != 'linked'):
-            raise conflict('psn_login_required', 'Faça o login Sony da conta PSN do console (Contas PSN) antes de testar.')
-        if not pending and cfg['method'] == 'unconfigured':
+            raise conflict('psn_login_required', 'Faça o login Sony da conta PSN do console (menu Contas PSN) antes de testar.')
+        if not pending and (not cfg or cfg['method'] == 'unconfigured'):
             raise conflict('not_configured', 'Configure a conexão e a transmissão do console antes de testar.')
+    if acc and acc['agent_id'] is None:      # conta escolhida depois da aprovação: passa a usar o agente do console
+        try:
+            with tx(p.user_id) as conn:
+                conn.execute('update psn_accounts set agent_id=%s where id=%s and agent_id is null', (row['agent_id'], acc['id']))
+        except psycopg.errors.UniqueViolation:
+            raise conflict('label_taken', 'Já existe uma conta PSN com esse nome no agente. Renomeie a conta e tente de novo.')
+    if acc and acc['credentials_enc']:       # login Sony feito no portal: entrega ao cofre do agente antes do teste
+        psn_accounts.push_server_credentials(acc['id'])
     if pending:
         admin.set_connection(console_id, admin.ConnectionIn(**pending, agent_id=row['agent_id'],
                                                             psn_account_id=acc['id'] if acc and needs_psn else None,

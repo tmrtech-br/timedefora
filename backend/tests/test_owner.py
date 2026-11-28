@@ -162,3 +162,61 @@ def test_exclusoes_do_proprietario(world, freeze):
     assert api.get(f'/owner/consoles/{cid}/games').json()['drafts'] == []
     # só PSN (PS4): rota local é recusada
     assert api.put(f'/owner/consoles/{cid}/connection-settings', json={'network_route': 'lan'}).status_code == 422
+
+
+def test_login_sony_do_proprietario_antes_da_aprovacao(world, freeze, monkeypatch):
+    from conftest import at
+    from app.core import security
+    from app.core.db import insert
+    from app.routers import psn_accounts
+    from app.services import psn_oauth
+    freeze(at(2, 7, 0))
+    admin, _ = admin_api('chefe_login')
+    api, user = _owner('dono_login')
+    with tx() as conn:
+        agent = str(insert(conn, 'console_agents', {'name': 'agente-login', 'host_name': 'pc', 'is_simulated': False, 'status': 'online',
+                                                    'endpoint_url': 'https://agente.exemplo', 'outbound_token_enc': security.encrypt('tok')})['id'])
+    cid = api.post('/owner/consoles', json={'code': 'DONO-LOG', 'name': 'PS4 login', 'platform_code': 'PS4'}).json()['id']
+    acc = api.post('/owner/psn-accounts', json={'console_id': cid, 'label': 'conta-login'}).json()
+    sent = []
+    def send_agent(target, suffix, payload=None, method='POST'):
+        sent.append((target[0], suffix, payload))
+        return {'ok': True, 'account': {'account_id': 'QUJD', 'online_id': 'dono_psn'}}
+
+    monkeypatch.setattr(psn_accounts, '_send_agent', send_agent)
+    # sem iniciar: não conclui
+    assert api.post(f"/owner/psn-accounts/{acc['id']}/login/finish", json={'redirect_url': 'https://x.example/abc'}).json()['code'] == 'login_expired'
+    start = api.post(f"/owner/psn-accounts/{acc['id']}/login/start")
+    assert start.status_code == 200 and start.json()['login_url'].startswith(psn_oauth.AUTHORIZE_URL)
+    assert api.post(f"/owner/psn-accounts/{acc['id']}/login/finish", json={'redirect_url': 'https://evil.example/redirect?code=abc'}).status_code == 422
+    creds = {'access_token': 'AT', 'refresh_token': 'RT', 'expires_at': 99}
+    monkeypatch.setattr(psn_oauth, 'login', lambda url: (creds, {'account_id': 'QUJD', 'online_id': 'dono_psn'}))
+    r = api.post(f"/owner/psn-accounts/{acc['id']}/login/finish", json={'redirect_url': f'{psn_oauth.REDIRECT}?code=abc'})
+    assert r.status_code == 200, r.text
+    assert r.json() == {'id': acc['id'], 'label': 'conta-login', 'status': 'linked', 'online_id': 'dono_psn'}
+    assert sent == []   # ainda sem agente: guardado cifrado no servidor
+    with tx() as conn:
+        row = conn.execute('select agent_id, credentials_enc from psn_accounts where id=%s', (acc['id'],)).fetchone()
+        assert row['agent_id'] is None
+        assert '"refresh_token": "RT"' in security.decrypt(row['credentials_enc'])
+        assert '"refresh_token"' not in row['credentials_enc']
+        logged = conn.execute("select new_data from audit_logs where table_name='psn_accounts' and new_data->>'credentials_enc' is not null").fetchall()
+        assert all(x['new_data']['credentials_enc'] == '[REDACTED]' for x in logged)
+    # teste da conta sem agente: renova pela Sony
+    monkeypatch.setattr(psn_oauth, 'refresh', lambda rt: ({**creds, 'access_token': 'AT2'}, {'account_id': 'QUJD', 'online_id': 'dono_psn'}) if rt == 'RT' else None)
+    assert api.post(f"/owner/psn-accounts/{acc['id']}/test").json()['ok'] is True
+    # Aprovação e novo login funcionam sem comunicação com o agente.
+    with tx() as conn:
+        conn.execute("update consoles set owner_review_status='submitted' where id=%s", (cid,))
+    assert admin.post(f'/admin/owner-reviews/{cid}/approve', json={'agent_id': agent, 'notes': 'ok'}).status_code == 200
+    assert api.post(f"/owner/psn-accounts/{acc['id']}/login/start").status_code == 200
+    assert api.post(f"/owner/psn-accounts/{acc['id']}/login/finish", json={'redirect_url': f'{psn_oauth.REDIRECT}?code=novo'}).status_code == 200
+    assert sent == []
+
+    # O teste da conta entrega o acesso antes de pedir a validação ao agente.
+    assert api.post(f"/owner/psn-accounts/{acc['id']}/test").json()['ok'] is True
+    assert [call[1] for call in sent] == ['/import/credentials', '/test']
+    assert sent[0][2]['refresh_token'] == 'RT' and sent[0][2]['label'] == 'conta-login'
+    with tx() as conn:
+        row = conn.execute('select agent_id, status, credentials_enc from psn_accounts where id=%s', (acc['id'],)).fetchone()
+    assert str(row['agent_id']) == agent and row['status'] == 'linked' and row['credentials_enc'] is None

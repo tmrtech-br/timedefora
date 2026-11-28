@@ -66,9 +66,9 @@ export default function OwnerReviewPanel({ consoleId, onChange }: { consoleId: s
     {msg}{review.error && <Alert kind="error">{review.error.message}</Alert>}
     {r && <>
       <ol className="small owner-steps">
-        <li className={r.status !== 'draft' && r.status !== 'rejected' ? 'done' : ''}>Cadastre o console, a conexão e transmissão, a conta PSN, os jogos com artes e períodos, o preço e os horários.</li>
+        <li className={r.status !== 'draft' && r.status !== 'rejected' ? 'done' : ''}>Configure o console, a conexão, a transmissão, os jogos, o preço e os horários. Para PlayStation, faça o login Sony em <a className="link-purple" href="#psn">Contas PSN</a>.</li>
         <li className={r.approved_at ? 'done' : r.status === 'submitted' ? 'now' : ''}>Envie para análise: a equipe confere e vincula o console e a conta PSN ao agente.</li>
-        <li className={validated ? 'done' : r.approved_at ? 'now' : ''}>Faça o login Sony da conta PSN, aplique a configuração e rode os testes e o diagnóstico.</li>
+        <li className={validated ? 'done' : r.approved_at ? 'now' : ''}>Após a aprovação, clique em “Aplicar configuração e testar” para iniciar o diagnóstico.</li>
         <li className={r.is_published ? 'done' : validated ? 'now' : ''}>Com os testes aprovados, publique o console para aluguel.</li>
       </ol>
       {r.notes && r.status === 'rejected' && <Alert kind="error"><span><b>Motivo da recusa:</b> {r.notes}<br />

@@ -2461,7 +2461,7 @@ class OwnerReviewIn(BaseModel):
 
 def _notify_owner_review(conn, cid, approved: bool, notes: str) -> None:
     c = one(conn, 'select name, owner_user_id from consoles where id=%s', (cid,))
-    msg = ('A equipe validou o console. ' + ('Você já pode publicá-lo para aluguel no portal.' if approved else '')
+    msg = ('A equipe aprovou o cadastro. Abra o portal para aplicar a configuração e validar a conexão antes de publicar.'
            if approved else 'A equipe pediu ajustes antes de liberar o console. ') + (f' Observações: {notes}' if notes else '')
     notifications.notify(conn, str(c['owner_user_id']), 'owner_review',
                          {'console': c['name'], 'resultado': 'aprovado' if approved else 'ajustes necessários', 'mensagem': msg.strip()},

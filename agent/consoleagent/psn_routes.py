@@ -36,6 +36,16 @@ class Finish(BaseModel):
     redirect_url: str = Field(min_length=10, max_length=8192)
 
 
+class CredentialsImport(BaseModel):
+    """Login Sony feito pelo servidor antes de a conta ter agente (portal do proprietário)."""
+    label: str = Field(min_length=1, max_length=80)
+    access_token: str = Field(min_length=1, max_length=8192)
+    refresh_token: str = Field(min_length=1, max_length=8192)
+    expires_at: int = 0
+    account_id: str = Field(min_length=1, max_length=64)
+    online_id: str = Field(default='', max_length=64)
+
+
 class ChiakiImport(BaseModel):
     label: str = Field(min_length=1, max_length=80)
 
@@ -172,6 +182,18 @@ def create_psn_router(token: str, data_path: str | Path | None = None, protector
             return failure
         try:
             return {'ok': vault().delete(account_id)}
+        except (AccountError, RuntimeError) as e:
+            return error(503, 'vault_error', str(e))
+
+    @router.post('/{account_id}/import/credentials')
+    async def import_credentials(account_id: str, body: CredentialsImport, request: Request):
+        if failure := authorize(request):
+            return failure
+        try:
+            meta = vault().upsert(account_id, body.label, access_token=body.access_token, refresh_token=body.refresh_token,
+                                  expires_at=body.expires_at, account_id=body.account_id, online_id=body.online_id,
+                                  status='linked', last_check_at=time.time(), last_error='')
+            return {'ok': True, 'account': meta}
         except (AccountError, RuntimeError) as e:
             return error(503, 'vault_error', str(e))
 

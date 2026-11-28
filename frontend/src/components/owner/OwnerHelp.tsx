@@ -5,7 +5,7 @@ const STEPS = [
   { icon: MonitorSmartphone, color: '#a98bff', title: 'Cadastre o console', tag: 'Cadastro de console',
     text: 'Informe código, nome e plataforma. Em seguida configure a conexão (como o console será acessado) e a qualidade da transmissão.' },
   { icon: UserRoundCheck, color: '#f472d0', title: 'Associe a conta PSN', tag: 'Contas PSN',
-    text: 'Cadastre a conta PSN do console e indique que o console vai usá-la. O login Sony é feito depois da aprovação.' },
+    text: 'Cadastre a conta PSN, associe ao console e faça o login Sony. Cole o endereço de retorno da Sony para concluir o vínculo.' },
   { icon: Gamepad2, color: '#67d8f0', title: 'Cadastre os jogos e o preço', tag: 'Jogos e preços',
     text: 'Cadastre o jogo com capa, banner e descrição (ou escolha um do catálogo), defina o período em que ele fica disponível e o preço por minuto ou por hora.' },
   { icon: CalendarClock, color: '#5ee8a8', title: 'Defina os dias e horários', tag: 'Disponibilidade',
@@ -15,7 +15,7 @@ const STEPS = [
   { icon: Send, color: '#a98bff', title: 'Envie para análise', tag: 'Cadastro de console',
     text: 'Com tudo preenchido, clique em "Enviar para análise". A equipe confere o cadastro e as artes e vincula o console e a conta PSN ao agente.' },
   { icon: FlaskConical, color: '#f472d0', title: 'Teste a conexão', tag: 'Cadastro de console',
-    text: 'Aprovado, faça o login Sony da conta PSN e clique em "Aplicar configuração e testar". O diagnóstico confere imagem, áudio, controles e o agente.' },
+    text: 'Após a aprovação, clique em "Aplicar configuração e testar". O diagnóstico confere imagem, áudio, controles e o agente.' },
   { icon: BadgeCheck, color: '#5ee8a8', title: 'Publique e acompanhe', tag: 'Dashboard',
     text: 'Com os testes aprovados, publique o console para aluguel e acompanhe reservas, sessões e ganhos no Dashboard. Alterações voltam para a validação e o console segue no ar com a versão aprovada.' },
 ];

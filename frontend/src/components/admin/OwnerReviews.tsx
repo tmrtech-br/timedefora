@@ -14,7 +14,7 @@ type Conn = { method?: string; network_route?: string; console_identifier?: stri
   standby_after_session?: boolean; keep_awake_minutes?: number };
 type Hour = { weekday: number; opens_at: string; closes_at: string };
 const DAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-const PSN_STATUS: Record<string, string> = { pending: 'login Sony pendente (feito após a aprovação)', linked: 'conectada', expired: 'expirada', error: 'com erro', disabled: 'desativada' };
+const PSN_STATUS: Record<string, string> = { pending: 'login Sony pendente — o proprietário ainda não conectou', linked: 'conectada', expired: 'expirada', error: 'com erro', disabled: 'desativada' };
 type Review = {
   id: string; code: string; name: string; model: string; location: string; description: string; is_published: boolean; platform_code: string;
   status: 'submitted' | 'changes_pending'; notes: string; submitted_at: string | null; approved_at: string | null;
@@ -44,7 +44,7 @@ function ReviewCard({ r, agents, onDone, superadmin }: { r: Review; agents: { id
         <dt>Tipo</dt><dd>{r.approved_at ? `Alterações de console aprovado (no ar: ${r.is_published ? 'sim' : 'não'})` : 'Console novo'}</dd>
         <dt>Enviado em</dt><dd>{r.submitted_at ? dateTime(r.submitted_at) : '—'}</dd>
         <dt>Modelo / local</dt><dd>{[r.model, r.location].filter(Boolean).join(' · ') || '—'}</dd>
-        <dt>Conta PSN</dt><dd>{r.psn_label ? `${r.psn_label}${r.psn_online_id ? ` (${r.psn_online_id})` : ''} · ${PSN_STATUS[r.psn_status ?? ''] ?? r.psn_status}` : '—'}</dd>
+        <dt>Conta PSN</dt><dd>{r.psn_label ? <span>{r.psn_label}{r.psn_online_id ? ` (${r.psn_online_id})` : ''} · <b style={{ color: r.psn_status === 'linked' ? 'var(--green, #16a34a)' : 'var(--amber, #d97706)' }}>{r.psn_status === 'linked' ? '✓ ' : ''}{PSN_STATUS[r.psn_status ?? ''] ?? r.psn_status}</b></span> : '—'}</dd>
         <dt>Tarifa atual</dt><dd>{rateText(r)}</dd>
         {r.pending.rate && <><dt>Tarifa pedida</dt><dd><b>{rateText(r.pending.rate)}</b></dd></>}
       </dl>

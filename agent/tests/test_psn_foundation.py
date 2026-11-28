@@ -305,3 +305,19 @@ async def test_login_flow_returns_only_public_metadata(tmp_path, monkeypatch, ex
         else:
             assert res.status_code == 422
             assert res.json()['code'] == 'psn_token_expired'
+
+
+@pytest.mark.asyncio
+async def test_agent_importa_login_sony_feito_pelo_servidor(tmp_path):
+    app = FastAPI()
+    app.include_router(create_psn_router('private-agent-token', tmp_path / 'v', TestCipher()))
+    t = httpx.ASGITransport(app=app)
+    body = {'label': 'conta', 'access_token': 'AT', 'refresh_token': 'RT', 'expires_at': 99, 'account_id': 'QUJD', 'online_id': 'dono'}
+    async with httpx.AsyncClient(transport=t, base_url='http://test') as c:
+        url = '/v1/psn/accounts/acc1/import/credentials'
+        assert (await c.post(url, json=body)).status_code == 401
+        result = await c.post(url, json=body, headers={'Authorization': 'Bearer private-agent-token'})
+        assert result.status_code == 200, result.text
+        assert result.json()['account']['status'] == 'linked'
+        assert 'RT' not in result.text
+    assert PsnAccountStore(tmp_path / 'v', protector=TestCipher()).get('acc1')['refresh_token'] == 'RT'
